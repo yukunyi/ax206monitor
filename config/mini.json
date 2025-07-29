@@ -1,0 +1,128 @@
+{
+  "name": "mini",
+  "width": 480,
+  "height": 320,
+  "font_sizes": {
+    "min_label": 14,
+    "def_label": 16,
+    "default": 24,
+    "small": 12,
+    "large": 18
+  },
+  "font_families": [
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Consolas",
+    "Monaco",
+    "Menlo",
+    "Ubuntu Mono",
+    "Courier New",
+    "monospace"
+  ],
+  "output_type": "ax206usb",
+  "output_file": "",
+  "refresh_interval": 1000,
+  "history_size": 120,
+  "colors": {
+    "default_text": "#ffffff",
+    "default_background": "#2a2a2a",
+    "header_text": "#74b9ff",
+    "header_background": "#1a1a1a",
+    "progress_background": "#3a3a3a",
+    "value_normal": "#4ecdc4",
+    "progress_fill": "#4ecdc4",
+    "chart_line": "#45b7d1"
+  },
+  "items": [
+    {
+      "type": "value",
+      "monitor": "net_default_ip",
+      "x": 5,
+      "y": 5,
+      "width": 200,
+      "height": 25,
+      "font_size": 14,
+      "bg": "#1a1a1a",
+      "label": false
+    },
+    {
+      "type": "value",
+      "monitor": "current_time",
+      "x": 275,
+      "y": 5,
+      "width": 200,
+      "height": 25,
+      "font_size": 14,
+      "bg": "#1a1a1a",
+      "label": false
+    },
+    {
+      "type": "big_value",
+      "monitor": "cpu_temp",
+      "x": 5,
+      "y": 35,
+      "width": 155,
+      "height": 90,
+      "font_size": 32,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "gpu_temp",
+      "x": 165,
+      "y": 35,
+      "width": 155,
+      "height": 90,
+      "font_size": 32,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "disk_temp",
+      "x": 325,
+      "y": 35,
+      "width": 150,
+      "height": 90,
+      "font_size": 32,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "chart",
+      "monitor": "memory_usage",
+      "x": 5,
+      "y": 130,
+      "width": 230,
+      "height": 120,
+      "history": true
+    },
+    {
+      "type": "chart",
+      "monitor": "cpu_usage",
+      "x": 245,
+      "y": 130,
+      "width": 230,
+      "height": 120,
+      "history": true
+    },
+    {
+      "type": "big_value",
+      "monitor": "net_default_upload",
+      "x": 5,
+      "y": 255,
+      "width": 235,
+      "height": 60,
+      "font_size": 28,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "net_default_download",
+      "x": 245,
+      "y": 255,
+      "width": 230,
+      "height": 60,
+      "font_size": 28,
+      "bg": "#2a2a2a"
+    }
+  ]
+}
