@@ -21,9 +21,22 @@ print_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo "This script must be run as root (use sudo)"
+print_error() {
+    echo -e "\033[0;31m[ERROR]\033[0m $1"
+}
+
+check_sudo_available() {
+    if ! command -v sudo >/dev/null 2>&1; then
+        print_error "sudo command not found. Please install sudo or run as root."
+        exit 1
+    fi
+}
+
+run_with_sudo() {
+    local cmd="$1"
+    print_status "Running with sudo: $cmd"
+    if ! sudo bash -c "$cmd"; then
+        print_error "Failed to execute: $cmd"
         exit 1
     fi
 }
@@ -75,17 +88,14 @@ prepare_binary() {
 
 install_binary() {
     print_status "Installing binary to $INSTALL_DIR/$SERVICE_NAME"
-    cp "$BINARY_SOURCE" "$INSTALL_DIR/$SERVICE_NAME"
-    chmod 755 "$INSTALL_DIR/$SERVICE_NAME"
+    check_sudo_available
+    run_with_sudo "cp '$BINARY_SOURCE' '$INSTALL_DIR/$SERVICE_NAME' && chmod 755 '$INSTALL_DIR/$SERVICE_NAME'"
     print_success "Installed binary to $INSTALL_DIR/$SERVICE_NAME"
 }
 
 install_configs() {
     print_status "Installing configuration files to $CONFIG_DIR"
-
-    # Create directories
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$SAMPLES_DIR"
+    check_sudo_available
 
     # Determine config source directory
     if [ -d "config" ]; then
@@ -97,19 +107,19 @@ install_configs() {
         exit 1
     fi
 
+    # Create directories and copy files with sudo
+    print_status "Creating configuration directories"
+    run_with_sudo "mkdir -p '$CONFIG_DIR' && mkdir -p '$SAMPLES_DIR'"
+
     # Copy all config files to samples directory
     print_status "Copying configuration files from $CONFIG_SOURCE to $SAMPLES_DIR"
-    if ! cp "$CONFIG_SOURCE"/*.json "$SAMPLES_DIR/"; then
-        print_error "Failed to copy configuration files"
-        exit 1
-    fi
-    chmod 644 "$SAMPLES_DIR"/*.json
+    run_with_sudo "cp '$CONFIG_SOURCE'/*.json '$SAMPLES_DIR/' && chmod 644 '$SAMPLES_DIR'/*.json"
     print_success "Configuration files copied to $SAMPLES_DIR"
 
     # Create default.json symlink to mini.json
     print_status "Creating default configuration link"
-    if [ -f "$SAMPLES_DIR/mini.json" ]; then
-        ln -sf "$SAMPLES_DIR/mini.json" "$CONFIG_DIR/default.json"
+    if [ -f "$CONFIG_SOURCE/mini.json" ]; then
+        run_with_sudo "ln -sf '$SAMPLES_DIR/mini.json' '$CONFIG_DIR/default.json'"
         print_success "Created default.json -> mini.json symlink"
     else
         print_error "mini.json not found, cannot create default link"
@@ -117,14 +127,16 @@ install_configs() {
     fi
 
     # Set proper ownership and permissions
-    chown -R root:root "$CONFIG_DIR"
-    chmod 755 "$CONFIG_DIR" "$SAMPLES_DIR"
+    run_with_sudo "chown -R root:root '$CONFIG_DIR' && chmod 755 '$CONFIG_DIR' '$SAMPLES_DIR'"
 }
 
 create_systemd_service() {
     print_status "Creating systemd service: $SERVICE_DIR/$SERVICE_NAME.service"
-    
-    cat > "$SERVICE_DIR/$SERVICE_NAME.service" << EOF
+    check_sudo_available
+
+    # Create service file content in a temporary location first
+    local temp_service=$(mktemp)
+    cat > "$temp_service" << EOF
 [Unit]
 Description=AX206 System Monitor v$VERSION
 After=network.target
@@ -141,25 +153,31 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+    # Copy to systemd directory with sudo
+    run_with_sudo "cp '$temp_service' '$SERVICE_DIR/$SERVICE_NAME.service' && chmod 644 '$SERVICE_DIR/$SERVICE_NAME.service'"
+    rm -f "$temp_service"
+
     print_success "Created systemd service file"
 }
 
 enable_service() {
+    check_sudo_available
+
     print_status "Reloading systemd daemon"
-    systemctl daemon-reload
-    
+    run_with_sudo "systemctl daemon-reload"
+
     print_status "Enabling $SERVICE_NAME service"
-    systemctl enable "$SERVICE_NAME"
-    
+    run_with_sudo "systemctl enable '$SERVICE_NAME'"
+
     print_status "Starting $SERVICE_NAME service"
-    systemctl start "$SERVICE_NAME"
-    
+    run_with_sudo "systemctl start '$SERVICE_NAME'"
+
     print_success "Service $SERVICE_NAME is now running"
 }
 
 show_status() {
     print_status "Service status:"
-    systemctl status "$SERVICE_NAME" --no-pager -l
+    sudo systemctl status "$SERVICE_NAME" --no-pager -l
 }
 
 print_usage() {
@@ -191,20 +209,20 @@ print_usage() {
 
 uninstall() {
     print_status "Uninstalling AX206 System Monitor v$VERSION..."
-    
-    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-    systemctl disable "$SERVICE_NAME" 2>/dev/null || true
-    
-    rm -f "$SERVICE_DIR/$SERVICE_NAME.service"
+    check_sudo_available
 
-    rm -f "$INSTALL_DIR/$SERVICE_NAME"
+    run_with_sudo "systemctl stop '$SERVICE_NAME' 2>/dev/null || true"
+    run_with_sudo "systemctl disable '$SERVICE_NAME' 2>/dev/null || true"
+
+    run_with_sudo "rm -f '$SERVICE_DIR/$SERVICE_NAME.service'"
+    run_with_sudo "rm -f '$INSTALL_DIR/$SERVICE_NAME'"
 
     # Remove configuration files
     print_status "Removing configuration files"
-    rm -rf "$CONFIG_DIR"
+    run_with_sudo "rm -rf '$CONFIG_DIR'"
 
-    systemctl daemon-reload
-    
+    run_with_sudo "systemctl daemon-reload"
+
     print_success "Uninstallation completed"
 }
 
@@ -219,30 +237,28 @@ main() {
     echo "  Version: $VERSION"
     echo "=================================================="
     echo ""
-    
+
     if [ "$1" = "uninstall" ]; then
         uninstall
         exit 0
     fi
-    
+
     if [ "$1" = "version" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
         show_version
     fi
-    
-    check_root
 
     print_status "Starting installation process..."
     echo ""
-    
+
     prepare_binary
     install_binary
     install_configs
     create_systemd_service
     enable_service
-    
+
     echo ""
     show_status
-    
+
     echo ""
     print_usage
 }
