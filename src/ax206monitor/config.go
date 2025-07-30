@@ -15,20 +15,30 @@ type FontSizes struct {
 	Large    int `json:"large"`
 }
 
+type ColorThresholds struct {
+	LowThreshold  float64 `json:"low_threshold"`
+	HighThreshold float64 `json:"high_threshold"`
+	LowColor      string  `json:"low_color"`
+	MediumColor   string  `json:"medium_color"`
+	HighColor     string  `json:"high_color"`
+}
+
 type MonitorConfig struct {
-	Name            string            `json:"name"`
-	Width           int               `json:"width"`
-	Height          int               `json:"height"`
-	FontSizes       FontSizes         `json:"font_sizes"`
-	FontFamilies    []string          `json:"font_families"`
-	OutputType      string            `json:"output_type"`
-	OutputFile      string            `json:"output_file,omitempty"`
-	RefreshInterval int               `json:"refresh_interval"`
-	HistorySize     int               `json:"history_size,omitempty"`
-	Colors          map[string]string `json:"colors"`
-	Items           []ItemConfig      `json:"items"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	Units           map[string]string `json:"units,omitempty"`
+	Name             string                     `json:"name"`
+	Width            int                        `json:"width"`
+	Height           int                        `json:"height"`
+	FontSizes        FontSizes                  `json:"font_sizes"`
+	FontFamilies     []string                   `json:"font_families"`
+	OutputType       string                     `json:"output_type"`
+	OutputFile       string                     `json:"output_file,omitempty"`
+	RefreshInterval  int                        `json:"refresh_interval"`
+	HistorySize      int                        `json:"history_size,omitempty"`
+	NetworkInterface string                     `json:"network_interface,omitempty"`
+	Colors           map[string]string          `json:"colors"`
+	ColorThresholds  map[string]ColorThresholds `json:"color_thresholds,omitempty"`
+	Items            []ItemConfig               `json:"items"`
+	Labels           map[string]string          `json:"labels,omitempty"`
+	Units            map[string]string          `json:"units,omitempty"`
 }
 
 type ItemConfig struct {
@@ -195,6 +205,99 @@ func (config *MonitorConfig) GetLabelText(monitorName string, defaultLabel strin
 	return defaultLabel
 }
 
+// GetDynamicColor returns color based on value and thresholds
+func (config *MonitorConfig) GetDynamicColor(monitorName string, value float64) string {
+	// Check if there are specific thresholds for this monitor
+	if config.ColorThresholds != nil {
+		if thresholds, exists := config.ColorThresholds[monitorName]; exists {
+			if value <= thresholds.LowThreshold {
+				return thresholds.LowColor
+			} else if value <= thresholds.HighThreshold {
+				return thresholds.MediumColor
+			} else {
+				return thresholds.HighColor
+			}
+		}
+	}
+
+	// Default thresholds based on monitor type
+	return config.getDefaultDynamicColor(monitorName, value)
+}
+
+// getDefaultDynamicColor provides default color logic for different monitor types
+func (config *MonitorConfig) getDefaultDynamicColor(monitorName string, value float64) string {
+	// Temperature monitors (CPU, GPU, Disk)
+	if isTemperatureMonitor(monitorName) {
+		if value <= 60 {
+			return "#22c55e" // Green - Safe
+		} else if value <= 75 {
+			return "#eab308" // Yellow - Warning
+		} else {
+			return "#ef4444" // Red - Critical
+		}
+	}
+
+	// Usage monitors (CPU, Memory, GPU usage)
+	if isUsageMonitor(monitorName) {
+		if value <= 60 {
+			return "#22c55e" // Green - Normal
+		} else if value <= 75 {
+			return "#eab308" // Yellow - High
+		} else {
+			return "#ef4444" // Red - Critical
+		}
+	}
+
+	// Network speed monitors
+	if isNetworkMonitor(monitorName) {
+		// For network speed, low is normal (green), high might indicate issues (red)
+		if value <= 10 { // MB/s
+			return "#22c55e" // Green - Normal/Low speed
+		} else if value <= 50 {
+			return "#eab308" // Yellow - Medium speed
+		} else {
+			return "#ef4444" // Red - High speed (potential issue)
+		}
+	}
+
+	// Default fallback color
+	if color, exists := config.Colors["default_text"]; exists {
+		return color
+	}
+	return "#f8fafc"
+}
+
+// Helper functions to identify monitor types
+func isTemperatureMonitor(monitorName string) bool {
+	tempMonitors := []string{"cpu_temp", "gpu_temp", "disk_temp"}
+	for _, temp := range tempMonitors {
+		if monitorName == temp {
+			return true
+		}
+	}
+	return false
+}
+
+func isUsageMonitor(monitorName string) bool {
+	usageMonitors := []string{"cpu_usage", "memory_usage", "gpu_usage"}
+	for _, usage := range usageMonitors {
+		if monitorName == usage {
+			return true
+		}
+	}
+	return false
+}
+
+func isNetworkMonitor(monitorName string) bool {
+	networkMonitors := []string{"net_upload", "net_download"}
+	for _, network := range networkMonitors {
+		if monitorName == network {
+			return true
+		}
+	}
+	return false
+}
+
 func (config *MonitorConfig) GetUnitText(monitorName string, defaultUnit string) string {
 	if config.Units != nil {
 		if unit, exists := config.Units[monitorName]; exists {
@@ -202,4 +305,11 @@ func (config *MonitorConfig) GetUnitText(monitorName string, defaultUnit string)
 		}
 	}
 	return defaultUnit
+}
+
+func (config *MonitorConfig) GetNetworkInterface() string {
+	if config.NetworkInterface == "" {
+		return "auto"
+	}
+	return config.NetworkInterface
 }

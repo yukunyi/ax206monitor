@@ -107,7 +107,13 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 	// Draw chart line
 	itemColor := item.Color
 	if itemColor == "" {
-		itemColor = c.getColorFromConfig(item.Monitor, config)
+		// Use dynamic color based on current value
+		if len(history) > 0 {
+			currentValue := history[len(history)-1]
+			itemColor = config.GetDynamicColor(item.Monitor, currentValue)
+		} else {
+			itemColor = c.getColorFromConfig(item.Monitor, config)
+		}
 	}
 	dc.SetColor(parseColor(itemColor))
 	dc.SetLineWidth(1.5)
@@ -259,7 +265,12 @@ func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor Mon
 	if value != nil {
 		valueText := c.formatValue(value, item.GetShowUnit())
 		if valueText != "" {
-			dc.SetColor(parseColor(config.Colors["default_text"]))
+			// Use dynamic color for value text
+			textColor := config.Colors["default_text"]
+			if numValue := getFloat64Value(value.Value); numValue != 0 {
+				textColor = config.GetDynamicColor(item.Monitor, numValue)
+			}
+			dc.SetColor(parseColor(textColor))
 
 			// Measure text to position it on the right
 			textWidth, _ := dc.MeasureString(valueText)

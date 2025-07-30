@@ -187,7 +187,16 @@ var globalMonitorRegistry *MonitorRegistry
 func GetMonitorRegistry() *MonitorRegistry {
 	if globalMonitorRegistry == nil {
 		globalMonitorRegistry = NewMonitorRegistry()
-		initializeMonitorItems()
+		initializeMonitorItems(nil, "")
+		performInitialUpdate()
+	}
+	return globalMonitorRegistry
+}
+
+func GetMonitorRegistryWithConfig(requiredMonitors []string, networkInterface string) *MonitorRegistry {
+	if globalMonitorRegistry == nil {
+		globalMonitorRegistry = NewMonitorRegistry()
+		initializeMonitorItems(requiredMonitors, networkInterface)
 		performInitialUpdate()
 	}
 	return globalMonitorRegistry
@@ -209,46 +218,124 @@ func performInitialUpdate() {
 	}
 }
 
-func initializeMonitorItems() {
+func initializeMonitorItems(requiredMonitors []string, networkInterface string) {
 	registry := globalMonitorRegistry
 
-	registry.Register(NewCPUUsageMonitor())
-	registry.Register(NewCPUTempMonitor())
-	registry.Register(NewCPUFreqMonitor())
-	registry.Register(NewMemoryUsageMonitor())
-	registry.Register(NewMemoryUsedMonitor())
-	registry.Register(NewMemoryTotalMonitor())
-	registry.Register(NewGPUUsageMonitor())
-	registry.Register(NewGPUTempMonitor())
-	registry.Register(NewGPUFreqMonitor())
-	registry.Register(NewGPUFPSMonitor())
-	registry.Register(NewDiskTempMonitor())
-	registry.Register(NewLoadAvgMonitor())
-	registry.Register(NewCurrentTimeMonitor())
+	// Create a map for quick lookup of required monitors
+	required := make(map[string]bool)
+	if requiredMonitors != nil {
+		for _, monitor := range requiredMonitors {
+			required[monitor] = true
+		}
+	}
 
-	initializeNetworkMonitors(registry)
-	initializeFanMonitors(registry)
+	// Helper function to check if a monitor is required
+	isRequired := func(name string) bool {
+		if requiredMonitors == nil {
+			return true // Initialize all if no filter provided
+		}
+		return required[name]
+	}
+
+	// Initialize basic monitors only if required
+	if isRequired("cpu_usage") {
+		registry.Register(NewCPUUsageMonitor())
+	}
+	if isRequired("cpu_temp") {
+		registry.Register(NewCPUTempMonitor())
+	}
+	if isRequired("cpu_freq") {
+		registry.Register(NewCPUFreqMonitor())
+	}
+	if isRequired("memory_usage") {
+		registry.Register(NewMemoryUsageMonitor())
+	}
+	if isRequired("memory_used") {
+		registry.Register(NewMemoryUsedMonitor())
+	}
+	if isRequired("memory_total") {
+		registry.Register(NewMemoryTotalMonitor())
+	}
+	if isRequired("gpu_usage") {
+		registry.Register(NewGPUUsageMonitor())
+	}
+	if isRequired("gpu_temp") {
+		registry.Register(NewGPUTempMonitor())
+	}
+	if isRequired("gpu_freq") {
+		registry.Register(NewGPUFreqMonitor())
+	}
+	if isRequired("gpu_fps") {
+		registry.Register(NewGPUFPSMonitor())
+	}
+	if isRequired("disk_temp") {
+		registry.Register(NewDiskTempMonitor())
+	}
+	if isRequired("disk_usage") {
+		registry.Register(NewDiskUsageMonitor())
+	}
+	if isRequired("load_avg") {
+		registry.Register(NewLoadAvgMonitor())
+	}
+	if isRequired("current_time") {
+		registry.Register(NewCurrentTimeMonitor())
+	}
+
+	initializeNetworkMonitors(registry, requiredMonitors, networkInterface)
+	initializeFanMonitors(registry, requiredMonitors)
 }
 
-func initializeNetworkMonitors(registry *MonitorRegistry) {
-	interfaces := getActiveNetworkInterfaces()
-	for i, iface := range interfaces {
-		if i == 0 {
-			registry.Register(NewNetworkInterfaceMonitor(iface, "upload", "default"))
-			registry.Register(NewNetworkInterfaceMonitor(iface, "download", "default"))
-			registry.Register(NewNetworkInterfaceMonitor(iface, "ip", "default"))
-			registry.Register(NewNetworkInterfaceMonitor(iface, "name", "default"))
+func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []string, networkInterface string) {
+	// Helper function to check if a monitor is required
+	isRequired := func(name string) bool {
+		if requiredMonitors == nil {
+			return true
 		}
-		registry.Register(NewNetworkInterfaceMonitor(iface, "upload", ""))
-		registry.Register(NewNetworkInterfaceMonitor(iface, "download", ""))
-		registry.Register(NewNetworkInterfaceMonitor(iface, "ip", ""))
-		registry.Register(NewNetworkInterfaceMonitor(iface, "name", ""))
+		for _, monitor := range requiredMonitors {
+			if monitor == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Get the configured network interface
+	configuredInterface := GetConfiguredNetworkInterface(networkInterface)
+	if configuredInterface == "" {
+		return // No valid interface found
+	}
+
+	// Initialize network monitors only if required
+	if isRequired("net_upload") {
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "upload", ""))
+	}
+	if isRequired("net_download") {
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "download", ""))
+	}
+	if isRequired("net_ip") {
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "ip", ""))
+	}
+	if isRequired("net_interface") {
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
 	}
 }
 
-func initializeFanMonitors(registry *MonitorRegistry) {
+func initializeFanMonitors(registry *MonitorRegistry, requiredMonitors []string) {
 	fans := GetAvailableFans()
 	for i, fan := range fans {
+		fanMonitorName := fmt.Sprintf("fan_%d", i)
+		if requiredMonitors != nil {
+			required := false
+			for _, monitor := range requiredMonitors {
+				if monitor == fanMonitorName {
+					required = true
+					break
+				}
+			}
+			if !required {
+				continue
+			}
+		}
 		registry.Register(NewFanMonitor(i, fan.Name))
 	}
 }

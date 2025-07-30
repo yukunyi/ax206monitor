@@ -45,9 +45,15 @@ func (b *BigValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 
 	itemColor := item.Color
 	if itemColor == "" {
-		itemColor = config.Colors["default_text"]
-		if itemColor == "" {
-			itemColor = "#ffffff"
+		// Use dynamic color based on value
+		numValue := getFloat64Value(value.Value)
+		if numValue != 0 {
+			itemColor = config.GetDynamicColor(item.Monitor, numValue)
+		} else {
+			itemColor = config.Colors["default_text"]
+			if itemColor == "" {
+				itemColor = "#ffffff"
+			}
 		}
 	}
 	dc.SetColor(parseColor(itemColor))

@@ -3,6 +3,7 @@ package main
 import (
 	"time"
 
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/load"
 )
 
@@ -82,5 +83,33 @@ func (c *CurrentTimeMonitor) Update() error {
 	now := time.Now()
 	c.SetValue(now.Format("2006-01-02 15:04:05"))
 	c.SetAvailable(true)
+	return nil
+}
+
+type DiskUsageMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskUsageMonitor() *DiskUsageMonitor {
+	return &DiskUsageMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_usage",
+			"Disk Usage",
+			0, 100,
+			"%",
+			1,
+		),
+	}
+}
+
+func (d *DiskUsageMonitor) Update() error {
+	usage, err := disk.Usage("/")
+	if err != nil {
+		d.SetAvailable(false)
+		return err
+	}
+
+	d.SetValue(usage.UsedPercent)
+	d.SetAvailable(true)
 	return nil
 }

@@ -46,7 +46,7 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 
 		itemColor := item.Color
 		if itemColor == "" {
-			itemColor = v.getColorFromConfig(item.Monitor, config)
+			itemColor = v.getDynamicColorFromValue(item.Monitor, value.Value, config)
 		}
 		dc.SetColor(parseColor(itemColor))
 
@@ -92,6 +92,22 @@ func (v *ValueRenderer) getColorFromConfig(monitorName string, config *MonitorCo
 	}
 
 	return "#ffffff"
+}
+
+// getDynamicColorFromValue returns color based on monitor value and thresholds
+func (v *ValueRenderer) getDynamicColorFromValue(monitorName string, value interface{}, config *MonitorConfig) string {
+	// Check for specific monitor color first (static override)
+	if color, exists := config.Colors[monitorName]; exists {
+		return color
+	}
+
+	// Try to get numeric value for dynamic coloring
+	if numValue, ok := v.getFloat64(value); ok {
+		return config.GetDynamicColor(monitorName, numValue)
+	}
+
+	// Fallback to default color
+	return v.getColorFromConfig(monitorName, config)
 }
 
 func (v *ValueRenderer) drawLabel(dc *gg.Context, item *ItemConfig, monitor MonitorItem, fontCache *FontCache, config *MonitorConfig) {

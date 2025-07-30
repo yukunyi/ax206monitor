@@ -76,7 +76,9 @@ func main() {
 		logFatal("Config load failed '%s': %v", *configFlag, err)
 	}
 
-	registry := GetMonitorRegistry()
+	requiredMonitors := getRequiredMonitors(config)
+	networkInterface := config.GetNetworkInterface()
+	registry := GetMonitorRegistryWithConfig(requiredMonitors, networkInterface)
 
 	fontCache, err := loadFontCache()
 	if err != nil {
@@ -125,7 +127,6 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
-	requiredMonitors := getRequiredMonitors(config)
 	logInfo("Monitoring %d items", len(requiredMonitors))
 
 	ticker := time.NewTicker(refreshInterval)
