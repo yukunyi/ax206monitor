@@ -1,235 +1,74 @@
 package main
 
-type GPUUsageMonitor struct {
-	*BaseMonitorItem
+// NewGPUUsageMonitor creates a GPU usage monitor using the factory
+func NewGPUUsageMonitor() MonitorItem {
+	return CreateCachedValueMonitor("gpu_usage", "GPU", "%", 0, 100, 0, "gpu_usage")
 }
 
-func NewGPUUsageMonitor() *GPUUsageMonitor {
-	return &GPUUsageMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_usage",
-			"GPU",
-			0, 100,
-			"%",
-			0,
-		),
-	}
+// NewGPUTempMonitor creates a GPU temperature monitor using the factory
+func NewGPUTempMonitor() MonitorItem {
+	return CreateCachedValueMonitor("gpu_temp", "GPU Temp", "°C", 0, 100, 0, "gpu_temp")
 }
 
-func (g *GPUUsageMonitor) Update() error {
-	if cachedValue := GetCachedValue("gpu_usage"); cachedValue != nil {
-		if usage, ok := cachedValue.(float64); ok && usage >= 0 {
-			g.SetValue(usage)
-			g.SetAvailable(true)
-		} else {
-			g.SetAvailable(false)
+// NewGPUFreqMonitor creates a GPU frequency monitor using the factory
+func NewGPUFreqMonitor() MonitorItem {
+	return CreateCachedValueMonitor("gpu_freq", "GPU Freq", "MHz", 0, 0, 0, "gpu_freq")
+}
+
+// NewGPUFPSMonitor creates a GPU FPS monitor using the factory
+func NewGPUFPSMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateFrequencyMonitor("gpu_fps", "GPU FPS", func() (float64, bool) {
+		fps := getGPUFPS()
+		return fps, fps > 0
+	})
+}
+
+// NewGPUModelMonitor creates a GPU model monitor using the factory
+func NewGPUModelMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateStringMonitor("gpu_model", "GPU Model", func() (string, bool) {
+		initializeCache()
+		if cachedGPUInfo != nil && cachedGPUInfo.Model != "Unknown GPU" {
+			return cachedGPUInfo.Model, true
 		}
-	} else {
-		g.SetAvailable(false)
-	}
-
-	return nil
+		return "", false
+	})
 }
 
-type GPUTempMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUTempMonitor() *GPUTempMonitor {
-	return &GPUTempMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_temp",
-			"GPU Temp",
-			0, 100,
-			"°C",
-			0,
-		),
-	}
-}
-
-func (g *GPUTempMonitor) Update() error {
-	if cachedValue := GetCachedValue("gpu_temp"); cachedValue != nil {
-		if temp, ok := cachedValue.(float64); ok && temp > 0 {
-			g.SetValue(temp)
-			g.SetAvailable(true)
-		} else {
-			g.SetAvailable(false)
+// NewGPUMemoryTotalMonitor creates a GPU total memory monitor using the factory
+func NewGPUMemoryTotalMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateMemoryMonitor("gpu_memory_total", "GPU Memory", func() (float64, bool) {
+		initializeCache()
+		if cachedGPUInfo != nil && cachedGPUInfo.Memory > 0 {
+			return float64(cachedGPUInfo.Memory), true
 		}
-	} else {
-		g.SetAvailable(false)
-	}
-
-	return nil
+		return 0, false
+	})
 }
 
-type GPUFreqMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUFreqMonitor() *GPUFreqMonitor {
-	return &GPUFreqMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_freq",
-			"GPU Freq",
-			0, 0,
-			"MHz",
-			0,
-		),
-	}
-}
-
-func (g *GPUFreqMonitor) Update() error {
-	if cachedValue := GetCachedValue("gpu_freq"); cachedValue != nil {
-		if freq, ok := cachedValue.(float64); ok && freq > 0 {
-			g.SetValue(freq)
-			g.SetAvailable(true)
-		} else {
-			g.SetAvailable(false)
+// NewGPUMemoryUsedMonitor creates a GPU used memory monitor using the factory
+func NewGPUMemoryUsedMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateMemoryMonitor("gpu_memory_used", "GPU Mem Used", func() (float64, bool) {
+		initializeCache()
+		if cachedGPUInfo != nil && cachedGPUInfo.MemoryUsed > 0 {
+			return float64(cachedGPUInfo.MemoryUsed), true
 		}
-	} else {
-		g.SetAvailable(false)
-	}
-
-	return nil
+		return 0, false
+	})
 }
 
-type GPUFPSMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUFPSMonitor() *GPUFPSMonitor {
-	return &GPUFPSMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_fps",
-			"GPU FPS",
-			0, 240,
-			"FPS",
-			0,
-		),
-	}
-}
-
-func (g *GPUFPSMonitor) Update() error {
-	fps := getGPUFPS()
-	if fps > 0 {
-		g.SetValue(fps)
-		g.SetAvailable(true)
-	} else {
-		g.SetAvailable(false)
-	}
-
-	return nil
-}
-
-// GPUModelMonitor displays GPU model information
-type GPUModelMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUModelMonitor() *GPUModelMonitor {
-	return &GPUModelMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_model",
-			"GPU Model",
-			0, 0,
-			"",
-			0,
-		),
-	}
-}
-
-func (g *GPUModelMonitor) Update() error {
-	initializeCache()
-	if cachedGPUInfo != nil {
-		g.SetValue(cachedGPUInfo.Model)
-		g.SetAvailable(true)
-	} else {
-		g.SetAvailable(false)
-	}
-	return nil
-}
-
-// GPUMemoryTotalMonitor displays total GPU memory
-type GPUMemoryTotalMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUMemoryTotalMonitor() *GPUMemoryTotalMonitor {
-	return &GPUMemoryTotalMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_memory_total",
-			"GPU Memory",
-			0, 0,
-			"MB",
-			0,
-		),
-	}
-}
-
-func (g *GPUMemoryTotalMonitor) Update() error {
-	initializeCache()
-	if cachedGPUInfo != nil && cachedGPUInfo.Memory > 0 {
-		g.SetValue(cachedGPUInfo.Memory)
-		g.SetAvailable(true)
-	} else {
-		g.SetAvailable(false)
-	}
-	return nil
-}
-
-// GPUMemoryUsedMonitor displays used GPU memory
-type GPUMemoryUsedMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUMemoryUsedMonitor() *GPUMemoryUsedMonitor {
-	return &GPUMemoryUsedMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_memory_used",
-			"GPU Mem Used",
-			0, 0,
-			"MB",
-			0,
-		),
-	}
-}
-
-func (g *GPUMemoryUsedMonitor) Update() error {
-	initializeCache()
-	if cachedGPUInfo != nil && cachedGPUInfo.MemoryUsed > 0 {
-		g.SetValue(cachedGPUInfo.MemoryUsed)
-		g.SetAvailable(true)
-	} else {
-		g.SetAvailable(false)
-	}
-	return nil
-}
-
-// GPUMemoryUsageMonitor displays GPU memory usage percentage
-type GPUMemoryUsageMonitor struct {
-	*BaseMonitorItem
-}
-
-func NewGPUMemoryUsageMonitor() *GPUMemoryUsageMonitor {
-	return &GPUMemoryUsageMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(
-			"gpu_memory_usage",
-			"GPU Mem Usage",
-			0, 100,
-			"%",
-			1,
-		),
-	}
-}
-
-func (g *GPUMemoryUsageMonitor) Update() error {
-	initializeCache()
-	if cachedGPUInfo != nil && cachedGPUInfo.Memory > 0 && cachedGPUInfo.MemoryUsed > 0 {
-		usage := float64(cachedGPUInfo.MemoryUsed) / float64(cachedGPUInfo.Memory) * 100
-		g.SetValue(usage)
-		g.SetAvailable(true)
-	} else {
-		g.SetAvailable(false)
-	}
-	return nil
+// NewGPUMemoryUsageMonitor creates a GPU memory usage monitor using the factory
+func NewGPUMemoryUsageMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateUsageMonitor("gpu_memory_usage", "GPU Mem Usage", func() (float64, bool) {
+		initializeCache()
+		if cachedGPUInfo != nil && cachedGPUInfo.Memory > 0 && cachedGPUInfo.MemoryUsed > 0 {
+			usage := float64(cachedGPUInfo.MemoryUsed) / float64(cachedGPUInfo.Memory) * 100
+			return usage, true
+		}
+		return 0, false
+	})
 }

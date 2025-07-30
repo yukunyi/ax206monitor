@@ -96,7 +96,11 @@ func getMemoryInfo() (total float64, used float64, usagePercent float64) {
 			}
 		}
 	}
-	return 16.0, 8.0, 50.0
+
+	// Fallback to WMI or system calls
+	// TODO: Implement WMI-based memory info retrieval
+	logWarnModule("memory", "LibreHardwareMonitor not available, memory info unavailable")
+	return 0.0, 0.0, 0.0
 }
 
 func getFanInfo() []FanInfo {
@@ -108,10 +112,10 @@ func getFanInfo() []FanInfo {
 			}
 		}
 	}
-	return []FanInfo{
-		{Name: "CPU Fan", Speed: 1200, Index: 1},
-		{Name: "Case Fan", Speed: 800, Index: 2},
-	}
+
+	// Return empty slice instead of mock data
+	logWarnModule("fan", "LibreHardwareMonitor not available, fan info unavailable")
+	return []FanInfo{}
 }
 
 type NetworkInfoData struct {
@@ -163,23 +167,26 @@ func getNetworkInfo() NetworkInfoData {
 		}
 	}
 
-	info.UploadSpeed = 0.5
-	info.DownloadSpeed = 2.1
+	// Return zero values instead of mock data
+	logWarnModule("network", "LibreHardwareMonitor not available, network speed unavailable")
+	info.UploadSpeed = 0.0
+	info.DownloadSpeed = 0.0
 	return info
 }
 
 func getDiskInfo() []DiskInfo {
-	return []DiskInfo{
-		{Name: "C:", Usage: 65.0, Size: 500, Model: "Windows Disk"},
-	}
+	// TODO: Implement real disk info retrieval using WMI
+	logWarnModule("disk", "Disk info not implemented for Windows, use LibreHardwareMonitor")
+	return []DiskInfo{}
 }
 
 func getSystemInfo() SystemInfo {
+	hostname := getComputerName()
 	return SystemInfo{
 		OS:           "Windows",
 		Architecture: runtime.GOARCH,
 		CPUCores:     runtime.NumCPU(),
-		Hostname:     "Windows-PC",
+		Hostname:     hostname,
 	}
 }
 
@@ -190,9 +197,15 @@ func cleanupSystemSpecific() {
 }
 
 func getGPUFPS() float64 {
+	// GPU FPS monitoring not implemented on Windows
+	// Would require DirectX/OpenGL hooks or game-specific APIs
+	logDebugModule("gpu", "GPU FPS monitoring not available on Windows")
 	return 0.0
 }
 
 func getDiskTemperature() float64 {
+	// Disk temperature monitoring not implemented on Windows
+	// Use LibreHardwareMonitor for temperature data
+	logDebugModule("disk", "Disk temperature monitoring not available on Windows without LibreHardwareMonitor")
 	return 0.0
 }

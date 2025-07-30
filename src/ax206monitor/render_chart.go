@@ -2,7 +2,6 @@ package main
 
 import (
 	"image/color"
-	"strconv"
 
 	"github.com/fogleman/gg"
 )
@@ -42,7 +41,7 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 	} else {
 		value := monitor.GetValue()
 		var ok bool
-		val, ok = c.getFloat64(value.Value)
+		val, ok = tryGetFloat64(value.Value)
 		if !ok {
 			val = 0.0
 		}
@@ -115,7 +114,7 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 			currentValue := history[len(history)-1]
 			itemColor = config.GetDynamicColor(item.Monitor, currentValue)
 		} else {
-			itemColor = c.getColorFromConfig(item.Monitor, config)
+			itemColor = getColorFromConfig(item.Monitor, "chart_line", "#3b82f6", config)
 		}
 	}
 	dc.SetColor(parseColor(itemColor))
@@ -206,39 +205,7 @@ func (c *ChartRenderer) getMinMax(values []float64) (float64, float64) {
 	return min, max
 }
 
-func (c *ChartRenderer) getFloat64(value interface{}) (float64, bool) {
-	switch val := value.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case uint64:
-		return float64(val), true
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
-}
-
-func (c *ChartRenderer) getColorFromConfig(monitorName string, config *MonitorConfig) string {
-	// Check for specific monitor color first
-	if color, exists := config.Colors[monitorName]; exists {
-		return color
-	}
-
-	// Use default chart line color
-	if color, exists := config.Colors["chart_line"]; exists {
-		return color
-	}
-
-	return "#45b7d1"
-}
+// Removed duplicate functions - now using common utilities from render_common.go
 
 func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor MonitorItem, fontCache *FontCache, config *MonitorConfig, headerHeight int) {
 	fontSize := 16

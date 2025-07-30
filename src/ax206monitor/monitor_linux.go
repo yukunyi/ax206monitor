@@ -20,106 +20,21 @@ type DiskIOSnapshot struct {
 }
 
 var (
-	cachedCPUTempPath  string
+	cpuTempSensor      = NewCachedSensorPath(30 * time.Second)
+	gpuTempSensor      = NewCachedSensorPath(30 * time.Second)
+	diskTempSensor     = NewCachedSensorPath(30 * time.Second)
+	lastDiskStats      map[string]*DiskIOSnapshot
 	cachedDiskTempPath string
 	cachedGPUTempPath  string
-	lastDiskStats      map[string]*DiskIOSnapshot
 )
 
 func getRealCPUTemperature() float64 {
-	if cachedCPUTempPath != "" {
-		if tempBytes, err := ioutil.ReadFile(cachedCPUTempPath); err == nil {
-			tempStr := strings.TrimSpace(string(tempBytes))
-			if tempInt, err := strconv.Atoi(tempStr); err == nil {
-				temp := float64(tempInt) / 1000.0
-				if temp > 20 && temp < 150 {
-					return temp
-				}
-			}
-		}
-		cachedCPUTempPath = ""
-		logInfoModule("cpu", "CPU temperature path changed, rescanning")
-	}
-
-	maxTemp := 0.0
-	hwmonDirs, err := ioutil.ReadDir("/sys/class/hwmon")
+	temp, err := cpuTempSensor.GetValue(CPUSensorPatterns, "temp1_input", CPUTempMin, CPUTempMax)
 	if err != nil {
+		logDebugModule("cpu", "CPU temperature not available: %v", err)
 		return 0.0
 	}
-
-	for _, hwmon := range hwmonDirs {
-		hwmonPath := fmt.Sprintf("/sys/class/hwmon/%s", hwmon.Name())
-
-		nameBytes, err := ioutil.ReadFile(hwmonPath + "/name")
-		if err != nil {
-			continue
-		}
-		hwmonName := strings.TrimSpace(string(nameBytes))
-
-		isCPUSensor := false
-		if hwmonName == "k10temp" || hwmonName == "coretemp" || hwmonName == "zenpower" ||
-			strings.Contains(hwmonName, "cpu") || strings.Contains(hwmonName, "package") {
-			isCPUSensor = true
-		}
-
-		if isCPUSensor {
-			tempPath := hwmonPath + "/temp1_input"
-			tempBytes, err := ioutil.ReadFile(tempPath)
-			if err != nil {
-				continue
-			}
-
-			tempStr := strings.TrimSpace(string(tempBytes))
-			if tempInt, err := strconv.Atoi(tempStr); err == nil {
-				temp := float64(tempInt) / 1000.0
-				if temp > maxTemp && temp < 150 && temp > 20 {
-					maxTemp = temp
-					cachedCPUTempPath = tempPath
-					logInfoModule("cpu", "Found CPU temperature sensor: %s (%.1f°C)", hwmonName, temp)
-				}
-			}
-		} else {
-			tempFiles, err := ioutil.ReadDir(hwmonPath)
-			if err != nil {
-				continue
-			}
-
-			for _, tempFile := range tempFiles {
-				if strings.HasPrefix(tempFile.Name(), "temp") && strings.HasSuffix(tempFile.Name(), "_input") {
-					tempNum := strings.TrimSuffix(strings.TrimPrefix(tempFile.Name(), "temp"), "_input")
-					labelPath := fmt.Sprintf("%s/temp%s_label", hwmonPath, tempNum)
-					inputPath := fmt.Sprintf("%s/temp%s_input", hwmonPath, tempNum)
-
-					labelBytes, err := ioutil.ReadFile(labelPath)
-					if err != nil {
-						continue
-					}
-
-					label := strings.TrimSpace(string(labelBytes))
-					if strings.Contains(strings.ToLower(label), "cpu") ||
-						strings.Contains(strings.ToLower(label), "package") ||
-						strings.Contains(strings.ToLower(label), "core") {
-
-						tempBytes, err := ioutil.ReadFile(inputPath)
-						if err != nil {
-							continue
-						}
-
-						tempStr := strings.TrimSpace(string(tempBytes))
-						if tempInt, err := strconv.Atoi(tempStr); err == nil {
-							temp := float64(tempInt) / 1000.0
-							if temp > maxTemp && temp < 150 && temp > 20 {
-								maxTemp = temp
-								cachedCPUTempPath = inputPath
-								logInfoModule("cpu", "Found CPU temperature sensor: %s/%s (%.1f°C)", hwmonName, label, temp)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return maxTemp
+	return temp
 }
 
 func getDiskTemperature() float64 {
@@ -637,73 +552,104 @@ func detectLinuxGPUInfo() *GPUInfo {
 		Frequency:   0,
 	}
 
-	// Priority order: NVIDIA > AMD > Intel (prefer discrete over integrated)
-	var candidateGPUs []*GPUInfo
+	// Priority: Discrete GPUs only (NVIDIA > AMD with VRAM)
+	var discreteGPUs []*GPUInfo
 
-	// Check for NVIDIA GPU (usually discrete)
+	// Check for NVIDIA GPU (discrete)
 	if _, err := ioutil.ReadFile("/proc/driver/nvidia/version"); err == nil {
-		nvidiaGPU := &GPUInfo{
-			Model:      "NVIDIA GPU",
-			Vendor:     "NVIDIA",
-			Memory:     0,
-			MemoryUsed: 0,
-			FanCount:   0,
-			Fans:       []FanInfo{},
+		nvidiaGPU := detectNVIDIAGPU()
+		if nvidiaGPU != nil {
+			discreteGPUs = append(discreteGPUs, nvidiaGPU)
 		}
-
-		// Try to get GPU model from nvidia-ml-py or nvidia-smi equivalent files
-		if entries, err := ioutil.ReadDir("/proc/driver/nvidia/gpus/"); err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					gpuPath := fmt.Sprintf("/proc/driver/nvidia/gpus/%s", entry.Name())
-					if infoData, err := ioutil.ReadFile(gpuPath + "/information"); err == nil {
-						lines := strings.Split(string(infoData), "\n")
-						for _, line := range lines {
-							if strings.Contains(line, "Model:") {
-								parts := strings.SplitN(line, ":", 2)
-								if len(parts) == 2 {
-									model := strings.TrimSpace(parts[1])
-									// Clean up NVIDIA model name
-									model = strings.ReplaceAll(model, "NVIDIA ", "")
-									model = strings.ReplaceAll(model, "GeForce ", "")
-									nvidiaGPU.Model = "NVIDIA " + model
-								}
-							}
-						}
-					}
-					break // Use first GPU
-				}
-			}
-		}
-
-		// Also try to get model from DRM subsystem
-		if nvidiaGPU.Model == "NVIDIA GPU" {
-			if entries, err := ioutil.ReadDir("/sys/class/drm/"); err == nil {
-				for _, entry := range entries {
-					if strings.HasPrefix(entry.Name(), "card") && !strings.Contains(entry.Name(), "-") {
-						devicePath := fmt.Sprintf("/sys/class/drm/%s/device", entry.Name())
-						if vendorData, err := ioutil.ReadFile(devicePath + "/vendor"); err == nil {
-							vendorID := strings.TrimSpace(string(vendorData))
-							if vendorID == "0x10de" { // NVIDIA vendor ID
-								// Try to get device name from modalias or other sources
-								if modaliasData, err := ioutil.ReadFile(devicePath + "/modalias"); err == nil {
-									modalias := strings.TrimSpace(string(modaliasData))
-									if strings.Contains(modalias, "pci:") {
-										// Extract device ID and try to map to model name
-										nvidiaGPU.Model = "NVIDIA GPU (Detected)"
-									}
-								}
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-		candidateGPUs = append(candidateGPUs, nvidiaGPU)
 	}
 
-	// Check for AMD GPU (usually discrete)
+	// Check for AMD discrete GPU (with dedicated VRAM)
+	amdGPUs := detectAMDDiscreteGPUs()
+	discreteGPUs = append(discreteGPUs, amdGPUs...)
+
+	// Select the best discrete GPU
+	if len(discreteGPUs) > 0 {
+		// Priority: NVIDIA > AMD
+		for _, candidate := range discreteGPUs {
+			if candidate.Vendor == "NVIDIA" {
+				*gpuInfo = *candidate
+				logInfoModule("gpu", "Selected discrete GPU: %s", candidate.Model)
+				return gpuInfo
+			}
+		}
+		// Use first AMD discrete GPU if no NVIDIA found
+		*gpuInfo = *discreteGPUs[0]
+		logInfoModule("gpu", "Selected discrete GPU: %s", discreteGPUs[0].Model)
+		return gpuInfo
+	}
+
+	logWarnModule("gpu", "No discrete GPU found, GPU monitoring unavailable")
+	return gpuInfo
+}
+
+// detectNVIDIAGPU detects NVIDIA GPU information
+func detectNVIDIAGPU() *GPUInfo {
+	nvidiaGPU := &GPUInfo{
+		Model:      "NVIDIA GPU",
+		Vendor:     "NVIDIA",
+		Memory:     0,
+		MemoryUsed: 0,
+		FanCount:   0,
+		Fans:       []FanInfo{},
+	}
+
+	// Try to get GPU model from nvidia driver files
+	if entries, err := ioutil.ReadDir("/proc/driver/nvidia/gpus/"); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				gpuPath := fmt.Sprintf("/proc/driver/nvidia/gpus/%s", entry.Name())
+				if infoData, err := ioutil.ReadFile(gpuPath + "/information"); err == nil {
+					lines := strings.Split(string(infoData), "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "Model:") {
+							parts := strings.SplitN(line, ":", 2)
+							if len(parts) == 2 {
+								model := strings.TrimSpace(parts[1])
+								model = strings.ReplaceAll(model, "NVIDIA ", "")
+								model = strings.ReplaceAll(model, "GeForce ", "")
+								nvidiaGPU.Model = "NVIDIA " + model
+							}
+						}
+					}
+				}
+				break // Use first GPU
+			}
+		}
+	}
+
+	// Try to get memory information from DRM
+	if entries, err := ioutil.ReadDir("/sys/class/drm/"); err == nil {
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "card") && !strings.Contains(entry.Name(), "-") {
+				devicePath := fmt.Sprintf("/sys/class/drm/%s/device", entry.Name())
+				if vendorData, err := ioutil.ReadFile(devicePath + "/vendor"); err == nil {
+					vendorID := strings.TrimSpace(string(vendorData))
+					if vendorID == "0x10de" { // NVIDIA vendor ID
+						// Try to get memory info
+						if memData, err := ioutil.ReadFile(devicePath + "/mem_info_vram_total"); err == nil {
+							if memBytes, err := strconv.ParseInt(strings.TrimSpace(string(memData)), 10, 64); err == nil {
+								nvidiaGPU.Memory = memBytes / (1024 * 1024) // Convert to MB
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return nvidiaGPU
+}
+
+// detectAMDDiscreteGPUs detects AMD discrete GPUs (with dedicated VRAM)
+func detectAMDDiscreteGPUs() []*GPUInfo {
+	var amdGPUs []*GPUInfo
+
 	if entries, err := ioutil.ReadDir("/sys/class/drm/"); err == nil {
 		for _, entry := range entries {
 			if strings.HasPrefix(entry.Name(), "card") && !strings.Contains(entry.Name(), "-") {
@@ -713,176 +659,53 @@ func detectLinuxGPUInfo() *GPUInfo {
 				if vendorData, err := ioutil.ReadFile(devicePath + "/vendor"); err == nil {
 					vendorID := strings.TrimSpace(string(vendorData))
 					if vendorID == "0x1002" { // AMD vendor ID
-						amdGPU := &GPUInfo{
-							Vendor:     "AMD",
-							Memory:     0,
-							MemoryUsed: 0,
-							FanCount:   0,
-							Fans:       []FanInfo{},
-						}
-
-						// Try to get device name from multiple sources
-						modelFound := false
-
-						// Try to get model from device name file
-						if nameData, err := ioutil.ReadFile(devicePath + "/device_name"); err == nil {
-							name := strings.TrimSpace(string(nameData))
-							if name != "" {
-								amdGPU.Model = "AMD " + name
-								modelFound = true
-							}
-						}
-
-						// Try to get model from subsystem device
-						if !modelFound {
-							if subsysData, err := ioutil.ReadFile(devicePath + "/subsystem_device"); err == nil {
-								subsysID := strings.TrimSpace(string(subsysData))
-								if deviceData, err := ioutil.ReadFile(devicePath + "/device"); err == nil {
-									deviceID := strings.TrimSpace(string(deviceData))
-									amdGPU.Model = fmt.Sprintf("AMD GPU (%s:%s)", deviceID, subsysID)
-									modelFound = true
-								}
-							}
-						}
-
-						// Fallback to generic name
-						if !modelFound {
-							if deviceData, err := ioutil.ReadFile(devicePath + "/device"); err == nil {
-								deviceID := strings.TrimSpace(string(deviceData))
-								amdGPU.Model = fmt.Sprintf("AMD GPU (%s)", deviceID)
-							} else {
-								amdGPU.Model = "AMD GPU"
-							}
-						}
-
-						// Check if it's a discrete GPU by looking for dedicated memory
+						// Check if it has dedicated VRAM (discrete GPU)
 						if memData, err := ioutil.ReadFile(devicePath + "/mem_info_vram_total"); err == nil {
 							if memBytes, err := strconv.ParseInt(strings.TrimSpace(string(memData)), 10, 64); err == nil && memBytes > 0 {
-								amdGPU.Memory = memBytes / (1024 * 1024)      // Convert to MB
-								candidateGPUs = append(candidateGPUs, amdGPU) // Discrete AMD GPU
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+								amdGPU := &GPUInfo{
+									Vendor:     "AMD",
+									Memory:     memBytes / (1024 * 1024), // Convert to MB
+									MemoryUsed: 0,
+									FanCount:   0,
+									Fans:       []FanInfo{},
+								}
 
-	// Check for Intel GPU (usually integrated, lower priority)
-	if entries, err := ioutil.ReadDir("/sys/class/drm/"); err == nil {
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "card") && !strings.Contains(entry.Name(), "-") {
-				devicePath := fmt.Sprintf("/sys/class/drm/%s/device", entry.Name())
-
-				// Check vendor
-				if vendorData, err := ioutil.ReadFile(devicePath + "/vendor"); err == nil {
-					vendorID := strings.TrimSpace(string(vendorData))
-					if vendorID == "0x8086" { // Intel vendor ID
-						intelGPU := &GPUInfo{
-							Model:      "Intel Integrated Graphics",
-							Vendor:     "Intel",
-							Memory:     0, // Integrated GPUs share system memory
-							MemoryUsed: 0,
-							FanCount:   0,
-							Fans:       []FanInfo{},
-						}
-						candidateGPUs = append(candidateGPUs, intelGPU) // Integrated Intel GPU (lowest priority)
-					}
-				}
-			}
-		}
-	}
-
-	// Select the best GPU (prefer discrete over integrated)
-	if len(candidateGPUs) > 0 {
-		// Priority: NVIDIA > AMD with memory > AMD without memory > Intel
-		for _, candidate := range candidateGPUs {
-			if candidate.Vendor == "NVIDIA" {
-				*gpuInfo = *candidate
-				break
-			}
-		}
-		if gpuInfo.Vendor == "unknown" {
-			for _, candidate := range candidateGPUs {
-				if candidate.Vendor == "AMD" && candidate.Memory > 0 {
-					*gpuInfo = *candidate
-					break
-				}
-			}
-		}
-		if gpuInfo.Vendor == "unknown" {
-			for _, candidate := range candidateGPUs {
-				if candidate.Vendor == "AMD" {
-					*gpuInfo = *candidate
-					break
-				}
-			}
-		}
-		if gpuInfo.Vendor == "unknown" {
-			*gpuInfo = *candidateGPUs[0] // Use Intel as fallback
-		}
-	}
-
-	// Try to get GPU memory information
-	if entries, err := ioutil.ReadDir("/sys/class/drm/"); err == nil {
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "card") && !strings.Contains(entry.Name(), "-") {
-				memPath := fmt.Sprintf("/sys/class/drm/%s/device/mem_info_vram_total", entry.Name())
-				if memData, err := ioutil.ReadFile(memPath); err == nil {
-					if memBytes, err := strconv.ParseInt(strings.TrimSpace(string(memData)), 10, 64); err == nil {
-						gpuInfo.Memory = memBytes / (1024 * 1024) // Convert to MB
-					}
-				}
-
-				memUsedPath := fmt.Sprintf("/sys/class/drm/%s/device/mem_info_vram_used", entry.Name())
-				if memUsedData, err := ioutil.ReadFile(memUsedPath); err == nil {
-					if memUsedBytes, err := strconv.ParseInt(strings.TrimSpace(string(memUsedData)), 10, 64); err == nil {
-						gpuInfo.MemoryUsed = memUsedBytes / (1024 * 1024) // Convert to MB
-					}
-				}
-				break
-			}
-		}
-	}
-
-	// Try to find GPU fans
-	if hwmonEntries, err := ioutil.ReadDir("/sys/class/hwmon/"); err == nil {
-		fanIndex := 1
-		for _, entry := range hwmonEntries {
-			hwmonPath := fmt.Sprintf("/sys/class/hwmon/%s", entry.Name())
-
-			// Check if this is a GPU-related hwmon
-			if nameData, err := ioutil.ReadFile(hwmonPath + "/name"); err == nil {
-				name := strings.TrimSpace(string(nameData))
-				if strings.Contains(name, "nouveau") || strings.Contains(name, "amdgpu") ||
-					strings.Contains(name, "radeon") || strings.Contains(name, "i915") {
-
-					// Look for fan inputs
-					if fanEntries, err := ioutil.ReadDir(hwmonPath); err == nil {
-						for _, fanEntry := range fanEntries {
-							if strings.HasPrefix(fanEntry.Name(), "fan") && strings.HasSuffix(fanEntry.Name(), "_input") {
-								fanPath := fmt.Sprintf("%s/%s", hwmonPath, fanEntry.Name())
-								if fanData, err := ioutil.ReadFile(fanPath); err == nil {
-									if speed, err := strconv.Atoi(strings.TrimSpace(string(fanData))); err == nil && speed > 0 {
-										fanName := fmt.Sprintf("GPU Fan %d", fanIndex)
-										gpuInfo.Fans = append(gpuInfo.Fans, FanInfo{
-											Name:  fanName,
-											Speed: speed,
-											Index: fanIndex,
-										})
-										fanIndex++
+								// Try to get model name
+								modelFound := false
+								if nameData, err := ioutil.ReadFile(devicePath + "/device_name"); err == nil {
+									name := strings.TrimSpace(string(nameData))
+									if name != "" {
+										amdGPU.Model = "AMD " + name
+										modelFound = true
 									}
 								}
+
+								if !modelFound {
+									if deviceData, err := ioutil.ReadFile(devicePath + "/device"); err == nil {
+										deviceID := strings.TrimSpace(string(deviceData))
+										amdGPU.Model = "AMD GPU (" + deviceID + ")"
+									} else {
+										amdGPU.Model = "AMD Discrete GPU"
+									}
+								}
+
+								// Try to get used memory
+								if memUsedData, err := ioutil.ReadFile(devicePath + "/mem_info_vram_used"); err == nil {
+									if memUsedBytes, err := strconv.ParseInt(strings.TrimSpace(string(memUsedData)), 10, 64); err == nil {
+										amdGPU.MemoryUsed = memUsedBytes / (1024 * 1024) // Convert to MB
+									}
+								}
+
+								amdGPUs = append(amdGPUs, amdGPU)
 							}
 						}
 					}
 				}
 			}
 		}
-		gpuInfo.FanCount = len(gpuInfo.Fans)
 	}
 
-	return gpuInfo
+	return amdGPUs
 }
 
 // detectLinuxDiskInfo detects detailed disk information on Linux
@@ -984,7 +807,7 @@ func detectLinuxDiskInfo() []*DiskInfo {
 
 // getDiskTemperatureByName tries to get disk temperature by device name
 func getDiskTemperatureByName(deviceName string) float64 {
-	// Try to find temperature in hwmon for this specific disk
+	// Method 1: Try to find temperature in hwmon for this specific disk
 	if hwmonEntries, err := ioutil.ReadDir("/sys/class/hwmon"); err == nil {
 		for _, entry := range hwmonEntries {
 			hwmonPath := fmt.Sprintf("/sys/class/hwmon/%s", entry.Name())
@@ -992,10 +815,12 @@ func getDiskTemperatureByName(deviceName string) float64 {
 			// Check if this hwmon is for our disk
 			if nameData, err := ioutil.ReadFile(hwmonPath + "/name"); err == nil {
 				name := strings.TrimSpace(string(nameData))
+
+				// Check for disk-specific hwmon names
 				if strings.Contains(strings.ToLower(name), strings.ToLower(deviceName)) ||
-					strings.Contains(strings.ToLower(name), "nvme") ||
-					strings.Contains(strings.ToLower(name), "sata") ||
-					strings.Contains(strings.ToLower(name), "ata") {
+					strings.Contains(strings.ToLower(name), "drivetemp") ||
+					(strings.Contains(strings.ToLower(name), "nvme") && strings.Contains(deviceName, "nvme")) ||
+					(strings.Contains(strings.ToLower(name), "ata") && strings.HasPrefix(deviceName, "sd")) {
 
 					// Look for temperature sensors
 					if tempEntries, err := ioutil.ReadDir(hwmonPath); err == nil {
@@ -1004,7 +829,11 @@ func getDiskTemperatureByName(deviceName string) float64 {
 								tempPath := fmt.Sprintf("%s/%s", hwmonPath, tempEntry.Name())
 								if tempData, err := ioutil.ReadFile(tempPath); err == nil {
 									if temp, err := strconv.ParseFloat(strings.TrimSpace(string(tempData)), 64); err == nil {
-										return temp / 1000.0 // Convert from millidegrees to degrees
+										tempCelsius := temp / 1000.0              // Convert from millidegrees to degrees
+										if tempCelsius > 0 && tempCelsius < 100 { // Sanity check
+											logDebugModule("disk", "Found temperature for %s via hwmon %s: %.1f°C", deviceName, name, tempCelsius)
+											return tempCelsius
+										}
 									}
 								}
 							}
@@ -1015,5 +844,58 @@ func getDiskTemperatureByName(deviceName string) float64 {
 		}
 	}
 
+	// Method 2: Try alternative method via /sys/block/*/device/hwmon/*/temp*_input
+	blockPath := fmt.Sprintf("/sys/block/%s/device/hwmon", deviceName)
+	if hwmonEntries, err := ioutil.ReadDir(blockPath); err == nil {
+		for _, entry := range hwmonEntries {
+			hwmonPath := fmt.Sprintf("%s/%s", blockPath, entry.Name())
+			if tempEntries, err := ioutil.ReadDir(hwmonPath); err == nil {
+				for _, tempEntry := range tempEntries {
+					if strings.HasPrefix(tempEntry.Name(), "temp") && strings.HasSuffix(tempEntry.Name(), "_input") {
+						tempPath := fmt.Sprintf("%s/%s", hwmonPath, tempEntry.Name())
+						if tempData, err := ioutil.ReadFile(tempPath); err == nil {
+							if temp, err := strconv.ParseFloat(strings.TrimSpace(string(tempData)), 64); err == nil {
+								tempCelsius := temp / 1000.0
+								if tempCelsius > 0 && tempCelsius < 100 {
+									logDebugModule("disk", "Found temperature for %s via device path: %.1f°C", deviceName, tempCelsius)
+									return tempCelsius
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Method 3: For NVMe drives, try /sys/class/nvme/nvme*/hwmon*/temp*_input
+	if strings.HasPrefix(deviceName, "nvme") {
+		nvmePath := fmt.Sprintf("/sys/class/nvme/%s", strings.Split(deviceName, "n")[0])
+		if nvmeEntries, err := ioutil.ReadDir(nvmePath); err == nil {
+			for _, entry := range nvmeEntries {
+				if strings.HasPrefix(entry.Name(), "hwmon") {
+					hwmonPath := fmt.Sprintf("%s/%s", nvmePath, entry.Name())
+					if tempEntries, err := ioutil.ReadDir(hwmonPath); err == nil {
+						for _, tempEntry := range tempEntries {
+							if strings.HasPrefix(tempEntry.Name(), "temp") && strings.HasSuffix(tempEntry.Name(), "_input") {
+								tempPath := fmt.Sprintf("%s/%s", hwmonPath, tempEntry.Name())
+								if tempData, err := ioutil.ReadFile(tempPath); err == nil {
+									if temp, err := strconv.ParseFloat(strings.TrimSpace(string(tempData)), 64); err == nil {
+										tempCelsius := temp / 1000.0
+										if tempCelsius > 0 && tempCelsius < 100 {
+											logDebugModule("disk", "Found temperature for %s via nvme path: %.1f°C", deviceName, tempCelsius)
+											return tempCelsius
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	logDebugModule("disk", "No temperature sensor found for disk %s", deviceName)
 	return 0.0 // No temperature found
 }

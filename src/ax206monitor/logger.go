@@ -143,3 +143,12 @@ func logErrorModule(module, msg string, args ...interface{}) {
 		entry.Error(msg)
 	}
 }
+
+func logDebugModule(module, msg string, args ...interface{}) {
+	entry := logger.WithField("module", module)
+	if len(args) > 0 {
+		entry.Debugf(msg, args...)
+	} else {
+		entry.Debug(msg)
+	}
+}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"image/color"
-	"strconv"
 
 	"github.com/fogleman/gg"
 )
@@ -24,7 +23,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 	}
 
 	value := monitor.GetValue()
-	val, ok := p.getFloat64(value.Value)
+	val, ok := tryGetFloat64(value.Value)
 	if !ok {
 		return nil
 	}
@@ -101,39 +100,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 	return nil
 }
 
-func (p *ProgressRenderer) getFloat64(value interface{}) (float64, bool) {
-	switch val := value.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case uint64:
-		return float64(val), true
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
-}
-
-func (p *ProgressRenderer) getColorFromConfig(monitorName string, config *MonitorConfig) string {
-	// Check for specific monitor color first
-	if color, exists := config.Colors[monitorName]; exists {
-		return color
-	}
-
-	// Use default progress fill color
-	if color, exists := config.Colors["progress_fill"]; exists {
-		return color
-	}
-
-	return "#4ecdc4"
-}
+// Removed duplicate functions - now using common utilities from render_common.go
 
 func (p *ProgressRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor MonitorItem, fontCache *FontCache, config *MonitorConfig, headerHeight int) {
 	fontSize := config.GetSmallFontSize()

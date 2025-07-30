@@ -20,12 +20,8 @@ func (b *BigValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 		return nil
 	}
 
-	// Draw background
-	if item.Background != "" {
-		dc.SetColor(parseColor(item.Background))
-		dc.DrawRoundedRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height), 5)
-		dc.Fill()
-	}
+	// Draw background using common utility
+	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, item.Background)
 
 	// Draw label in top-left corner if enabled
 	if item.GetShowLabel() {
@@ -37,32 +33,15 @@ func (b *BigValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 	text := FormatMonitorValue(value, item.GetShowUnit(), item.UnitText)
 
 	fontSize := b.calculateFontSize(dc, item, text, fontCache, config)
-	font, err := fontCache.GetFont(fontSize)
-	if err != nil {
-		font = fontCache.contentFont
-	}
-	dc.SetFontFace(font)
 
 	itemColor := item.Color
 	if itemColor == "" {
-		// Use dynamic color based on value
-		numValue := getFloat64Value(value.Value)
-		if numValue != 0 {
-			itemColor = config.GetDynamicColor(item.Monitor, numValue)
-		} else {
-			itemColor = config.Colors["default_text"]
-			if itemColor == "" {
-				itemColor = "#ffffff"
-			}
-		}
+		itemColor = getDynamicColorFromValue(item.Monitor, value.Value, config)
 	}
-	dc.SetColor(parseColor(itemColor))
 
-	textWidth, textHeight := dc.MeasureString(text)
-	x := float64(item.X) + (float64(item.Width)-textWidth)/2
-	y := float64(item.Y) + (float64(item.Height)+textHeight)/2
+	// Draw centered text using common utility
+	drawCenteredText(dc, text, item.X, item.Y, item.Width, item.Height, fontSize, itemColor, fontCache)
 
-	dc.DrawString(text, x, y)
 	return nil
 }
 
@@ -103,16 +82,5 @@ func (b *BigValueRenderer) calculateFontSize(dc *gg.Context, item *ItemConfig, t
 	maxWidth := float64(item.Width) * 0.8
 	maxHeight := float64(item.Height) * 0.6
 
-	for fontSize := 48; fontSize >= 12; fontSize -= 2 {
-		font, err := fontCache.GetFont(fontSize)
-		if err != nil {
-			continue
-		}
-		dc.SetFontFace(font)
-		textWidth, textHeight := dc.MeasureString(text)
-		if textWidth <= maxWidth && textHeight <= maxHeight {
-			return fontSize
-		}
-	}
-	return 12
+	return calculateOptimalFontSize(dc, text, maxWidth, maxHeight, fontCache, 12, 48)
 }
