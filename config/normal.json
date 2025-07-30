@@ -3,11 +3,11 @@
   "width": 480,
   "height": 320,
   "font_sizes": {
-    "min_label": 14,
-    "def_label": 16,
-    "default": 14,
-    "small": 12,
-    "large": 18
+    "min_label": 10,
+    "def_label": 12,
+    "default": 16,
+    "small": 10,
+    "large": 16
   },
   "font_families": [
     "DejaVu Sans Mono",
@@ -20,133 +20,107 @@
     "monospace"
   ],
   "output_type": "ax206usb",
-  "output_file": "monitor_normal.png",
+  "output_file": "",
   "refresh_interval": 1000,
-  "history_size": 120,
+  "history_size": 150,
   "colors": {
-    "default": "#ffffff",
-    "cpu_temp": "#ff6b6b",
-    "cpu_usage": "#4ecdc4",
-    "cpu_freq": "#45b7d1",
-    "memory_usage": "#f7b731",
-    "memory_used": "#a55eea",
-    "gpu_temp": "#fd79a8",
-    "gpu_usage": "#fdcb6e",
-    "network_upload": "#00b894",
-    "network_download": "#00cec9",
-    "network_ip": "#74b9ff",
-    "current_time": "#ddd"
+    "default_text": "#ffffff",
+    "default_background": "#2a2a2a",
+    "header_text": "#74b9ff",
+    "header_background": "#1a1a1a",
+    "progress_background": "#3a3a3a",
+    "value_normal": "#4ecdc4",
+    "progress_fill": "#4ecdc4",
+    "chart_line": "#45b7d1"
   },
   "items": [
     {
       "type": "value",
-      "monitor": "net_default_ip",
+      "monitor": "current_time",
       "x": 5,
       "y": 5,
-      "width": 150,
-      "height": 25,
-      "font_size": 14,
+      "width": 235,
+      "height": 20,
+      "font_size": 12,
       "bg": "#1a1a1a",
       "label": false
     },
     {
       "type": "value",
-      "monitor": "net_default_name",
-      "x": 160,
+      "monitor": "net_default_ip",
+      "x": 245,
       "y": 5,
-      "width": 100,
-      "height": 25,
-      "font_size": 14,
-      "bg": "#1a1a1a",
-      "label": false
-    },
-    {
-      "type": "value",
-      "monitor": "current_time",
-      "x": 265,
-      "y": 5,
-      "width": 210,
-      "height": 25,
-      "font_size": 14,
-      "bg": "#1a1a1a",
-      "label": false
+      "width": 230,
+      "height": 20,
+      "font_size": 12,
+      "bg": "#1a1a1a"
     },
     {
       "type": "big_value",
       "monitor": "cpu_temp",
       "x": 5,
-      "y": 35,
-      "width": 115,
-      "height": 55,
-      "font_size": 22,
-      "bg": "#2a2a2a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "cpu_usage",
-      "x": 125,
-      "y": 35,
-      "width": 115,
-      "height": 55,
-      "font_size": 22,
-      "bg": "#2a2a2a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "mem_usage",
-      "x": 245,
-      "y": 35,
-      "width": 115,
-      "height": 55,
-      "font_size": 22,
+      "y": 30,
+      "width": 155,
+      "height": 65,
+      "font_size": 24,
       "bg": "#2a2a2a"
     },
     {
       "type": "big_value",
       "monitor": "gpu_temp",
-      "x": 365,
-      "y": 35,
-      "width": 110,
-      "height": 55,
-      "font_size": 22,
+      "x": 165,
+      "y": 30,
+      "width": 155,
+      "height": 65,
+      "font_size": 24,
       "bg": "#2a2a2a"
     },
     {
       "type": "big_value",
-      "monitor": "cpu_freq",
+      "monitor": "disk_temp",
+      "x": 325,
+      "y": 30,
+      "width": 150,
+      "height": 65,
+      "font_size": 24,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "progress",
+      "monitor": "cpu_usage",
       "x": 5,
-      "y": 95,
-      "width": 115,
-      "height": 55,
-      "font_size": 20,
-      "bg": "#2a2a2a"
+      "y": 100,
+      "width": 155,
+      "height": 50,
+      "font_size": 12,
+      "header": true
     },
     {
-      "type": "big_value",
+      "type": "progress",
+      "monitor": "memory_usage",
+      "x": 165,
+      "y": 100,
+      "width": 155,
+      "height": 50,
+      "font_size": 12,
+      "header": true
+    },
+    {
+      "type": "progress",
       "monitor": "gpu_usage",
-      "x": 125,
-      "y": 95,
-      "width": 115,
-      "height": 55,
-      "font_size": 20,
-      "bg": "#2a2a2a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "mem_used",
-      "x": 245,
-      "y": 95,
-      "width": 115,
-      "height": 55,
-      "font_size": 20,
-      "bg": "#2a2a2a"
+      "x": 325,
+      "y": 100,
+      "width": 150,
+      "height": 50,
+      "font_size": 12,
+      "header": true
     },
     {
       "type": "big_value",
       "monitor": "net_default_upload",
-      "x": 365,
-      "y": 95,
-      "width": 110,
+      "x": 5,
+      "y": 155,
+      "width": 235,
       "height": 55,
       "font_size": 18,
       "bg": "#2a2a2a"
@@ -154,89 +128,69 @@
     {
       "type": "big_value",
       "monitor": "net_default_download",
-      "x": 365,
+      "x": 245,
       "y": 155,
-      "width": 110,
+      "width": 230,
       "height": 55,
       "font_size": 18,
       "bg": "#2a2a2a"
     },
     {
-      "type": "progress",
-      "monitor": "cpu_usage",
-      "x": 5,
-      "y": 155,
-      "width": 230,
-      "height": 30,
-      "max": 100
-    },
-    {
-      "type": "progress",
-      "monitor": "memory_usage",
-      "x": 245,
-      "y": 155,
-      "width": 230,
-      "height": 30,
-      "max": 100
-    },
-    {
-      "type": "progress",
-      "monitor": "gpu_usage",
-      "x": 5,
-      "y": 190,
-      "width": 230,
-      "height": 30,
-      "max": 100
-    },
-    {
-      "type": "value",
-      "monitor": "network_download",
-      "x": 245,
-      "y": 190,
-      "width": 230,
-      "height": 30,
-      "font_size": 18,
-      "background": "#2a2a2a",
-      "show_unit": true
-    },
-    {
       "type": "chart",
       "monitor": "cpu_usage",
       "x": 5,
-      "y": 225,
+      "y": 215,
       "width": 155,
-      "height": 90,
-      "history": true,
-      "max_value": 100,
-      "min_value": 0,
-      "show_label": true,
-      "show_header": true,
-      "show_unit": true
+      "height": 50,
+      "history": true
     },
     {
       "type": "chart",
       "monitor": "memory_usage",
       "x": 165,
-      "y": 225,
+      "y": 215,
       "width": 155,
-      "height": 90,
-      "history": true,
-      "show_label": true,
-      "show_header": true,
-      "show_unit": true
+      "height": 50,
+      "history": true
     },
     {
       "type": "chart",
       "monitor": "gpu_usage",
       "x": 325,
-      "y": 225,
+      "y": 215,
       "width": 150,
-      "height": 90,
-      "history": true,
-      "max_value": 100,
-      "show_label": true,
-      "show_header": true,
-      "show_unit": true
+      "height": 50,
+      "history": true
+    },
+    {
+      "type": "big_value",
+      "monitor": "cpu_freq",
+      "x": 5,
+      "y": 270,
+      "width": 155,
+      "height": 45,
+      "font_size": 16,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "gpu_freq",
+      "x": 165,
+      "y": 270,
+      "width": 155,
+      "height": 45,
+      "font_size": 16,
+      "bg": "#2a2a2a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "load_avg",
+      "x": 325,
+      "y": 270,
+      "width": 150,
+      "height": 45,
+      "font_size": 16,
+      "bg": "#2a2a2a"
     }
   ]
 }

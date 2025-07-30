@@ -20,11 +20,15 @@ var (
 const (
 	RefreshInterval = 1 * time.Second
 	RetryInterval   = 3 * time.Second
+	RepositoryURL   = "https://github.com/yukunyi/ax206monitor"
 )
 
 func main() {
 	// Initialize logger first
 	initLogger()
+
+	// Output repository information
+	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
 
 	defaultConfigDir := "./config"
 	if runtime.GOOS == "linux" {

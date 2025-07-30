@@ -75,11 +75,12 @@ type CPUFreqMonitor struct {
 }
 
 func NewCPUFreqMonitor() *CPUFreqMonitor {
+	_, m := getRealCPUFrequency()
 	return &CPUFreqMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_freq",
 			"CPU Freq",
-			0, 0,
+			0, m,
 			"MHz",
 			0,
 		),
