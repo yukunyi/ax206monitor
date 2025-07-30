@@ -24,21 +24,22 @@ type ColorThresholds struct {
 }
 
 type MonitorConfig struct {
-	Name             string                     `json:"name"`
-	Width            int                        `json:"width"`
-	Height           int                        `json:"height"`
-	FontSizes        FontSizes                  `json:"font_sizes"`
-	FontFamilies     []string                   `json:"font_families"`
-	OutputType       string                     `json:"output_type"`
-	OutputFile       string                     `json:"output_file,omitempty"`
-	RefreshInterval  int                        `json:"refresh_interval"`
-	HistorySize      int                        `json:"history_size,omitempty"`
-	NetworkInterface string                     `json:"network_interface,omitempty"`
-	Colors           map[string]string          `json:"colors"`
-	ColorThresholds  map[string]ColorThresholds `json:"color_thresholds,omitempty"`
-	Items            []ItemConfig               `json:"items"`
-	Labels           map[string]string          `json:"labels,omitempty"`
-	Units            map[string]string          `json:"units,omitempty"`
+	Name                    string                     `json:"name"`
+	Width                   int                        `json:"width"`
+	Height                  int                        `json:"height"`
+	FontSizes               FontSizes                  `json:"font_sizes"`
+	FontFamilies            []string                   `json:"font_families"`
+	OutputType              string                     `json:"output_type"`
+	OutputFile              string                     `json:"output_file,omitempty"`
+	RefreshInterval         int                        `json:"refresh_interval"`
+	HistorySize             int                        `json:"history_size,omitempty"`
+	NetworkInterface        string                     `json:"network_interface,omitempty"`
+	LibreHardwareMonitorURL string                     `json:"libre_hardware_monitor_url,omitempty"`
+	Colors                  map[string]string          `json:"colors"`
+	ColorThresholds         map[string]ColorThresholds `json:"color_thresholds,omitempty"`
+	Items                   []ItemConfig               `json:"items"`
+	Labels                  map[string]string          `json:"labels,omitempty"`
+	Units                   map[string]string          `json:"units,omitempty"`
 }
 
 type ItemConfig struct {

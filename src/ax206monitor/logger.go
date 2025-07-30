@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -55,13 +57,16 @@ func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 func initLogger() {
 	logger = logrus.New()
 
-	// Set output to stdout
-	logger.SetOutput(os.Stdout)
+	var output io.Writer = os.Stdout
 
-	// Set log level
+	if runtime.GOOS == "windows" {
+		if logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+			output = io.MultiWriter(os.Stdout, logFile)
+		}
+	}
+
+	logger.SetOutput(output)
 	logger.SetLevel(logrus.InfoLevel)
-
-	// Use custom formatter for clean, standard output
 	logger.SetFormatter(&CustomFormatter{})
 }
 

@@ -24,20 +24,22 @@ const (
 )
 
 func main() {
-	// Initialize logger first
 	initLogger()
 
-	// Output repository information
 	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
 
 	defaultConfigDir := "./config"
+	defaultConfigName := ""
+
 	if runtime.GOOS == "linux" {
 		if _, err := os.Stat("/etc/ax206monitor"); err == nil {
 			defaultConfigDir = "/etc/ax206monitor"
 		}
+	} else if runtime.GOOS == "windows" {
+		defaultConfigName = "default"
 	}
 
-	configFlag := flag.String("config", "", "Configuration file name (without .json extension)")
+	configFlag := flag.String("config", defaultConfigName, "Configuration file name (without .json extension)")
 	configDirFlag := flag.String("config-dir", defaultConfigDir, "Configuration directory")
 	listConfigsFlag := flag.Bool("list-configs", false, "List available configuration files")
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
@@ -75,6 +77,12 @@ func main() {
 	if err != nil {
 		logFatal("Config load failed '%s': %v", *configFlag, err)
 	}
+
+	// Set global config for monitor system
+	SetGlobalMonitorConfig(config)
+
+	// Initialize system information cache and print details
+	initializeCache()
 
 	requiredMonitors := getRequiredMonitors(config)
 	networkInterface := config.GetNetworkInterface()

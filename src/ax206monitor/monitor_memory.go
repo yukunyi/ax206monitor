@@ -37,11 +37,17 @@ type MemoryUsedMonitor struct {
 }
 
 func NewMemoryUsedMonitor() *MemoryUsedMonitor {
+	// Get total memory for max value
+	var maxMemory float64 = 32.0 // Default fallback
+	if memInfo, err := mem.VirtualMemory(); err == nil {
+		maxMemory = float64(memInfo.Total) / (1024 * 1024 * 1024)
+	}
+
 	return &MemoryUsedMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_used",
 			"Mem Used",
-			0, 0,
+			0, maxMemory,
 			"GB",
 			1,
 		),
@@ -66,11 +72,17 @@ type MemoryTotalMonitor struct {
 }
 
 func NewMemoryTotalMonitor() *MemoryTotalMonitor {
+	// Get total memory for max value
+	var maxMemory float64 = 32.0 // Default fallback
+	if memInfo, err := mem.VirtualMemory(); err == nil {
+		maxMemory = float64(memInfo.Total) / (1024 * 1024 * 1024)
+	}
+
 	return &MemoryTotalMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_total",
 			"Mem Total",
-			0, 0,
+			0, maxMemory,
 			"GB",
 			1,
 		),

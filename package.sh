@@ -3,14 +3,16 @@
 set -e
 
 VERSION="1.0.0"
-PACKAGE_NAME="ax206monitor-linux-amd64-v${VERSION}"
+LINUX_PACKAGE="ax206monitor-linux-amd64-v${VERSION}"
+WINDOWS_PACKAGE="ax206monitor-windows-amd64-v${VERSION}"
 DIST_DIR="dist"
 CONFIG_DIR="config"
 
 echo "AX206 System Monitor - Package Script"
 echo "====================================="
 echo "Version: $VERSION"
-echo "Package: $PACKAGE_NAME"
+echo "Linux Package: $LINUX_PACKAGE"
+echo "Windows Package: $WINDOWS_PACKAGE"
 echo ""
 
 if ! command -v go &> /dev/null; then
@@ -43,7 +45,7 @@ if [ ! -d "$CONFIG_DIR" ]; then
 fi
 
 # Check for required configuration files
-required_configs=("mini.json" "small.json" "normal.json" "full.json")
+required_configs=("mini.json" "normal.json" "full.json")
 for config in "${required_configs[@]}"; do
     if [ ! -f "$CONFIG_DIR/$config" ]; then
         echo "Error: Required configuration file '$config' not found in $CONFIG_DIR"
@@ -56,65 +58,107 @@ ls -la "$CONFIG_DIR"/*.json
 
 cd src/ax206monitor
 
-echo "Compiling Linux version with privacy protection..."
+echo "Compiling Linux version..."
 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     -trimpath \
     -buildmode=exe \
     -o ../../dist/ax206monitor-linux-amd64 .
 
+echo "Compiling Windows version..."
+GOOS=windows GOARCH=amd64 go build \
+    -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    -trimpath \
+    -o ../../dist/ax206monitor-windows-amd64.exe .
+
 cd ../..
 
 chmod +x dist/ax206monitor-linux-amd64
 
-echo "Creating package directory..."
-rm -rf "$PACKAGE_NAME"
-mkdir -p "$PACKAGE_NAME"
+echo "Creating Linux package directory..."
+rm -rf "$LINUX_PACKAGE"
+mkdir -p "$LINUX_PACKAGE"
 
-echo "Copying files to package directory..."
-cp dist/ax206monitor-linux-amd64 "$PACKAGE_NAME/ax206monitor"
-cp install.sh "$PACKAGE_NAME/"
-cp -r config "$PACKAGE_NAME/"
+echo "Copying files to Linux package directory..."
+cp dist/ax206monitor-linux-amd64 "$LINUX_PACKAGE/ax206monitor"
+cp install.sh "$LINUX_PACKAGE/"
+cp -r config "$LINUX_PACKAGE/"
 if [ -f README.md ]; then
-    cp README.md "$PACKAGE_NAME/"
+    cp README.md "$LINUX_PACKAGE/"
 fi
 
-chmod +x "$PACKAGE_NAME/ax206monitor"
-chmod +x "$PACKAGE_NAME/install.sh"
+chmod +x "$LINUX_PACKAGE/ax206monitor"
+chmod +x "$LINUX_PACKAGE/install.sh"
 
-echo "Verifying package contents..."
-echo "Package directory contents:"
-ls -la "$PACKAGE_NAME/"
+echo "Creating Windows package directory..."
+rm -rf "$WINDOWS_PACKAGE"
+mkdir -p "$WINDOWS_PACKAGE"
+
+echo "Copying files to Windows package directory..."
+cp dist/ax206monitor-windows-amd64.exe "$WINDOWS_PACKAGE/ax206monitor.exe"
+cp -r config "$WINDOWS_PACKAGE/"
+cp config/windows.json "$WINDOWS_PACKAGE/config/default.json"
+if [ -f README.md ]; then
+    cp README.md "$WINDOWS_PACKAGE/"
+fi
+if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
+    cp docs/LIBRE_HARDWARE_MONITOR.md "$WINDOWS_PACKAGE/"
+fi
+
+cat > "$WINDOWS_PACKAGE/start.bat" << 'EOF'
+@echo off
+cd /d "%~dp0"
+ax206monitor.exe
+pause
+EOF
+
+echo "Verifying Linux package contents..."
+echo "Linux package directory contents:"
+ls -la "$LINUX_PACKAGE/"
 echo "Configuration files:"
-ls -la "$PACKAGE_NAME/config/"
+ls -la "$LINUX_PACKAGE/config/"
 
-echo "Creating tar archive..."
-tar -czf "dist/$PACKAGE_NAME.tar.gz" "$PACKAGE_NAME"
+echo "Verifying Windows package contents..."
+echo "Windows package directory contents:"
+ls -la "$WINDOWS_PACKAGE/"
+echo "Configuration files:"
+ls -la "$WINDOWS_PACKAGE/config/"
 
-echo "Cleaning up package directory..."
-rm -rf "$PACKAGE_NAME"
+echo "Creating Linux tar archive..."
+tar -czf "dist/$LINUX_PACKAGE.tar.gz" "$LINUX_PACKAGE"
 
-echo ""
-echo "Package created successfully!"
-echo "Output: dist/$PACKAGE_NAME.tar.gz"
-echo ""
-echo "Installation instructions:"
-echo "1. Extract: tar -xzf $PACKAGE_NAME.tar.gz"
-echo "2. Enter directory: cd $PACKAGE_NAME"
-echo "3. Install as root: sudo ./install.sh"
-echo ""
-echo "Package contents:"
-echo "- ax206monitor (binary)"
-echo "- install.sh (installation script)"
-echo "- config/ (configuration files)"
-echo "  - mini.json (minimal layout)"
-echo "  - small.json (compact layout)"
-echo "  - normal.json (standard layout)"
-echo "  - full.json (complete layout)"
-if [ -f "$PACKAGE_NAME/README.md" ]; then
-    echo "- README.md (documentation)"
+echo "Creating Windows zip archive..."
+if command -v zip &> /dev/null; then
+    zip -r "dist/$WINDOWS_PACKAGE.zip" "$WINDOWS_PACKAGE"
+else
+    echo "Warning: zip command not found, creating tar archive instead"
+    tar -czf "dist/$WINDOWS_PACKAGE.tar.gz" "$WINDOWS_PACKAGE"
 fi
+
+echo "Cleaning up package directories..."
+rm -rf "$LINUX_PACKAGE" "$WINDOWS_PACKAGE"
+
 echo ""
-echo "File sizes:"
-ls -lh "dist/$PACKAGE_NAME.tar.gz"
-ls -lh dist/ax206monitor-linux-amd64 
+echo "Packages created successfully!"
+echo "Output files:"
+ls -la dist/*.tar.gz dist/*.zip 2>/dev/null || ls -la dist/*.tar.gz
+
+echo ""
+echo "Installation Instructions:"
+echo ""
+echo "Linux:"
+echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
+echo "2. Enter directory: cd $LINUX_PACKAGE"
+echo "3. Install as root: sudo ./install.sh"
+echo "4. Run: ax206monitor -config <config_name>"
+echo ""
+echo "Windows:"
+echo "1. Extract: dist/$WINDOWS_PACKAGE.zip (or .tar.gz)"
+echo "2. Double-click start.bat or ax206monitor.exe"
+echo "3. Configure Libre Hardware Monitor URL in config/default.json"
+echo ""
+echo "Available configurations:"
+ls config/*.json | sed 's/config\///g' | sed 's/\.json//g' | sed 's/^/  /'
+
+echo ""
+echo "Note: Ensure AX206 device is connected with proper USB permissions before running"

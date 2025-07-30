@@ -101,3 +101,59 @@ func (c *CPUFreqMonitor) Update() error {
 
 	return nil
 }
+
+// CPUModelMonitor displays CPU model information
+type CPUModelMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewCPUModelMonitor() *CPUModelMonitor {
+	return &CPUModelMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"cpu_model",
+			"CPU Model",
+			0, 0,
+			"",
+			0,
+		),
+	}
+}
+
+func (c *CPUModelMonitor) Update() error {
+	initializeCache()
+	if cachedCPUInfo != nil {
+		c.SetValue(cachedCPUInfo.Model)
+		c.SetAvailable(true)
+	} else {
+		c.SetAvailable(false)
+	}
+	return nil
+}
+
+// CPUCoresMonitor displays CPU core count
+type CPUCoresMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewCPUCoresMonitor() *CPUCoresMonitor {
+	return &CPUCoresMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"cpu_cores",
+			"CPU Cores",
+			0, 0,
+			"",
+			0,
+		),
+	}
+}
+
+func (c *CPUCoresMonitor) Update() error {
+	initializeCache()
+	if cachedCPUInfo != nil {
+		c.SetValue(cachedCPUInfo.Cores)
+		c.SetAvailable(true)
+	} else {
+		c.SetAvailable(false)
+	}
+	return nil
+}

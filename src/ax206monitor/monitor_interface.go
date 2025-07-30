@@ -182,7 +182,10 @@ func (r *MonitorRegistry) Update(names []string) error {
 	return nil
 }
 
-var globalMonitorRegistry *MonitorRegistry
+var (
+	globalMonitorRegistry *MonitorRegistry
+	globalMonitorConfig   *MonitorConfig
+)
 
 func GetMonitorRegistry() *MonitorRegistry {
 	if globalMonitorRegistry == nil {
@@ -200,6 +203,16 @@ func GetMonitorRegistryWithConfig(requiredMonitors []string, networkInterface st
 		performInitialUpdate()
 	}
 	return globalMonitorRegistry
+}
+
+// SetGlobalMonitorConfig sets the global monitor configuration
+func SetGlobalMonitorConfig(config *MonitorConfig) {
+	globalMonitorConfig = config
+}
+
+// GetGlobalMonitorConfig returns the global monitor configuration
+func GetGlobalMonitorConfig() *MonitorConfig {
+	return globalMonitorConfig
 }
 
 func performInitialUpdate() {
@@ -247,6 +260,12 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 	if isRequired("cpu_freq") {
 		registry.Register(NewCPUFreqMonitor())
 	}
+	if isRequired("cpu_model") {
+		registry.Register(NewCPUModelMonitor())
+	}
+	if isRequired("cpu_cores") {
+		registry.Register(NewCPUCoresMonitor())
+	}
 	if isRequired("memory_usage") {
 		registry.Register(NewMemoryUsageMonitor())
 	}
@@ -268,11 +287,72 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 	if isRequired("gpu_fps") {
 		registry.Register(NewGPUFPSMonitor())
 	}
+	if isRequired("gpu_model") {
+		registry.Register(NewGPUModelMonitor())
+	}
+	if isRequired("gpu_memory_total") {
+		registry.Register(NewGPUMemoryTotalMonitor())
+	}
+	if isRequired("gpu_memory_used") {
+		registry.Register(NewGPUMemoryUsedMonitor())
+	}
+	if isRequired("gpu_memory_usage") {
+		registry.Register(NewGPUMemoryUsageMonitor())
+	}
 	if isRequired("disk_temp") {
 		registry.Register(NewDiskTempMonitor())
 	}
 	if isRequired("disk_usage") {
 		registry.Register(NewDiskUsageMonitor())
+	}
+	if isRequired("disk_read_speed") {
+		registry.Register(NewDiskReadSpeedMonitor())
+	}
+	if isRequired("disk_write_speed") {
+		registry.Register(NewDiskWriteSpeedMonitor())
+	}
+	if isRequired("disk_latency") {
+		registry.Register(NewDiskLatencyMonitor())
+	}
+	if isRequired("disk_iops") {
+		registry.Register(NewDiskIOPSMonitor())
+	}
+	if isRequired("disk_utilization") {
+		registry.Register(NewDiskUtilizationMonitor())
+	}
+	if isRequired("disk_queue_depth") {
+		registry.Register(NewDiskQueueDepthMonitor())
+	}
+	if isRequired("cpu_fan_speed") {
+		registry.Register(NewCPUFanMonitor())
+	}
+	if isRequired("gpu_fan_speed") {
+		registry.Register(NewGPUFanMonitor())
+	}
+
+	// Initialize system fan monitors (sysfan1-10)
+	for fanIndex := 1; fanIndex <= 10; fanIndex++ {
+		fanKey := fmt.Sprintf("sysfan%d_speed", fanIndex)
+		if isRequired(fanKey) {
+			registry.Register(NewSystemFanMonitor(fanIndex))
+		}
+	}
+
+	// Initialize disk monitors (disk1-disk5)
+	for diskIndex := 1; diskIndex <= 5; diskIndex++ {
+		diskNameKey := fmt.Sprintf("disk%d_name", diskIndex)
+		diskSizeKey := fmt.Sprintf("disk%d_size", diskIndex)
+		diskTempKey := fmt.Sprintf("disk%d_temp", diskIndex)
+
+		if isRequired(diskNameKey) {
+			registry.Register(NewDiskNameMonitor(diskIndex))
+		}
+		if isRequired(diskSizeKey) {
+			registry.Register(NewDiskSizeMonitor(diskIndex))
+		}
+		if isRequired(diskTempKey) {
+			registry.Register(NewDiskTempMonitorByIndex(diskIndex))
+		}
 	}
 	if isRequired("load_avg") {
 		registry.Register(NewLoadAvgMonitor())
@@ -321,9 +401,11 @@ func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []str
 }
 
 func initializeFanMonitors(registry *MonitorRegistry, requiredMonitors []string) {
-	fans := GetAvailableFans()
-	for i, fan := range fans {
-		fanMonitorName := fmt.Sprintf("fan_%d", i)
+	// Initialize up to 10 fan monitors (fan1-fan10)
+	for fanIndex := 1; fanIndex <= 10; fanIndex++ {
+		fanMonitorName := fmt.Sprintf("fan%d", fanIndex)
+
+		// Check if this fan monitor is required
 		if requiredMonitors != nil {
 			required := false
 			for _, monitor := range requiredMonitors {
@@ -336,6 +418,8 @@ func initializeFanMonitors(registry *MonitorRegistry, requiredMonitors []string)
 				continue
 			}
 		}
-		registry.Register(NewFanMonitor(i, fan.Name))
+
+		// Create fan monitor with index (1-based)
+		registry.Register(NewFanMonitor(fanIndex, ""))
 	}
 }

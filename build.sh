@@ -29,12 +29,18 @@ fi
 echo "Downloading dependencies..."
 go mod tidy
 
-echo "Compiling Linux version with privacy protection..."
+echo "Compiling Linux version..."
 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     -trimpath \
     -buildmode=exe \
     -o ../../dist/ax206monitor-linux-amd64 .
+
+echo "Compiling Windows version..."
+GOOS=windows GOARCH=amd64 go build \
+    -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    -trimpath \
+    -o ../../dist/ax206monitor-windows-amd64.exe .
 
 cd ../..
 
@@ -48,5 +54,6 @@ ls -la dist/
 echo ""
 echo "Usage Instructions:"
 echo "Linux: ./dist/ax206monitor-linux-amd64"
+echo "Windows: dist/ax206monitor-windows-amd64.exe"
 echo ""
-echo "Note: Ensure AX206 device is connected with proper USB permissions before running" 
+echo "Note: Ensure AX206 device is connected with proper USB permissions before running"

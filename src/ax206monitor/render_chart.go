@@ -90,6 +90,9 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 				maxVal = monitorValue.Max
 			}
 		}
+		if monitorValue != nil {
+			minVal = monitorValue.Min
+		}
 	}
 
 	// Override with config values if specified

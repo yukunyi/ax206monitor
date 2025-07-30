@@ -24,6 +24,7 @@
   "refresh_interval": 1000,
   "history_size": 150,
   "network_interface": "auto",
+  "libre_hardware_monitor_url": "http://127.0.0.1:8085",
   "colors": {
     "default_text": "#f8fafc",
     "default_background": "#0f172a",
@@ -148,53 +149,63 @@
       "bg": "#0f172a"
     },
     {
-      "type": "progress",
+      "type": "value",
       "monitor": "cpu_usage",
       "x": 5,
       "y": 100,
       "width": 155,
       "height": 50,
-      "font_size": 12,
-      "header": true
+      "font_size": 16,
+      "bg": "#0f172a"
     },
     {
-      "type": "progress",
+      "type": "value",
       "monitor": "memory_usage",
       "x": 165,
       "y": 100,
       "width": 155,
       "height": 50,
-      "font_size": 12,
-      "header": true
+      "font_size": 16,
+      "bg": "#0f172a"
     },
     {
-      "type": "progress",
+      "type": "value",
       "monitor": "gpu_usage",
       "x": 325,
       "y": 100,
       "width": 150,
       "height": 50,
-      "font_size": 12,
-      "header": true
+      "font_size": 16,
+      "bg": "#0f172a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "disk_read_speed",
+      "x": 5,
+      "y": 155,
+      "width": 155,
+      "height": 55,
+      "font_size": 18,
+      "bg": "#0f172a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "disk_write_speed",
+      "x": 165,
+      "y": 155,
+      "width": 155,
+      "height": 55,
+      "font_size": 18,
+      "bg": "#0f172a"
     },
     {
       "type": "big_value",
       "monitor": "net_upload",
-      "x": 5,
+      "x": 325,
       "y": 155,
-      "width": 235,
+      "width": 150,
       "height": 55,
-      "font_size": 18,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "net_download",
-      "x": 245,
-      "y": 155,
-      "width": 230,
-      "height": 55,
-      "font_size": 18,
+      "font_size": 16,
       "bg": "#0f172a"
     },
     {
@@ -216,13 +227,14 @@
       "history": true
     },
     {
-      "type": "chart",
-      "monitor": "gpu_usage",
+      "type": "big_value",
+      "monitor": "net_download",
       "x": 325,
       "y": 215,
       "width": 150,
       "height": 50,
-      "history": true
+      "font_size": 16,
+      "bg": "#0f172a"
     },
     {
       "type": "big_value",

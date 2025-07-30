@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -111,5 +112,158 @@ func (d *DiskUsageMonitor) Update() error {
 
 	d.SetValue(usage.UsedPercent)
 	d.SetAvailable(true)
+	return nil
+}
+
+// DiskNameMonitor displays disk name/model
+type DiskNameMonitor struct {
+	*BaseMonitorItem
+	diskIndex int
+}
+
+func NewDiskNameMonitor(diskIndex int) *DiskNameMonitor {
+	return &DiskNameMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			fmt.Sprintf("disk%d_name", diskIndex),
+			fmt.Sprintf("Disk %d", diskIndex),
+			0, 0,
+			"",
+			0,
+		),
+		diskIndex: diskIndex,
+	}
+}
+
+func (d *DiskNameMonitor) Update() error {
+	initializeCache()
+	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
+		disk := cachedDiskInfo[d.diskIndex-1]
+		d.SetValue(fmt.Sprintf("%s (%s)", disk.Name, disk.Model))
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// DiskSizeMonitor displays disk size
+type DiskSizeMonitor struct {
+	*BaseMonitorItem
+	diskIndex int
+}
+
+func NewDiskSizeMonitor(diskIndex int) *DiskSizeMonitor {
+	return &DiskSizeMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			fmt.Sprintf("disk%d_size", diskIndex),
+			fmt.Sprintf("Disk %d Size", diskIndex),
+			0, 0,
+			"GB",
+			0,
+		),
+		diskIndex: diskIndex,
+	}
+}
+
+func (d *DiskSizeMonitor) Update() error {
+	initializeCache()
+	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
+		disk := cachedDiskInfo[d.diskIndex-1]
+		d.SetValue(disk.Size)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// DiskTempMonitorByIndex displays disk temperature by index
+type DiskTempMonitorByIndex struct {
+	*BaseMonitorItem
+	diskIndex int
+}
+
+func NewDiskTempMonitorByIndex(diskIndex int) *DiskTempMonitorByIndex {
+	return &DiskTempMonitorByIndex{
+		BaseMonitorItem: NewBaseMonitorItem(
+			fmt.Sprintf("disk%d_temp", diskIndex),
+			fmt.Sprintf("Disk %d Temp", diskIndex),
+			0, 80,
+			"°C",
+			0,
+		),
+		diskIndex: diskIndex,
+	}
+}
+
+func (d *DiskTempMonitorByIndex) Update() error {
+	initializeCache()
+	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
+		disk := cachedDiskInfo[d.diskIndex-1]
+		if disk.Temperature > 0 {
+			d.SetValue(disk.Temperature)
+			d.SetAvailable(true)
+		} else {
+			d.SetAvailable(false)
+		}
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// DiskReadSpeedMonitor displays disk read speed
+type DiskReadSpeedMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskReadSpeedMonitor() *DiskReadSpeedMonitor {
+	return &DiskReadSpeedMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_read_speed",
+			"Disk Read",
+			0, 0,
+			"MB/s",
+			1,
+		),
+	}
+}
+
+func (d *DiskReadSpeedMonitor) Update() error {
+	readSpeed := getDiskReadSpeed()
+	if readSpeed >= 0 {
+		d.SetValue(readSpeed)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// DiskWriteSpeedMonitor displays disk write speed
+type DiskWriteSpeedMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskWriteSpeedMonitor() *DiskWriteSpeedMonitor {
+	return &DiskWriteSpeedMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_write_speed",
+			"Disk Write",
+			0, 0,
+			"MB/s",
+			1,
+		),
+	}
+}
+
+func (d *DiskWriteSpeedMonitor) Update() error {
+	writeSpeed := getDiskWriteSpeed()
+	if writeSpeed >= 0 {
+		d.SetValue(writeSpeed)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
 	return nil
 }

@@ -24,6 +24,7 @@
   "refresh_interval": 1000,
   "history_size": 200,
   "network_interface": "auto",
+  "libre_hardware_monitor_url": "http://127.0.0.1:8085",
   "colors": {
     "default_text": "#f8fafc",
     "default_background": "#0f172a",
