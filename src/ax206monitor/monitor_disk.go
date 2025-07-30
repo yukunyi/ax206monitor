@@ -5,6 +5,58 @@ import (
 	"time"
 )
 
+// NewDisk1TempMonitor creates a disk1 temperature monitor
+func NewDisk1TempMonitor() MonitorItem {
+	return CreateDiskMonitorByIndex(1, "temp", "°C", func(disk *DiskInfo) interface{} {
+		return disk.Temperature
+	})
+}
+
+// NewDisk1ReadSpeedMonitor creates a disk1 read speed monitor
+func NewDisk1ReadSpeedMonitor() MonitorItem {
+	return CreateDiskMonitorByIndex(1, "read_speed", "MB/s", func(disk *DiskInfo) interface{} {
+		return disk.ReadSpeed
+	})
+}
+
+// NewDisk1WriteSpeedMonitor creates a disk1 write speed monitor
+func NewDisk1WriteSpeedMonitor() MonitorItem {
+	return CreateDiskMonitorByIndex(1, "write_speed", "MB/s", func(disk *DiskInfo) interface{} {
+		return disk.WriteSpeed
+	})
+}
+
+// NewDisk1UsageMonitor creates a disk1 usage monitor
+func NewDisk1UsageMonitor() MonitorItem {
+	return CreateDiskMonitorByIndex(1, "usage", "%", func(disk *DiskInfo) interface{} {
+		return disk.Usage
+	})
+}
+
+// NewDisk1ModelMonitor creates a disk1 model monitor
+func NewDisk1ModelMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateStringMonitor("disk1_model", "Disk 1 Model", func() (string, bool) {
+		initializeCache()
+		if len(cachedDiskInfo) > 0 {
+			return cachedDiskInfo[0].Model, true
+		}
+		return "Unknown", false
+	})
+}
+
+// NewDisk1NameMonitor creates a disk1 name monitor
+func NewDisk1NameMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateStringMonitor("disk1_name", "Disk 1 Name", func() (string, bool) {
+		initializeCache()
+		if len(cachedDiskInfo) > 0 {
+			return cachedDiskInfo[0].Name, true
+		}
+		return "Unknown", false
+	})
+}
+
 // DiskIOStats represents disk I/O statistics
 type DiskIOStats struct {
 	ReadBytes    uint64
@@ -126,8 +178,26 @@ func (d *DiskLatencyMonitor) Update() error {
 
 // getDiskLatency calculates average disk latency
 func getDiskLatency() float64 {
-	// This would need platform-specific implementation
-	// For now, return a placeholder value
+	// For now, return a basic estimation based on disk activity
+	// Real latency calculation would require parsing /proc/diskstats over time
+	stats := getCurrentDiskIOStats()
+	if len(stats) == 0 {
+		return 0.0
+	}
+
+	// Simple estimation: if disks are active (read/write speed > 0), assume some latency
+	var activeDisks int
+	for _, stat := range stats {
+		if stat.ReadSpeed > 0 || stat.WriteSpeed > 0 {
+			activeDisks++
+		}
+	}
+
+	if activeDisks > 0 {
+		// Return a basic latency estimate (1-10ms range)
+		return 2.5 // Average latency estimate in ms
+	}
+
 	return 0.0
 }
 
@@ -161,9 +231,23 @@ func (d *DiskIOPSMonitor) Update() error {
 
 // getDiskIOPS calculates current disk IOPS
 func getDiskIOPS() float64 {
-	// This would need platform-specific implementation
-	// For now, return a placeholder value
-	return 0.0
+	// Estimate IOPS based on disk activity
+	stats := getCurrentDiskIOStats()
+	if len(stats) == 0 {
+		return 0.0
+	}
+
+	// Simple estimation based on read/write speeds
+	var totalIOPS float64
+
+	for _, stat := range stats {
+		// Rough estimation: 1 MB/s ≈ 250 IOPS (assuming 4KB blocks)
+		readIOPS := stat.ReadSpeed * 250
+		writeIOPS := stat.WriteSpeed * 250
+		totalIOPS += readIOPS + writeIOPS
+	}
+
+	return totalIOPS
 }
 
 // DiskUtilizationMonitor displays disk utilization percentage
@@ -196,8 +280,34 @@ func (d *DiskUtilizationMonitor) Update() error {
 
 // getDiskUtilization calculates disk utilization percentage
 func getDiskUtilization() float64 {
-	// This would need platform-specific implementation
-	// For now, return a placeholder value
+	// Estimate utilization based on disk activity
+	stats := getCurrentDiskIOStats()
+	if len(stats) == 0 {
+		return 0.0
+	}
+
+	// Calculate average utilization across all disks
+	var totalUtil float64
+	var count int
+
+	for _, stat := range stats {
+		// Simple estimation based on read/write activity
+		activity := stat.ReadSpeed + stat.WriteSpeed
+
+		// Convert MB/s to utilization percentage (rough estimation)
+		// Assume 100 MB/s = 100% utilization for a typical disk
+		util := activity
+		if util > 100 {
+			util = 100
+		}
+
+		totalUtil += util
+		count++
+	}
+
+	if count > 0 {
+		return totalUtil / float64(count)
+	}
 	return 0.0
 }
 

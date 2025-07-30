@@ -28,15 +28,22 @@ func main() {
 
 	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
 
+	// Default to config directory in current working directory
 	defaultConfigDir := "./config"
 	defaultConfigName := ""
 
-	if runtime.GOOS == "linux" {
+	// Check if config directory exists in current directory first
+	if _, err := os.Stat("./config"); err == nil {
+		defaultConfigDir = "./config"
+	} else if runtime.GOOS == "linux" {
+		// Fallback to system config directory on Linux
 		if _, err := os.Stat("/etc/ax206monitor"); err == nil {
 			defaultConfigDir = "/etc/ax206monitor"
 		}
-	} else if runtime.GOOS == "windows" {
-		defaultConfigName = "default"
+	}
+
+	if runtime.GOOS == "windows" {
+		defaultConfigName = "windows"
 	}
 
 	configFlag := flag.String("config", defaultConfigName, "Configuration file name (without .json extension)")
@@ -213,7 +220,20 @@ func getRequiredMonitors(config *MonitorConfig) []string {
 }
 
 func listAllMonitors() {
+	fmt.Println("Initializing system monitoring...")
+
+	// Initialize system cache first
+	initializeCache()
+
 	registry := GetMonitorRegistry()
+
+	// Wait 2 seconds for data to stabilize
+	fmt.Println("Waiting for data to stabilize...")
+	time.Sleep(2 * time.Second)
+
+	// Update all monitors to get current values
+	fmt.Println("Updating monitor values...")
+	registry.UpdateAll()
 
 	registry.mutex.RLock()
 	defer registry.mutex.RUnlock()
@@ -233,7 +253,10 @@ func listAllMonitors() {
 		}
 	}
 
-	fmt.Println("Available monitor items:")
+	fmt.Println("\n=== System Information ===")
+	printSystemInfo()
+
+	fmt.Println("\n=== Available Monitor Items ===")
 	fmt.Printf("%-30s %-20s %s\n", "Name", "Label", "Current Value")
 	fmt.Printf("%-30s %-20s %s\n", "----", "-----", "-------------")
 

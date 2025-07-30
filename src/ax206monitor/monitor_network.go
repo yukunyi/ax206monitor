@@ -10,6 +10,30 @@ import (
 	gopsutilNet "github.com/shirou/gopsutil/v3/net"
 )
 
+// NewNet1UploadMonitor creates a net1 upload monitor
+func NewNet1UploadMonitor() MonitorItem {
+	configuredInterface := GetConfiguredNetworkInterface("auto")
+	return NewNetworkInterfaceMonitor(configuredInterface, "upload", "")
+}
+
+// NewNet1DownloadMonitor creates a net1 download monitor
+func NewNet1DownloadMonitor() MonitorItem {
+	configuredInterface := GetConfiguredNetworkInterface("auto")
+	return NewNetworkInterfaceMonitor(configuredInterface, "download", "")
+}
+
+// NewNet1IPMonitor creates a net1 IP monitor
+func NewNet1IPMonitor() MonitorItem {
+	configuredInterface := GetConfiguredNetworkInterface("auto")
+	return NewNetworkInterfaceMonitor(configuredInterface, "ip", "")
+}
+
+// NewNet1InterfaceMonitor creates a net1 interface name monitor
+func NewNet1InterfaceMonitor() MonitorItem {
+	configuredInterface := GetConfiguredNetworkInterface("auto")
+	return NewNetworkInterfaceMonitor(configuredInterface, "name", "")
+}
+
 var (
 	currentNetworkInterface  string
 	lastInterfaceRefresh     time.Time
@@ -37,26 +61,26 @@ func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *Netwo
 
 	switch metricType {
 	case "upload":
-		name = "net_upload"
-		label = "Upload"
+		name = "net1_upload"
+		label = "Net1 Upload"
 		unit = "MB/s"
 		precision = 2
 		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "download":
-		name = "net_download"
-		label = "Download"
+		name = "net1_download"
+		label = "Net1 Download"
 		unit = "MB/s"
 		precision = 2
 		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "ip":
-		name = "net_ip"
-		label = "IP Address"
+		name = "net1_ip"
+		label = "Net1 IP"
 		unit = ""
 		precision = 0
 		maxValue = 0
 	case "name":
-		name = "net_interface"
-		label = "Interface"
+		name = "net1_interface"
+		label = "Net1 Interface"
 		unit = ""
 		precision = 0
 		maxValue = 0

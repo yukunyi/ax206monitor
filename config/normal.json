@@ -53,7 +53,7 @@
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "disk_temp": {
+    "disk1_temp": {
       "low_threshold": 50,
       "high_threshold": 65,
       "low_color": "#22c55e",
@@ -81,14 +81,14 @@
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "net_upload": {
+    "net1_upload": {
       "low_threshold": 10,
       "high_threshold": 50,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "net_download": {
+    "net1_download": {
       "low_threshold": 10,
       "high_threshold": 50,
       "low_color": "#22c55e",
@@ -110,7 +110,7 @@
     },
     {
       "type": "value",
-      "monitor": "net_ip",
+      "monitor": "net1_ip",
       "x": 245,
       "y": 5,
       "width": 230,
@@ -140,7 +140,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_temp",
+      "monitor": "disk1_temp",
       "x": 325,
       "y": 30,
       "width": 150,
@@ -180,7 +180,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_read_speed",
+      "monitor": "disk1_read_speed",
       "x": 5,
       "y": 155,
       "width": 155,
@@ -190,7 +190,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_write_speed",
+      "monitor": "disk1_write_speed",
       "x": 165,
       "y": 155,
       "width": 155,
@@ -200,7 +200,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "net_upload",
+      "monitor": "net1_upload",
       "x": 325,
       "y": 155,
       "width": 150,
@@ -228,7 +228,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "net_download",
+      "monitor": "net1_download",
       "x": 325,
       "y": 215,
       "width": 150,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 // MonitorFactory provides a centralized way to create monitor items
@@ -156,7 +157,7 @@ func CreateCachedValueMonitor(name, label, unit string, min, max float64, precis
 // CreateDiskMonitorByIndex creates a disk monitor for a specific disk index
 func CreateDiskMonitorByIndex(diskIndex int, monitorType, unit string, getValue func(*DiskInfo) interface{}) MonitorItem {
 	name := fmt.Sprintf("disk%d_%s", diskIndex, monitorType)
-	label := fmt.Sprintf("Disk %d %s", diskIndex, monitorType)
+	label := fmt.Sprintf("Disk %d %s", diskIndex, strings.Title(monitorType))
 
 	return &GenericMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(name, label, 0, 0, unit, 0),

@@ -182,6 +182,22 @@ func (r *MonitorRegistry) Update(names []string) error {
 	return nil
 }
 
+func (r *MonitorRegistry) UpdateAll() error {
+	r.mutex.RLock()
+	items := make([]MonitorItem, 0, len(r.items))
+	for _, item := range r.items {
+		items = append(items, item)
+	}
+	r.mutex.RUnlock()
+
+	for _, item := range items {
+		if err := item.Update(); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
 var (
 	globalMonitorRegistry *MonitorRegistry
 	globalMonitorConfig   *MonitorConfig
@@ -354,6 +370,26 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 			registry.Register(NewDiskTempMonitorByIndex(diskIndex))
 		}
 	}
+
+	// Initialize new disk1_ monitors
+	if isRequired("disk1_temp") {
+		registry.Register(NewDisk1TempMonitor())
+	}
+	if isRequired("disk1_read_speed") {
+		registry.Register(NewDisk1ReadSpeedMonitor())
+	}
+	if isRequired("disk1_write_speed") {
+		registry.Register(NewDisk1WriteSpeedMonitor())
+	}
+	if isRequired("disk1_usage") {
+		registry.Register(NewDisk1UsageMonitor())
+	}
+	if isRequired("disk1_model") {
+		registry.Register(NewDisk1ModelMonitor())
+	}
+	if isRequired("disk1_name") {
+		registry.Register(NewDisk1NameMonitor())
+	}
 	if isRequired("load_avg") {
 		registry.Register(NewLoadAvgMonitor())
 	}
@@ -385,7 +421,7 @@ func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []str
 		return // No valid interface found
 	}
 
-	// Initialize network monitors only if required
+	// Initialize network monitors only if required (legacy names)
 	if isRequired("net_upload") {
 		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "upload", ""))
 	}
@@ -397,6 +433,20 @@ func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []str
 	}
 	if isRequired("net_interface") {
 		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
+	}
+
+	// Initialize new net1_ monitors
+	if isRequired("net1_upload") {
+		registry.Register(NewNet1UploadMonitor())
+	}
+	if isRequired("net1_download") {
+		registry.Register(NewNet1DownloadMonitor())
+	}
+	if isRequired("net1_ip") {
+		registry.Register(NewNet1IPMonitor())
+	}
+	if isRequired("net1_interface") {
+		registry.Register(NewNet1InterfaceMonitor())
 	}
 }
 

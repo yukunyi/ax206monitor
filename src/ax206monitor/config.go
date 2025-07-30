@@ -270,7 +270,7 @@ func (config *MonitorConfig) getDefaultDynamicColor(monitorName string, value fl
 
 // Helper functions to identify monitor types
 func isTemperatureMonitor(monitorName string) bool {
-	tempMonitors := []string{"cpu_temp", "gpu_temp", "disk_temp"}
+	tempMonitors := []string{"cpu_temp", "gpu_temp", "disk_temp", "disk1_temp"}
 	for _, temp := range tempMonitors {
 		if monitorName == temp {
 			return true
@@ -290,7 +290,7 @@ func isUsageMonitor(monitorName string) bool {
 }
 
 func isNetworkMonitor(monitorName string) bool {
-	networkMonitors := []string{"net_upload", "net_download"}
+	networkMonitors := []string{"net_upload", "net_download", "net1_upload", "net1_download"}
 	for _, network := range networkMonitors {
 		if monitorName == network {
 			return true
