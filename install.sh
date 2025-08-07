@@ -200,11 +200,6 @@ print_usage() {
     echo "  • Default config:         $CONFIG_DIR/default.json -> mini.json"
     echo "  • Version:                $VERSION"
     echo ""
-    echo "Available configurations:"
-    echo "  • mini.json    - Minimal layout (480x320)"
-    echo "  • small.json   - Compact layout (480x320)"
-    echo "  • normal.json  - Standard layout (480x320)"
-    echo "  • full.json    - Complete layout (800x480)"
 }
 
 uninstall() {
@@ -262,6 +257,7 @@ main() {
 
     echo ""
     print_usage
+    run_with_sudo "journalctl -f -n 100 --unit $SERVICE_NAME"
 }
 
 main "$@" 
