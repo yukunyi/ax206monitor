@@ -35,10 +35,13 @@ func NewNet1InterfaceMonitor() MonitorItem {
 }
 
 var (
-	currentNetworkInterface  string
-	lastInterfaceRefresh     time.Time
-	interfaceRefreshInterval = 1 * time.Minute
-	interfaceRefreshMutex    sync.RWMutex
+	currentNetworkInterface     string
+	lastInterfaceRefresh        time.Time
+	interfaceRefreshInterval    = 1 * time.Minute
+	interfaceRefreshMutex       sync.RWMutex
+	networkInterfaceUnavailable bool
+	lastUnavailableTime         time.Time
+	fastRefreshInterval         = 10 * time.Second // Fast refresh when interface unavailable
 )
 
 type NetworkInterfaceMonitor struct {
@@ -94,10 +97,15 @@ func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *Netwo
 		metricType:      metricType,
 	}
 
-	// For name type, set the value immediately
+	// For name type, set the value immediately if interface is available
 	if metricType == "name" {
-		monitor.SetValue(interfaceName)
-		monitor.SetAvailable(true)
+		if interfaceName != "" {
+			monitor.SetValue(interfaceName)
+			monitor.SetAvailable(true)
+		} else {
+			monitor.SetValue("No Interface")
+			monitor.SetAvailable(false)
+		}
 	}
 
 	return monitor
@@ -126,7 +134,14 @@ func (n *NetworkInterfaceMonitor) refreshInterfaceIfNeeded() {
 	defer interfaceRefreshMutex.Unlock()
 
 	now := time.Now()
-	if now.Sub(lastInterfaceRefresh) >= interfaceRefreshInterval {
+
+	// Use fast refresh interval when interface is unavailable
+	refreshInterval := interfaceRefreshInterval
+	if networkInterfaceUnavailable {
+		refreshInterval = fastRefreshInterval
+	}
+
+	if now.Sub(lastInterfaceRefresh) >= refreshInterval {
 		interfaces := getActiveNetworkInterfaces()
 		if len(interfaces) > 0 {
 			newInterface := interfaces[0]
@@ -136,6 +151,20 @@ func (n *NetworkInterfaceMonitor) refreshInterfaceIfNeeded() {
 			}
 			n.interfaceName = currentNetworkInterface
 			lastInterfaceRefresh = now
+
+			// Mark interface as available if it was previously unavailable
+			if networkInterfaceUnavailable {
+				networkInterfaceUnavailable = false
+				logInfoModule("network", "Network interface recovered: %s", currentNetworkInterface)
+			}
+		} else {
+			// No active interfaces found
+			if !networkInterfaceUnavailable {
+				networkInterfaceUnavailable = true
+				lastUnavailableTime = now
+				logWarnModule("network", "No active network interface found, will retry every %v", fastRefreshInterval)
+			}
+			lastInterfaceRefresh = now
 		}
 	} else if currentNetworkInterface != "" {
 		n.interfaceName = currentNetworkInterface
@@ -143,6 +172,15 @@ func (n *NetworkInterfaceMonitor) refreshInterfaceIfNeeded() {
 }
 
 func (n *NetworkInterfaceMonitor) updateSpeed() error {
+	// If no interface name, try to refresh
+	if n.interfaceName == "" {
+		n.refreshInterfaceIfNeeded()
+		if n.interfaceName == "" {
+			n.SetAvailable(false)
+			return fmt.Errorf("no network interface available")
+		}
+	}
+
 	stats, err := gopsutilNet.IOCounters(true)
 	if err != nil {
 		n.SetAvailable(false)
@@ -174,6 +212,10 @@ func (n *NetworkInterfaceMonitor) updateSpeed() error {
 			return nil
 		}
 	}
+
+	// Interface not found in stats, try to refresh interface list
+	logDebugModule("network", "Interface %s not found in stats, refreshing interface list", n.interfaceName)
+	n.refreshInterfaceIfNeeded()
 
 	n.SetAvailable(false)
 	return fmt.Errorf("interface %s not found", n.interfaceName)
