@@ -10,29 +10,12 @@ import (
 	gopsutilNet "github.com/shirou/gopsutil/v3/net"
 )
 
-// NewNet1UploadMonitor creates a net1 upload monitor
-func NewNet1UploadMonitor() MonitorItem {
-	configuredInterface := GetConfiguredNetworkInterface("auto")
-	return NewNetworkInterfaceMonitor(configuredInterface, "upload", "")
-}
-
-// NewNet1DownloadMonitor creates a net1 download monitor
-func NewNet1DownloadMonitor() MonitorItem {
-	configuredInterface := GetConfiguredNetworkInterface("auto")
-	return NewNetworkInterfaceMonitor(configuredInterface, "download", "")
-}
-
-// NewNet1IPMonitor creates a net1 IP monitor
-func NewNet1IPMonitor() MonitorItem {
-	configuredInterface := GetConfiguredNetworkInterface("auto")
-	return NewNetworkInterfaceMonitor(configuredInterface, "ip", "")
-}
-
-// NewNet1InterfaceMonitor creates a net1 interface name monitor
-func NewNet1InterfaceMonitor() MonitorItem {
-	configuredInterface := GetConfiguredNetworkInterface("auto")
-	return NewNetworkInterfaceMonitor(configuredInterface, "name", "")
-}
+const (
+	// Network speed calculation constants
+	speedWindowDuration = 3 * time.Second // 3-second sliding window
+	maxSpeedSamples     = 10              // Maximum samples to keep
+	minSamplesForAvg    = 2               // Minimum samples needed for average calculation
+)
 
 var (
 	currentNetworkInterface     string
@@ -44,13 +27,21 @@ var (
 	fastRefreshInterval         = 10 * time.Second // Fast refresh when interface unavailable
 )
 
+// NetworkSpeedSample represents a single speed measurement
+type NetworkSpeedSample struct {
+	timestamp time.Time
+	bytes     uint64
+	speed     float64 // MB/s
+}
+
 type NetworkInterfaceMonitor struct {
 	*BaseMonitorItem
 	interfaceName string
 	metricType    string
 	lastBytes     uint64
 	lastTime      time.Time
-	mutex         sync.Mutex
+	speedSamples  []NetworkSpeedSample // Sliding window for speed calculation
+	mutex         sync.RWMutex
 }
 
 func (n *NetworkInterfaceMonitor) GetInterfaceName() string {
@@ -65,25 +56,25 @@ func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *Netwo
 	switch metricType {
 	case "upload":
 		name = "net1_upload"
-		label = "Net1 Upload"
-		unit = "MB/s"
+		label = "Upload"
+		unit = "" // Dynamic unit will be set in SetValue
 		precision = 2
 		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "download":
 		name = "net1_download"
-		label = "Net1 Download"
-		unit = "MB/s"
+		label = "Download"
+		unit = "" // Dynamic unit will be set in SetValue
 		precision = 2
 		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "ip":
 		name = "net1_ip"
-		label = "Net1 IP"
+		label = "IP"
 		unit = ""
 		precision = 0
 		maxValue = 0
 	case "name":
 		name = "net1_interface"
-		label = "Net1 Interface"
+		label = ""
 		unit = ""
 		precision = 0
 		maxValue = 0
@@ -95,6 +86,7 @@ func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *Netwo
 		BaseMonitorItem: NewBaseMonitorItem(name, label, 0, maxValue, unit, precision),
 		interfaceName:   interfaceName,
 		metricType:      metricType,
+		speedSamples:    make([]NetworkSpeedSample, 0, maxSpeedSamples),
 	}
 
 	// For name type, set the value immediately if interface is available
@@ -103,12 +95,114 @@ func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *Netwo
 			monitor.SetValue(interfaceName)
 			monitor.SetAvailable(true)
 		} else {
-			monitor.SetValue("No Interface")
+			monitor.SetValue("-")
 			monitor.SetAvailable(false)
 		}
 	}
 
 	return monitor
+}
+
+// formatNetworkSpeed formats network speed with appropriate unit and spacing
+func formatNetworkSpeed(speedMBps float64) (float64, string) {
+	if speedMBps >= 1.0 {
+		return speedMBps, " MiB/s"
+	} else if speedMBps >= 0.001 {
+		return speedMBps * 1024, " KiB/s"
+	} else {
+		return speedMBps * 1024 * 1024, " B/s"
+	}
+}
+
+// addSpeedSample adds a new speed sample to the sliding window
+func (n *NetworkInterfaceMonitor) addSpeedSample(timestamp time.Time, bytes uint64, speed float64) {
+	// Remove old samples outside the window
+	cutoff := timestamp.Add(-speedWindowDuration)
+	validSamples := make([]NetworkSpeedSample, 0, len(n.speedSamples))
+	for _, sample := range n.speedSamples {
+		if sample.timestamp.After(cutoff) {
+			validSamples = append(validSamples, sample)
+		}
+	}
+
+	// Add new sample
+	newSample := NetworkSpeedSample{
+		timestamp: timestamp,
+		bytes:     bytes,
+		speed:     speed,
+	}
+	validSamples = append(validSamples, newSample)
+
+	// Keep only the most recent samples if we exceed the limit
+	if len(validSamples) > maxSpeedSamples {
+		validSamples = validSamples[len(validSamples)-maxSpeedSamples:]
+	}
+
+	n.speedSamples = validSamples
+}
+
+// calculateAverageSpeed calculates the average speed from samples in the sliding window
+func (n *NetworkInterfaceMonitor) calculateAverageSpeed() float64 {
+	if len(n.speedSamples) < minSamplesForAvg {
+		return 0.0
+	}
+
+	now := time.Now()
+	cutoff := now.Add(-speedWindowDuration)
+
+	var totalSpeed float64
+	var validSamples int
+	var totalWeight float64
+
+	// Use weighted average based on sample age (newer samples have more weight)
+	for _, sample := range n.speedSamples {
+		if sample.timestamp.After(cutoff) {
+			// Calculate weight based on age (newer = higher weight)
+			age := now.Sub(sample.timestamp).Seconds()
+			weight := 1.0 - (age / speedWindowDuration.Seconds())
+			if weight < 0.1 {
+				weight = 0.1 // Minimum weight
+			}
+
+			totalSpeed += sample.speed * weight
+			totalWeight += weight
+			validSamples++
+		}
+	}
+
+	if validSamples == 0 || totalWeight == 0 {
+		return 0.0
+	}
+
+	return totalSpeed / totalWeight
+}
+
+// SetNetworkSpeedValue sets the network speed value with dynamic unit
+func (n *NetworkInterfaceMonitor) SetNetworkSpeedValue(speedMBps float64) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
+	value, unit := formatNetworkSpeed(speedMBps)
+	n.value.Value = value
+	n.value.Unit = unit
+}
+
+// setNetworkSpeedValueUnsafe sets the network speed value without locking (internal use)
+func (n *NetworkInterfaceMonitor) setNetworkSpeedValueUnsafe(speedMBps float64) {
+	value, unit := formatNetworkSpeed(speedMBps)
+	n.value.Value = value
+	n.value.Unit = unit
+}
+
+// GetDisplayValue returns the value that will be displayed (for color calculation)
+func (n *NetworkInterfaceMonitor) GetDisplayValue() float64 {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
+
+	if val, ok := n.value.Value.(float64); ok {
+		return val
+	}
+	return 0.0
 }
 
 func (n *NetworkInterfaceMonitor) Update() error {
@@ -130,45 +224,57 @@ func (n *NetworkInterfaceMonitor) Update() error {
 }
 
 func (n *NetworkInterfaceMonitor) refreshInterfaceIfNeeded() {
-	interfaceRefreshMutex.Lock()
-	defer interfaceRefreshMutex.Unlock()
-
+	// First check if refresh is needed (with read lock)
+	interfaceRefreshMutex.RLock()
 	now := time.Now()
-
-	// Use fast refresh interval when interface is unavailable
 	refreshInterval := interfaceRefreshInterval
 	if networkInterfaceUnavailable {
 		refreshInterval = fastRefreshInterval
 	}
+	needsRefresh := now.Sub(lastInterfaceRefresh) >= refreshInterval
+	currentInterface := currentNetworkInterface
+	interfaceRefreshMutex.RUnlock()
 
-	if now.Sub(lastInterfaceRefresh) >= refreshInterval {
-		interfaces := getActiveNetworkInterfaces()
-		if len(interfaces) > 0 {
-			newInterface := interfaces[0]
-			if currentNetworkInterface != newInterface {
-				logInfoModule("network", "Interface changed from '%s' to '%s'", currentNetworkInterface, newInterface)
-				currentNetworkInterface = newInterface
-			}
-			n.interfaceName = currentNetworkInterface
-			lastInterfaceRefresh = now
+	if needsRefresh {
+		// Only acquire write lock if refresh is actually needed
+		interfaceRefreshMutex.Lock()
 
-			// Mark interface as available if it was previously unavailable
-			if networkInterfaceUnavailable {
-				networkInterfaceUnavailable = false
-				logInfoModule("network", "Network interface recovered: %s", currentNetworkInterface)
+		// Double-check after acquiring write lock
+		if now.Sub(lastInterfaceRefresh) >= refreshInterval {
+			interfaces := getActiveNetworkInterfaces()
+			if len(interfaces) > 0 {
+				newInterface := interfaces[0]
+				if currentNetworkInterface != newInterface {
+					logInfoModule("network", "Interface changed from '%s' to '%s'", currentNetworkInterface, newInterface)
+					currentNetworkInterface = newInterface
+				}
+				lastInterfaceRefresh = now
+
+				// Mark interface as available if it was previously unavailable
+				if networkInterfaceUnavailable {
+					networkInterfaceUnavailable = false
+					logInfoModule("network", "Network interface recovered: %s", currentNetworkInterface)
+				}
+				currentInterface = currentNetworkInterface
+			} else {
+				// No active interfaces found
+				if !networkInterfaceUnavailable {
+					networkInterfaceUnavailable = true
+					lastUnavailableTime = now
+					logWarnModule("network", "No active network interface found, will retry every %v", fastRefreshInterval)
+				}
+				lastInterfaceRefresh = now
 			}
 		} else {
-			// No active interfaces found
-			if !networkInterfaceUnavailable {
-				networkInterfaceUnavailable = true
-				lastUnavailableTime = now
-				logWarnModule("network", "No active network interface found, will retry every %v", fastRefreshInterval)
-			}
-			lastInterfaceRefresh = now
+			// Another goroutine already refreshed
+			currentInterface = currentNetworkInterface
 		}
-	} else if currentNetworkInterface != "" {
-		n.interfaceName = currentNetworkInterface
+
+		interfaceRefreshMutex.Unlock()
 	}
+
+	// Update local interface name
+	n.interfaceName = currentInterface
 }
 
 func (n *NetworkInterfaceMonitor) updateSpeed() error {
@@ -198,12 +304,41 @@ func (n *NetworkInterfaceMonitor) updateSpeed() error {
 				currentBytes = stat.BytesRecv
 			}
 
-			if !n.lastTime.IsZero() && currentBytes > n.lastBytes {
+			// Calculate instantaneous speed if we have previous data
+			if !n.lastTime.IsZero() {
 				duration := now.Sub(n.lastTime).Seconds()
-				if duration > 0 {
-					speed := float64(currentBytes-n.lastBytes) / duration / 1024 / 1024
-					n.SetValue(speed)
-					n.SetAvailable(true)
+
+				// Only calculate if duration is reasonable (between 0.1s and 10s)
+				if duration >= 0.1 && duration <= 10.0 {
+					if currentBytes >= n.lastBytes {
+						// Normal case: bytes increased
+						instantSpeed := float64(currentBytes-n.lastBytes) / duration / 1024 / 1024
+
+						// Filter out unrealistic speeds (> 10 GB/s)
+						if instantSpeed <= 10000.0 {
+							// Add sample to sliding window
+							n.addSpeedSample(now, currentBytes, instantSpeed)
+
+							// Calculate and set average speed
+							avgSpeed := n.calculateAverageSpeed()
+							n.setNetworkSpeedValueUnsafe(avgSpeed)
+							n.SetAvailable(true)
+
+							logDebugModule("network", "Interface %s: instant=%.2f MB/s, avg=%.2f MB/s, samples=%d",
+								n.interfaceName, instantSpeed, avgSpeed, len(n.speedSamples))
+						} else {
+							logWarnModule("network", "Interface %s: unrealistic speed %.2f MB/s, ignoring",
+								n.interfaceName, instantSpeed)
+						}
+					} else {
+						// Handle counter reset (currentBytes < lastBytes)
+						logDebugModule("network", "Interface %s: counter reset detected, resetting samples", n.interfaceName)
+						n.speedSamples = n.speedSamples[:0] // Clear samples
+						n.setNetworkSpeedValueUnsafe(0.0)
+					}
+				} else {
+					logDebugModule("network", "Interface %s: unusual duration %.2fs, skipping calculation",
+						n.interfaceName, duration)
 				}
 			}
 

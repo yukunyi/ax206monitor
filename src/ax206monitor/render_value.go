@@ -35,7 +35,7 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 
 		itemColor := item.Color
 		if itemColor == "" {
-			itemColor = getDynamicColorFromValue(item.Monitor, value.Value, config)
+			itemColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
 		}
 
 		// Draw centered text using common utility

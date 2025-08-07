@@ -435,18 +435,18 @@ func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []str
 		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
 	}
 
-	// Initialize new net1_ monitors
+	// Initialize new net1_ monitors using the same configured interface
 	if isRequired("net1_upload") {
-		registry.Register(NewNet1UploadMonitor())
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "upload", ""))
 	}
 	if isRequired("net1_download") {
-		registry.Register(NewNet1DownloadMonitor())
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "download", ""))
 	}
 	if isRequired("net1_ip") {
-		registry.Register(NewNet1IPMonitor())
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "ip", ""))
 	}
 	if isRequired("net1_interface") {
-		registry.Register(NewNet1InterfaceMonitor())
+		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
 	}
 }
 

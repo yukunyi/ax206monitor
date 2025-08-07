@@ -225,6 +225,82 @@ func (config *MonitorConfig) GetDynamicColor(monitorName string, value float64) 
 	return config.getDefaultDynamicColor(monitorName, value)
 }
 
+// GetDynamicColorForNetworkSpeed returns color based on display value and unit for network speed
+func (config *MonitorConfig) GetDynamicColorForNetworkSpeed(monitorName string, displayValue float64, unit string) string {
+	// Check if there are specific thresholds for this monitor
+	if config.ColorThresholds != nil {
+		if thresholds, exists := config.ColorThresholds[monitorName]; exists {
+			// Convert thresholds to display unit for comparison
+			lowThreshold := config.convertSpeedToDisplayUnit(thresholds.LowThreshold, unit)
+			highThreshold := config.convertSpeedToDisplayUnit(thresholds.HighThreshold, unit)
+
+			if displayValue <= lowThreshold {
+				return thresholds.LowColor
+			} else if displayValue <= highThreshold {
+				return thresholds.MediumColor
+			} else {
+				return thresholds.HighColor
+			}
+		}
+	}
+
+	// Default thresholds based on display unit
+	return config.getDefaultNetworkSpeedColor(displayValue, unit)
+}
+
+// convertSpeedToDisplayUnit converts MB/s threshold to the display unit
+func (config *MonitorConfig) convertSpeedToDisplayUnit(mbpsValue float64, displayUnit string) float64 {
+	switch displayUnit {
+	case " MiB/s":
+		return mbpsValue // Already in MB/s
+	case " KiB/s":
+		return mbpsValue * 1024 // Convert MB/s to KB/s
+	case " B/s":
+		return mbpsValue * 1024 * 1024 // Convert MB/s to B/s
+	default:
+		return mbpsValue // Fallback
+	}
+}
+
+// getDefaultNetworkSpeedColor provides default color logic for network speed based on display unit
+func (config *MonitorConfig) getDefaultNetworkSpeedColor(displayValue float64, unit string) string {
+	switch unit {
+	case " MiB/s":
+		// For MiB/s display
+		if displayValue <= 10 {
+			return "#22c55e" // Green - Normal/Low speed
+		} else if displayValue <= 50 {
+			return "#eab308" // Yellow - Medium speed
+		} else {
+			return "#ef4444" // Red - High speed
+		}
+	case " KiB/s":
+		// For KiB/s display
+		if displayValue <= 10240 { // 10 MB/s = 10240 KB/s
+			return "#22c55e" // Green - Normal/Low speed
+		} else if displayValue <= 51200 { // 50 MB/s = 51200 KB/s
+			return "#eab308" // Yellow - Medium speed
+		} else {
+			return "#ef4444" // Red - High speed
+		}
+	case " B/s":
+		// For B/s display
+		if displayValue <= 10485760 { // 10 MB/s = 10485760 B/s
+			return "#22c55e" // Green - Normal/Low speed
+		} else if displayValue <= 52428800 { // 50 MB/s = 52428800 B/s
+			return "#eab308" // Yellow - Medium speed
+		} else {
+			return "#ef4444" // Red - High speed
+		}
+	default:
+		// Fallback to default color
+		if color, exists := config.Colors["default_text"]; exists {
+			return color
+		}
+		return "#f8fafc"
+	}
+}
+
 // getDefaultDynamicColor provides default color logic for different monitor types
 func (config *MonitorConfig) getDefaultDynamicColor(monitorName string, value float64) string {
 	// Temperature monitors (CPU, GPU, Disk)
@@ -249,7 +325,7 @@ func (config *MonitorConfig) getDefaultDynamicColor(monitorName string, value fl
 		}
 	}
 
-	// Network speed monitors
+	// Network speed monitors (using original MB/s values for backward compatibility)
 	if isNetworkMonitor(monitorName) {
 		// For network speed, low is normal (green), high might indicate issues (red)
 		if value <= 10 { // MB/s

@@ -237,8 +237,8 @@ func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor Mon
 		if valueText != "" {
 			// Use dynamic color for value text
 			textColor := config.Colors["default_text"]
-			if numValue := getFloat64Value(value.Value); numValue != 0 {
-				textColor = config.GetDynamicColor(item.Monitor, numValue)
+			if monitor != nil {
+				textColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
 			}
 			dc.SetColor(parseColor(textColor))
 

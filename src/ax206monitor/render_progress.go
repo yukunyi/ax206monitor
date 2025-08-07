@@ -78,8 +78,8 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 
 		itemColor := item.Color
 		if itemColor == "" {
-			// Use dynamic color based on percentage value
-			itemColor = config.GetDynamicColor(item.Monitor, val)
+			// Use dynamic color based on monitor value
+			itemColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
 		}
 		dc.SetColor(parseColor(itemColor))
 		dc.DrawRectangle(float64(item.X), float64(progressY), fillWidth, float64(progressHeight))

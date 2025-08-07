@@ -89,7 +89,7 @@ prepare_binary() {
 install_binary() {
     print_status "Installing binary to $INSTALL_DIR/$SERVICE_NAME"
     check_sudo_available
-    run_with_sudo "cp '$BINARY_SOURCE' '$INSTALL_DIR/$SERVICE_NAME' && chmod 755 '$INSTALL_DIR/$SERVICE_NAME'"
+    run_with_sudo "cp -af '$BINARY_SOURCE' '$INSTALL_DIR/$SERVICE_NAME' && chmod 755 '$INSTALL_DIR/$SERVICE_NAME'"
     print_success "Installed binary to $INSTALL_DIR/$SERVICE_NAME"
 }
 
@@ -154,7 +154,7 @@ WantedBy=multi-user.target
 EOF
 
     # Copy to systemd directory with sudo
-    run_with_sudo "cp '$temp_service' '$SERVICE_DIR/$SERVICE_NAME.service' && chmod 644 '$SERVICE_DIR/$SERVICE_NAME.service'"
+    run_with_sudo "cp -af '$temp_service' '$SERVICE_DIR/$SERVICE_NAME.service' && chmod 644 '$SERVICE_DIR/$SERVICE_NAME.service'"
     rm -f "$temp_service"
 
     print_success "Created systemd service file"
@@ -251,6 +251,7 @@ main() {
     echo ""
 
     prepare_binary
+    run_with_sudo "systemctl stop $SERVICE_NAME >/dev/null 2>&1"
     install_binary
     install_configs
     create_systemd_service

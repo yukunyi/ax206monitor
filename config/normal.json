@@ -82,15 +82,15 @@
       "high_color": "#ef4444"
     },
     "net1_upload": {
-      "low_threshold": 10,
-      "high_threshold": 50,
+      "low_threshold": 1,
+      "high_threshold": 10,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
     "net1_download": {
-      "low_threshold": 10,
-      "high_threshold": 50,
+      "low_threshold": 1,
+      "high_threshold": 10,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"

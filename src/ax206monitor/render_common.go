@@ -107,6 +107,32 @@ func getDynamicColorFromValue(monitorName string, value interface{}, config *Mon
 	return getColorFromConfig(monitorName, "default_text", "#ffffff", config)
 }
 
+// getDynamicColorFromMonitor returns color based on monitor item and thresholds
+// This version can handle special cases like network monitors with display values
+func getDynamicColorFromMonitor(monitorName string, monitor MonitorItem, config *MonitorConfig) string {
+	// Check for specific monitor color first (static override)
+	if color, exists := config.Colors[monitorName]; exists {
+		return color
+	}
+
+	// Special handling for network monitors - use display value for color calculation
+	if isNetworkMonitor(monitorName) {
+		if netMonitor, ok := monitor.(*NetworkInterfaceMonitor); ok {
+			displayValue := netMonitor.GetDisplayValue()
+			return config.GetDynamicColorForNetworkSpeed(monitorName, displayValue, netMonitor.GetValue().Unit)
+		}
+	}
+
+	// Default handling for other monitors
+	value := monitor.GetValue()
+	if numValue, ok := tryGetFloat64(value.Value); ok {
+		return config.GetDynamicColor(monitorName, numValue)
+	}
+
+	// Fallback to default color
+	return getColorFromConfig(monitorName, "default_text", "#ffffff", config)
+}
+
 // drawLabel draws a label at the specified position
 func drawLabel(dc *gg.Context, x, y, fontSize int, label, color string, fontCache *FontCache) {
 	if label == "" {
