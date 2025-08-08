@@ -58,16 +58,9 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 	headerHeight := 0
 	if item.GetShowHeader() {
 		if item.FontSize > 0 {
-			// Use font cache to get font and measure text height
-			if font, err := fontCache.GetFont(item.FontSize); err == nil {
-				dc.SetFontFace(font)
-				_, textHeight := dc.MeasureString("Ag") // Use characters with ascenders and descenders
-				headerHeight = int(textHeight) + 6      // 2px top + 2px bottom + 2px for separator line
-			} else {
-				headerHeight = item.FontSize + 6 // fallback
-			}
+			headerHeight = int(float32(item.FontSize) * 1.5)
 		} else {
-			headerHeight = 20 // fallback
+			headerHeight = 20
 		}
 	}
 
@@ -82,20 +75,11 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 		dc.DrawRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(headerHeight))
 		dc.Fill()
 
-		// Draw separator line between header and chart
+		// Draw separator line at bottom of header
 		dc.SetColor(color.RGBA{80, 80, 80, 255}) // Light gray line
 		dc.SetLineWidth(1)
-		// Use actual text height for separator position
-		if font, err := fontCache.GetFont(item.FontSize); err == nil {
-			dc.SetFontFace(font)
-			_, textHeight := dc.MeasureString("Ag")
-			separatorY := float64(item.Y) + 2 + textHeight + 2 // 2px top + textHeight + 2px gap
-			dc.DrawLine(float64(item.X), separatorY, float64(item.X+item.Width), separatorY)
-		} else {
-			// fallback position
-			separatorY := float64(item.Y + item.FontSize + 4)
-			dc.DrawLine(float64(item.X), separatorY, float64(item.X+item.Width), separatorY)
-		}
+		separatorY := float64(item.Y + headerHeight - 1) // At bottom of header
+		dc.DrawLine(float64(item.X), separatorY, float64(item.X+item.Width), separatorY)
 		dc.Stroke()
 	}
 
@@ -234,7 +218,7 @@ func (c *ChartRenderer) getMinMax(values []float64) (float64, float64) {
 func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor MonitorItem, fontCache *FontCache, config *MonitorConfig, headerHeight int) {
 	fontSize := 16
 	if item.FontSize > 0 {
-		fontSize = item.FontSize / 2
+		fontSize = item.FontSize
 	}
 
 	font, err := fontCache.GetFont(fontSize)
@@ -263,9 +247,7 @@ func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor Mon
 		if valueText != "" {
 			// Use dynamic color for value text
 			textColor := config.Colors["default_text"]
-			if monitor != nil {
-				textColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
-			}
+			textColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
 			dc.SetColor(parseColor(textColor))
 
 			// Measure text to position it on the right
