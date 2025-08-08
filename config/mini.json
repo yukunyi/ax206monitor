@@ -96,15 +96,15 @@
       "high_color": "#ef4444"
     },
     "disk_total_read_speed": {
-      "low_threshold": 100,
-      "high_threshold": 200,
+      "low_threshold": 104.857600,
+      "high_threshold": 209.715200,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
     "disk_total_write_speed": {
-      "low_threshold": 100,
-      "high_threshold": 200,
+      "low_threshold": 104.857600,
+      "high_threshold": 209.715200,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"

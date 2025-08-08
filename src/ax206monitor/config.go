@@ -248,6 +248,29 @@ func (config *MonitorConfig) GetDynamicColorForNetworkSpeed(monitorName string, 
 	return config.getDefaultNetworkSpeedColor(displayValue, unit)
 }
 
+// GetDynamicColorForDiskSpeed returns color based on display value and unit for disk speed
+func (config *MonitorConfig) GetDynamicColorForDiskSpeed(monitorName string, displayValue float64, unit string) string {
+	// Check if there are specific thresholds for this monitor
+	if config.ColorThresholds != nil {
+		if thresholds, exists := config.ColorThresholds[monitorName]; exists {
+			// Convert thresholds to display unit for comparison
+			lowThreshold := config.convertSpeedToDisplayUnit(thresholds.LowThreshold, unit)
+			highThreshold := config.convertSpeedToDisplayUnit(thresholds.HighThreshold, unit)
+
+			if displayValue <= lowThreshold {
+				return thresholds.LowColor
+			} else if displayValue <= highThreshold {
+				return thresholds.MediumColor
+			} else {
+				return thresholds.HighColor
+			}
+		}
+	}
+
+	// Default thresholds based on display unit (same logic as network speed)
+	return config.getDefaultNetworkSpeedColor(displayValue, unit)
+}
+
 // convertSpeedToDisplayUnit converts MB/s threshold to the display unit
 func (config *MonitorConfig) convertSpeedToDisplayUnit(mbpsValue float64, displayUnit string) float64 {
 	switch displayUnit {
@@ -369,6 +392,16 @@ func isNetworkMonitor(monitorName string) bool {
 	networkMonitors := []string{"net_upload", "net_download", "net1_upload", "net1_download"}
 	for _, network := range networkMonitors {
 		if monitorName == network {
+			return true
+		}
+	}
+	return false
+}
+
+func isDiskSpeedMonitor(monitorName string) bool {
+	diskSpeedMonitors := []string{"disk_total_read_speed", "disk_total_write_speed"}
+	for _, diskSpeed := range diskSpeedMonitors {
+		if monitorName == diskSpeed {
 			return true
 		}
 	}

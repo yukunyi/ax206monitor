@@ -123,6 +123,26 @@ func getDynamicColorFromMonitor(monitorName string, monitor MonitorItem, config 
 		}
 	}
 
+	// Special handling for disk speed monitors - use display value for color calculation
+	if isDiskSpeedMonitor(monitorName) {
+		value := monitor.GetValue()
+		var displayValue float64
+
+		// Try to get display value from disk speed monitors
+		if diskReadMonitor, ok := monitor.(*DiskTotalReadSpeedMonitor); ok {
+			displayValue = diskReadMonitor.GetDisplayValue()
+		} else if diskWriteMonitor, ok := monitor.(*DiskTotalWriteSpeedMonitor); ok {
+			displayValue = diskWriteMonitor.GetDisplayValue()
+		} else {
+			// Fallback to raw value
+			if numValue, ok := tryGetFloat64(value.Value); ok {
+				displayValue = numValue
+			}
+		}
+
+		return config.GetDynamicColorForDiskSpeed(monitorName, displayValue, value.Unit)
+	}
+
 	// Default handling for other monitors
 	value := monitor.GetValue()
 	if numValue, ok := tryGetFloat64(value.Value); ok {

@@ -436,6 +436,17 @@ func (d *DiskTotalReadSpeedMonitor) SetDiskSpeedValue(speedMBps float64) {
 	d.value.Unit = unit
 }
 
+// GetDisplayValue returns the formatted display value for color calculation
+func (d *DiskTotalReadSpeedMonitor) GetDisplayValue() float64 {
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+
+	if val, ok := d.value.Value.(float64); ok {
+		return val
+	}
+	return 0.0
+}
+
 // DiskTotalWriteSpeedMonitor displays total write speed across all disks
 type DiskTotalWriteSpeedMonitor struct {
 	*BaseMonitorItem
@@ -472,6 +483,17 @@ func (d *DiskTotalWriteSpeedMonitor) SetDiskSpeedValue(speedMBps float64) {
 	value, unit := formatDiskSpeed(speedMBps)
 	d.value.Value = value
 	d.value.Unit = unit
+}
+
+// GetDisplayValue returns the formatted display value for color calculation
+func (d *DiskTotalWriteSpeedMonitor) GetDisplayValue() float64 {
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+
+	if val, ok := d.value.Value.(float64); ok {
+		return val
+	}
+	return 0.0
 }
 
 // formatDiskSpeed formats disk speed with appropriate unit and spacing (same as network)
