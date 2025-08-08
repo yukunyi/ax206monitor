@@ -115,6 +115,13 @@
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
+    },
+    "swap_usage": {
+      "low_threshold": 50,
+      "high_threshold": 80,
+      "low_color": "#22c55e",
+      "medium_color": "#eab308",
+      "high_color": "#ef4444"
     }
   },
   "items": [
@@ -147,6 +154,7 @@
       "y": 30,
       "width": 235,
       "height": 80,
+      "font_size": 30,
       "history": true
     },
     {
@@ -156,6 +164,7 @@
       "y": 30,
       "width": 230,
       "height": 80,
+      "font_size": 30,
       "history": true
     },
     {
@@ -183,29 +192,39 @@
       "monitor": "memory_usage",
       "x": 5,
       "y": 180,
-      "width": 155,
+      "width": 115,
       "height": 60,
-      "font_size": 22,
+      "font_size": 20,
+      "bg": "#0f172a"
+    },
+    {
+      "type": "big_value",
+      "monitor": "swap_usage",
+      "x": 125,
+      "y": 180,
+      "width": 115,
+      "height": 60,
+      "font_size": 20,
       "bg": "#0f172a"
     },
     {
       "type": "big_value",
       "monitor": "gpu_temp",
-      "x": 165,
+      "x": 245,
       "y": 180,
-      "width": 155,
+      "width": 115,
       "height": 60,
-      "font_size": 24,
+      "font_size": 22,
       "bg": "#0f172a"
     },
     {
       "type": "big_value",
       "monitor": "gpu_memory_usage",
-      "x": 325,
+      "x": 365,
       "y": 180,
-      "width": 150,
+      "width": 110,
       "height": 60,
-      "font_size": 22,
+      "font_size": 20,
       "bg": "#0f172a"
     },
     {

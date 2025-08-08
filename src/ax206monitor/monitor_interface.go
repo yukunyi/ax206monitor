@@ -297,6 +297,9 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 	if isRequired("memory_usage_progress") {
 		registry.Register(NewMemoryUsageProgressMonitor())
 	}
+	if isRequired("swap_usage") {
+		registry.Register(NewSwapUsageMonitor())
+	}
 	if isRequired("gpu_usage") {
 		registry.Register(NewGPUUsageMonitor())
 	}

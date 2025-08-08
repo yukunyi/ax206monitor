@@ -41,12 +41,20 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 		percentage = 100
 	}
 
-	// Calculate header height
+	// Calculate header height using actual text metrics
 	headerHeight := 0
 	if item.GetShowHeader() {
-		headerHeight = 20 // Reserve space for header
 		if item.FontSize > 0 {
-			headerHeight = item.FontSize + 4
+			// Use font cache to get font and measure text height
+			if font, err := fontCache.GetFont(item.FontSize); err == nil {
+				dc.SetFontFace(font)
+				_, textHeight := dc.MeasureString("Ag") // Use characters with ascenders and descenders
+				headerHeight = int(textHeight) + 4      // 2px top + 2px bottom
+			} else {
+				headerHeight = item.FontSize + 4 // fallback
+			}
+		} else {
+			headerHeight = 20 // fallback
 		}
 	}
 
@@ -120,8 +128,10 @@ func (p *ProgressRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor 
 		label := monitor.GetLabel()
 		if label != "" {
 			dc.SetColor(parseColor(config.Colors["default_text"]))
-			labelY := float64(item.Y + headerHeight/2 + fontSize/2)
-			dc.DrawString(label, float64(item.X+4), labelY)
+			// Use actual text height for positioning
+			_, textHeight := dc.MeasureString("Ag")
+			labelY := float64(item.Y) + 2 + textHeight // 2px from top edge + actual text height
+			dc.DrawString(label, float64(item.X+2), labelY)
 		}
 	}
 
@@ -134,8 +144,10 @@ func (p *ProgressRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor 
 
 			// Measure text to position it on the right
 			textWidth, _ := dc.MeasureString(valueText)
-			valueX := float64(item.X+item.Width) - textWidth - 4
-			valueY := float64(item.Y + headerHeight/2 + fontSize/2)
+			valueX := float64(item.X+item.Width) - textWidth - 2 // 2px from right edge
+			// Use actual text height for positioning
+			_, textHeight := dc.MeasureString("Ag")
+			valueY := float64(item.Y) + 2 + textHeight // 2px from top edge + actual text height
 
 			dc.DrawString(valueText, valueX, valueY)
 		}

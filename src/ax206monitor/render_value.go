@@ -66,7 +66,9 @@ func (v *ValueRenderer) drawLabel(dc *gg.Context, item *ItemConfig, monitor Moni
 	dc.SetFontFace(font)
 	dc.SetColor(parseColor(config.Colors["default_text"]))
 
-	dc.DrawString(label, float64(item.X+4), float64(item.Y+fontSize+4))
+	// Use actual text height for positioning with 2px padding
+	_, textHeight := dc.MeasureString("Ag")
+	dc.DrawString(label, float64(item.X+2), float64(item.Y)+2+textHeight)
 }
 
 func (v *ValueRenderer) calculateFontSize(dc *gg.Context, item *ItemConfig, text string, fontCache *FontCache, config *MonitorConfig) int {

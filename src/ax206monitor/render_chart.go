@@ -54,12 +54,20 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 		return nil
 	}
 
-	// Calculate header height
+	// Calculate header height using actual text metrics
 	headerHeight := 0
 	if item.GetShowHeader() {
-		headerHeight = 20 // Reserve space for header
 		if item.FontSize > 0 {
-			headerHeight = item.FontSize + 4
+			// Use font cache to get font and measure text height
+			if font, err := fontCache.GetFont(item.FontSize); err == nil {
+				dc.SetFontFace(font)
+				_, textHeight := dc.MeasureString("Ag") // Use characters with ascenders and descenders
+				headerHeight = int(textHeight) + 6      // 2px top + 2px bottom + 2px for separator line
+			} else {
+				headerHeight = item.FontSize + 6 // fallback
+			}
+		} else {
+			headerHeight = 20 // fallback
 		}
 	}
 
@@ -73,6 +81,22 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 		dc.SetColor(color.RGBA{20, 20, 20, 255})
 		dc.DrawRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(headerHeight))
 		dc.Fill()
+
+		// Draw separator line between header and chart
+		dc.SetColor(color.RGBA{80, 80, 80, 255}) // Light gray line
+		dc.SetLineWidth(1)
+		// Use actual text height for separator position
+		if font, err := fontCache.GetFont(item.FontSize); err == nil {
+			dc.SetFontFace(font)
+			_, textHeight := dc.MeasureString("Ag")
+			separatorY := float64(item.Y) + 2 + textHeight + 2 // 2px top + textHeight + 2px gap
+			dc.DrawLine(float64(item.X), separatorY, float64(item.X+item.Width), separatorY)
+		} else {
+			// fallback position
+			separatorY := float64(item.Y + item.FontSize + 4)
+			dc.DrawLine(float64(item.X), separatorY, float64(item.X+item.Width), separatorY)
+		}
+		dc.Stroke()
 	}
 
 	// Calculate chart area (excluding header)
@@ -121,7 +145,7 @@ func (c *ChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 	dc.SetLineWidth(1.5)
 
 	// Add padding to avoid overlap with borders
-	padding := 2.0
+	padding := 1.0
 	chartAreaX := float64(item.X) + padding
 	chartAreaY := float64(chartY) + padding
 	chartAreaWidth := float64(item.Width) - 2*padding
@@ -225,8 +249,10 @@ func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor Mon
 		label := monitor.GetLabel()
 		if label != "" {
 			dc.SetColor(parseColor(config.Colors["default_text"]))
-			labelY := float64(item.Y + headerHeight/2 + fontSize/2)
-			dc.DrawString(label, float64(item.X+4), labelY)
+			// Use actual text height for positioning
+			_, textHeight := dc.MeasureString("Ag")
+			labelY := float64(item.Y) + 2 + textHeight      // 2px from top edge + actual text height
+			dc.DrawString(label, float64(item.X+2), labelY) // 2px from left edge
 		}
 	}
 
@@ -244,8 +270,10 @@ func (c *ChartRenderer) drawHeader(dc *gg.Context, item *ItemConfig, monitor Mon
 
 			// Measure text to position it on the right
 			textWidth, _ := dc.MeasureString(valueText)
-			valueX := float64(item.X+item.Width) - textWidth - 4
-			valueY := float64(item.Y + headerHeight/2 + fontSize/2)
+			valueX := float64(item.X+item.Width) - textWidth - 2 // 2px from right edge
+			// Use actual text height for positioning
+			_, textHeight := dc.MeasureString("Ag")
+			valueY := float64(item.Y) + 2 + textHeight // 2px from top edge + actual text height
 
 			dc.DrawString(valueText, valueX, valueY)
 		}

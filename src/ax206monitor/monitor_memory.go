@@ -165,3 +165,31 @@ func (m *MemoryUsageProgressMonitor) Update() error {
 	m.SetAvailable(true)
 	return nil
 }
+
+type SwapUsageMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewSwapUsageMonitor() *SwapUsageMonitor {
+	return &SwapUsageMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"swap_usage",
+			"Swap",
+			0, 100,
+			"%",
+			0,
+		),
+	}
+}
+
+func (s *SwapUsageMonitor) Update() error {
+	swapInfo, err := mem.SwapMemory()
+	if err != nil {
+		s.SetAvailable(false)
+		return err
+	}
+
+	s.SetValue(swapInfo.UsedPercent)
+	s.SetAvailable(true)
+	return nil
+}
