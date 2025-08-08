@@ -130,8 +130,7 @@ func getDiskWriteSpeed() float64 {
 
 // getCurrentDiskIOStats gets current disk I/O statistics
 func getCurrentDiskIOStats() []*DiskInfo {
-	initializeCache()
-	return cachedDiskInfo
+	return getCachedDiskInfo()
 }
 
 // updateDiskIOStats updates disk I/O statistics for speed calculation
@@ -344,4 +343,178 @@ func getDiskQueueDepth() float64 {
 	// This would need platform-specific implementation
 	// For now, return a placeholder value
 	return 0.0
+}
+
+// DiskMaxTempMonitor displays maximum disk temperature across all disks
+type DiskMaxTempMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskMaxTempMonitor() *DiskMaxTempMonitor {
+	return &DiskMaxTempMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_max_temp",
+			"Max Disk Temp",
+			0, 80,
+			"°C",
+			0,
+		),
+	}
+}
+
+func (d *DiskMaxTempMonitor) Update() error {
+	maxTemp := getDiskMaxTemperature()
+	if maxTemp > 0 {
+		d.SetValue(maxTemp)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// getDiskMaxTemperature calculates maximum disk temperature across all disks
+func getDiskMaxTemperature() float64 {
+	diskInfo := getCachedDiskInfo()
+	if len(diskInfo) == 0 {
+		return 0.0
+	}
+
+	var maxTemp float64
+	hasValidTemp := false
+
+	for _, disk := range diskInfo {
+		if disk.Temperature > 0 {
+			if !hasValidTemp || disk.Temperature > maxTemp {
+				maxTemp = disk.Temperature
+				hasValidTemp = true
+			}
+		}
+	}
+
+	if hasValidTemp {
+		return maxTemp
+	}
+	return 0.0
+}
+
+// DiskTotalReadSpeedMonitor displays total read speed across all disks
+type DiskTotalReadSpeedMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskTotalReadSpeedMonitor() *DiskTotalReadSpeedMonitor {
+	return &DiskTotalReadSpeedMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_total_read_speed",
+			"Total Read",
+			0, 0,
+			"", // Dynamic unit will be set in SetValue
+			2,
+		),
+	}
+}
+
+func (d *DiskTotalReadSpeedMonitor) Update() error {
+	totalSpeed := getDiskTotalReadSpeed()
+	if totalSpeed >= 0 {
+		d.SetDiskSpeedValue(totalSpeed)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// SetDiskSpeedValue sets the disk speed value with dynamic unit formatting
+func (d *DiskTotalReadSpeedMonitor) SetDiskSpeedValue(speedMBps float64) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	value, unit := formatDiskSpeed(speedMBps)
+	d.value.Value = value
+	d.value.Unit = unit
+}
+
+// DiskTotalWriteSpeedMonitor displays total write speed across all disks
+type DiskTotalWriteSpeedMonitor struct {
+	*BaseMonitorItem
+}
+
+func NewDiskTotalWriteSpeedMonitor() *DiskTotalWriteSpeedMonitor {
+	return &DiskTotalWriteSpeedMonitor{
+		BaseMonitorItem: NewBaseMonitorItem(
+			"disk_total_write_speed",
+			"Total Write",
+			0, 0,
+			"", // Dynamic unit will be set in SetValue
+			2,
+		),
+	}
+}
+
+func (d *DiskTotalWriteSpeedMonitor) Update() error {
+	totalSpeed := getDiskTotalWriteSpeed()
+	if totalSpeed >= 0 {
+		d.SetDiskSpeedValue(totalSpeed)
+		d.SetAvailable(true)
+	} else {
+		d.SetAvailable(false)
+	}
+	return nil
+}
+
+// SetDiskSpeedValue sets the disk speed value with dynamic unit formatting
+func (d *DiskTotalWriteSpeedMonitor) SetDiskSpeedValue(speedMBps float64) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	value, unit := formatDiskSpeed(speedMBps)
+	d.value.Value = value
+	d.value.Unit = unit
+}
+
+// formatDiskSpeed formats disk speed with appropriate unit and spacing (same as network)
+func formatDiskSpeed(speedMBps float64) (float64, string) {
+	if speedMBps >= 1.0 {
+		return speedMBps, " MiB/s"
+	} else if speedMBps >= 0.001 {
+		return speedMBps * 1024, " KiB/s"
+	} else {
+		return speedMBps * 1024 * 1024, " B/s"
+	}
+}
+
+// getDiskTotalReadSpeed calculates total read speed across all disks
+func getDiskTotalReadSpeed() float64 {
+	diskInfo := getCachedDiskInfo()
+	if len(diskInfo) == 0 {
+		return -1
+	}
+
+	var totalReadSpeed float64
+
+	for _, disk := range diskInfo {
+		totalReadSpeed += disk.ReadSpeed
+	}
+
+	// Always return the total, even if 0
+	return totalReadSpeed
+}
+
+// getDiskTotalWriteSpeed calculates total write speed across all disks
+func getDiskTotalWriteSpeed() float64 {
+	diskInfo := getCachedDiskInfo()
+	if len(diskInfo) == 0 {
+		return -1
+	}
+
+	var totalWriteSpeed float64
+
+	for _, disk := range diskInfo {
+		totalWriteSpeed += disk.WriteSpeed
+	}
+
+	// Always return the total, even if 0
+	return totalWriteSpeed
 }

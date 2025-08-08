@@ -3,6 +3,7 @@ package main
 import (
 	"runtime"
 	"sync"
+	"time"
 )
 
 // FanInfo represents fan information
@@ -48,21 +49,46 @@ type DiskInfo struct {
 }
 
 var (
-	cachedCPUInfo  *CPUInfo
-	cachedGPUInfo  *GPUInfo
-	cachedDiskInfo []*DiskInfo
-	cacheInitMutex sync.Once
+	cachedCPUInfo    *CPUInfo
+	cachedGPUInfo    *GPUInfo
+	cachedDiskInfo   []*DiskInfo
+	cacheInitMutex   sync.Once
+	diskInfoMutex    sync.RWMutex
+	lastDiskUpdate   time.Time
+	diskUpdatePeriod = 1 * time.Second
 )
 
 func initializeCache() {
 	cacheInitMutex.Do(func() {
 		cachedCPUInfo = detectCPUInfo()
 		cachedGPUInfo = detectGPUInfo()
-		cachedDiskInfo = detectDiskInfo()
+		updateDiskInfo()
 
 		// Print detailed system information
 		printSystemInfo()
 	})
+}
+
+// updateDiskInfo updates disk information if enough time has passed
+func updateDiskInfo() {
+	diskInfoMutex.Lock()
+	defer diskInfoMutex.Unlock()
+
+	now := time.Now()
+	if now.Sub(lastDiskUpdate) >= diskUpdatePeriod {
+		cachedDiskInfo = detectDiskInfo()
+		lastDiskUpdate = now
+	}
+}
+
+// getCachedDiskInfo returns current disk information, updating if necessary
+func getCachedDiskInfo() []*DiskInfo {
+	initializeCache()
+	updateDiskInfo()
+
+	diskInfoMutex.RLock()
+	defer diskInfoMutex.RUnlock()
+	return cachedDiskInfo
 }
 
 func printSystemInfo() {

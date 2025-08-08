@@ -291,6 +291,12 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 	if isRequired("memory_total") {
 		registry.Register(NewMemoryTotalMonitor())
 	}
+	if isRequired("memory_usage_text") {
+		registry.Register(NewMemoryUsageTextMonitor())
+	}
+	if isRequired("memory_usage_progress") {
+		registry.Register(NewMemoryUsageProgressMonitor())
+	}
 	if isRequired("gpu_usage") {
 		registry.Register(NewGPUUsageMonitor())
 	}
@@ -338,6 +344,15 @@ func initializeMonitorItems(requiredMonitors []string, networkInterface string) 
 	}
 	if isRequired("disk_queue_depth") {
 		registry.Register(NewDiskQueueDepthMonitor())
+	}
+	if isRequired("disk_max_temp") {
+		registry.Register(NewDiskMaxTempMonitor())
+	}
+	if isRequired("disk_total_read_speed") {
+		registry.Register(NewDiskTotalReadSpeedMonitor())
+	}
+	if isRequired("disk_total_write_speed") {
+		registry.Register(NewDiskTotalWriteSpeedMonitor())
 	}
 	if isRequired("cpu_fan_speed") {
 		registry.Register(NewCPUFanMonitor())

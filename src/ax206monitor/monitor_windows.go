@@ -174,12 +174,6 @@ func getNetworkInfo() NetworkInfoData {
 	return info
 }
 
-func getDiskInfo() []DiskInfo {
-	// TODO: Implement real disk info retrieval using WMI
-	logWarnModule("disk", "Disk info not implemented for Windows, use LibreHardwareMonitor")
-	return []DiskInfo{}
-}
-
 func getSystemInfo() SystemInfo {
 	hostname := getComputerName()
 	return SystemInfo{
