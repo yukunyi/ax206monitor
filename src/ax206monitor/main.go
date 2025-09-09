@@ -95,19 +95,12 @@ func main() {
 	// Initialize system information cache and print details
 	initializeCache()
 
-	// Initialize network interface manager early to ensure proper detection
+	// Initialize network interface manager early (non-blocking)
 	networkInterface := config.GetNetworkInterface()
 	if networkInterface == "" || networkInterface == "auto" {
-		logInfo("Initializing network interface detection...")
+		logInfo("Initializing network interface detection (async)...")
 		manager := GetNetworkInterfaceManager()
 		manager.TryRefreshAsync()
-		for i := 0; i < 5; i++ {
-			time.Sleep(2 * time.Second)
-			if def := manager.GetDefaultInterface(); def != "" {
-				logInfo("Network interface detected: %s", def)
-				break
-			}
-		}
 	}
 
 	requiredMonitors := getRequiredMonitors(config)

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -60,6 +61,9 @@ var (
 	lastDiskUpdate   time.Time
 	diskUpdatePeriod = 1 * time.Second
 
+	// 无锁读取用原子存储
+	diskInfoStore atomic.Value // []*DiskInfo
+
 	defaultDiskMutex    sync.Mutex
 	lastDefaultDiskName string
 
@@ -69,6 +73,13 @@ var (
 	renderAccessTimeout = 5 * time.Second
 
 	diskSamplerOnce sync.Once
+
+	// 根设备缓存
+	rootDeviceMutex     sync.Mutex
+	cachedRootDevice    string
+	lastRootDeviceCheck time.Time
+	rootDeviceCacheTTL  = 5 * time.Second
+	rootDeviceFetchRun  bool
 )
 
 func noteRenderAccess() {
@@ -87,31 +98,46 @@ func initializeCache() {
 	cacheInitMutex.Do(func() {
 		cachedCPUInfo = detectCPUInfo()
 		cachedGPUInfo = detectGPUInfo()
-		updateDiskInfo()
-		startDiskSampler()
-		printSystemInfo()
+		go func() {
+			updateDiskInfo()
+			startDiskSampler()
+			printSystemInfo()
+		}()
 	})
 }
 
 // updateDiskInfo updates disk information if enough time has passed
 func updateDiskInfo() {
-	diskInfoMutex.Lock()
-	defer diskInfoMutex.Unlock()
-
 	now := time.Now()
-	if now.Sub(lastDiskUpdate) >= diskUpdatePeriod {
-		cachedDiskInfo = detectDiskInfo()
-		if len(cachedDiskInfo) > 1 {
-			sort.Slice(cachedDiskInfo, func(i, j int) bool { return cachedDiskInfo[i].Name < cachedDiskInfo[j].Name })
-		}
-		lastDiskUpdate = now
+	diskInfoMutex.Lock()
+	if now.Sub(lastDiskUpdate) < diskUpdatePeriod {
+		diskInfoMutex.Unlock()
+		return
 	}
+	diskInfoMutex.Unlock()
+
+	// 计算新数据不持锁
+	newDisks := detectDiskInfo()
+	if len(newDisks) > 1 {
+		sort.Slice(newDisks, func(i, j int) bool { return newDisks[i].Name < newDisks[j].Name })
+	}
+
+	// 写入缓存与时间戳
+	diskInfoMutex.Lock()
+	cachedDiskInfo = newDisks
+	lastDiskUpdate = now
+	diskInfoMutex.Unlock()
+	diskInfoStore.Store(newDisks)
 }
 
-// getCachedDiskInfo returns current disk information, updating if necessary
+// getCachedDiskInfo returns current disk information without lock (atomic)
 func getCachedDiskInfo() []*DiskInfo {
 	initializeCache()
-
+	if v := diskInfoStore.Load(); v != nil {
+		if disks, ok := v.([]*DiskInfo); ok {
+			return disks
+		}
+	}
 	diskInfoMutex.RLock()
 	defer diskInfoMutex.RUnlock()
 	return cachedDiskInfo
@@ -127,66 +153,51 @@ func startDiskSampler() {
 					continue
 				}
 				updateDiskInfo()
+				refreshRootDeviceIfNeeded()
 			}
 		}()
 	})
 }
 
-func printSystemInfo() {
-	logInfo("=== System Information ===")
-
-	if cachedCPUInfo != nil {
-		logInfo("CPU: %s", cachedCPUInfo.Model)
-		logInfo("CPU Vendor: %s", cachedCPUInfo.Vendor)
-		logInfo("CPU Architecture: %s", cachedCPUInfo.Architecture)
-		logInfo("CPU Cores: %d, Threads: %d", cachedCPUInfo.Cores, cachedCPUInfo.Threads)
-		logInfo("CPU Frequency: %.0f MHz - %.0f MHz", cachedCPUInfo.MinFreq, cachedCPUInfo.MaxFreq)
+func refreshRootDeviceIfNeeded() {
+	rootDeviceMutex.Lock()
+	now := time.Now()
+	if now.Sub(lastRootDeviceCheck) < rootDeviceCacheTTL || rootDeviceFetchRun {
+		rootDeviceMutex.Unlock()
+		return
 	}
-
-	if cachedGPUInfo != nil {
-		logInfo("GPU: %s (%s)", cachedGPUInfo.Model, cachedGPUInfo.Vendor)
-		if cachedGPUInfo.Memory > 0 {
-			logInfo("GPU Memory: %d MB", cachedGPUInfo.Memory)
-		}
-		if cachedGPUInfo.FanCount > 0 {
-			logInfo("GPU Fans: %d", cachedGPUInfo.FanCount)
-		}
-	}
-
-	if len(cachedDiskInfo) > 0 {
-		logInfo("Disks: %d detected", len(cachedDiskInfo))
-		for i, disk := range cachedDiskInfo {
-			if i < 3 {
-				logInfo("Disk %d: %s (%s) - %.0f GB", i+1, disk.Name, disk.Model, float64(disk.Size))
-			}
-		}
-	}
-
-	logInfo("OS: %s %s", runtime.GOOS, runtime.GOARCH)
-	logInfo("========================")
+	rootDeviceFetchRun = true
+	rootDeviceMutex.Unlock()
+	go func() {
+		dev := detectRootDevice()
+		rootDeviceMutex.Lock()
+		cachedRootDevice = dev
+		lastRootDeviceCheck = time.Now()
+		rootDeviceFetchRun = false
+		rootDeviceMutex.Unlock()
+	}()
 }
 
-func detectGPUModel() string {
-	if cachedGPUInfo != nil {
-		return cachedGPUInfo.Model
+func getCachedRootDevice() string {
+	rootDeviceMutex.Lock()
+	now := time.Now()
+	dev := cachedRootDevice
+	expired := now.Sub(lastRootDeviceCheck) >= rootDeviceCacheTTL
+	already := rootDeviceFetchRun
+	rootDeviceMutex.Unlock()
+	if expired && !already {
+		refreshRootDeviceIfNeeded()
 	}
-	return "Generic GPU"
+	return dev
 }
 
 func getDefaultDiskIndex() int {
 	initializeCache()
-	updateDiskInfo()
-
-	diskInfoMutex.RLock()
-	disks := cachedDiskInfo
-	diskInfoMutex.RUnlock()
+	disks := getCachedDiskInfo()
 	if len(disks) == 0 {
 		return -1
 	}
-
-	device := detectRootDevice()
-
-	// choose default name
+	device := getCachedRootDevice()
 	var chosenName string
 	var idx int
 	if device == "" {
@@ -208,14 +219,12 @@ func getDefaultDiskIndex() int {
 			idx = 0
 		}
 	}
-
 	defaultDiskMutex.Lock()
 	if chosenName != "" && chosenName != lastDefaultDiskName {
 		lastDefaultDiskName = chosenName
 		logInfoModule("disk", "Default disk: %s", chosenName)
 	}
 	defaultDiskMutex.Unlock()
-
 	return idx
 }
 
@@ -260,4 +269,35 @@ func baseDeviceName(device string) string {
 		return dev[:i+1]
 	}
 	return dev
+}
+
+func printSystemInfo() {
+	logInfo("=== System Information ===")
+	if cachedCPUInfo != nil {
+		logInfo("CPU: %s", cachedCPUInfo.Model)
+		logInfo("CPU Vendor: %s", cachedCPUInfo.Vendor)
+		logInfo("CPU Architecture: %s", cachedCPUInfo.Architecture)
+		logInfo("CPU Cores: %d, Threads: %d", cachedCPUInfo.Cores, cachedCPUInfo.Threads)
+		logInfo("CPU Frequency: %.0f MHz - %.0f MHz", cachedCPUInfo.MinFreq, cachedCPUInfo.MaxFreq)
+	}
+	if cachedGPUInfo != nil {
+		logInfo("GPU: %s (%s)", cachedGPUInfo.Model, cachedGPUInfo.Vendor)
+		if cachedGPUInfo.Memory > 0 {
+			logInfo("GPU Memory: %d MB", cachedGPUInfo.Memory)
+		}
+		if cachedGPUInfo.FanCount > 0 {
+			logInfo("GPU Fans: %d", cachedGPUInfo.FanCount)
+		}
+	}
+	disks := getCachedDiskInfo()
+	if len(disks) > 0 {
+		logInfo("Disks: %d detected", len(disks))
+		for i, disk := range disks {
+			if i < 3 {
+				logInfo("Disk %d: %s (%s) - %.0f GB", i+1, disk.Name, disk.Model, float64(disk.Size))
+			}
+		}
+	}
+	logInfo("OS: %s %s", runtime.GOOS, runtime.GOARCH)
+	logInfo("========================")
 }

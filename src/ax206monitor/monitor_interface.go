@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -57,32 +58,23 @@ func NewBaseMonitorItem(name, label string, min, max float64, unit string, preci
 	}
 }
 
-func (b *BaseMonitorItem) GetName() string {
-	return b.name
-}
-
-func (b *BaseMonitorItem) GetLabel() string {
-	return b.label
-}
-
+func (b *BaseMonitorItem) GetName() string  { return b.name }
+func (b *BaseMonitorItem) GetLabel() string { return b.label }
 func (b *BaseMonitorItem) GetValue() *MonitorValue {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
 	return b.value
 }
-
 func (b *BaseMonitorItem) IsAvailable() bool {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
 	return b.available
 }
-
 func (b *BaseMonitorItem) SetValue(value interface{}) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.value.Value = value
 }
-
 func (b *BaseMonitorItem) SetAvailable(available bool) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -93,12 +85,10 @@ func FormatMonitorValue(value *MonitorValue, showUnit bool, unitOverride string)
 	if value == nil {
 		return "N/A"
 	}
-
 	unit := value.Unit
 	if unitOverride != "" {
 		unit = unitOverride
 	}
-
 	switch v := value.Value.(type) {
 	case string:
 		return v
@@ -132,19 +122,31 @@ func getFloat64Value(value interface{}) float64 {
 	}
 }
 
+type monitorRunState struct {
+	running   int32
+	lastStart int64 // unix nano
+}
+
 type MonitorRegistry struct {
-	items map[string]MonitorItem
-	mutex sync.RWMutex
+	items   map[string]MonitorItem
+	mutex   sync.RWMutex
+	states  map[string]*monitorRunState
+	stateMu sync.RWMutex
 }
 
 func NewMonitorRegistry() *MonitorRegistry {
-	return &MonitorRegistry{items: make(map[string]MonitorItem)}
+	return &MonitorRegistry{items: make(map[string]MonitorItem), states: make(map[string]*monitorRunState)}
 }
 
 func (r *MonitorRegistry) Register(item MonitorItem) {
 	r.mutex.Lock()
-	defer r.mutex.Unlock()
 	r.items[item.GetName()] = item
+	r.mutex.Unlock()
+	r.stateMu.Lock()
+	if _, ok := r.states[item.GetName()]; !ok {
+		r.states[item.GetName()] = &monitorRunState{}
+	}
+	r.stateMu.Unlock()
 }
 
 func (r *MonitorRegistry) Get(name string) MonitorItem {
@@ -163,73 +165,65 @@ func (r *MonitorRegistry) GetAll() map[string]MonitorItem {
 	return result
 }
 
+func (r *MonitorRegistry) scheduleUpdate(item MonitorItem) {
+	name := item.GetName()
+	r.stateMu.RLock()
+	st := r.states[name]
+	r.stateMu.RUnlock()
+	if st == nil {
+		r.stateMu.Lock()
+		if r.states[name] == nil {
+			r.states[name] = &monitorRunState{}
+		}
+		st = r.states[name]
+		r.stateMu.Unlock()
+	}
+	// 看门狗：如果运行超过10秒，强制清理
+	if atomic.LoadInt32(&st.running) == 1 {
+		last := atomic.LoadInt64(&st.lastStart)
+		if last > 0 && time.Since(time.Unix(0, last)) > 10*time.Second {
+			if atomic.CompareAndSwapInt32(&st.running, 1, 0) {
+				logWarn("Monitor '%s' previous update stuck >10s, clearing state", name)
+			}
+		}
+	}
+	if !atomic.CompareAndSwapInt32(&st.running, 0, 1) {
+		return
+	}
+	atomic.StoreInt64(&st.lastStart, time.Now().UnixNano())
+	go func(m MonitorItem, state *monitorRunState) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				logWarn("Monitor '%s' update panic: %v", m.GetName(), rec)
+			}
+			atomic.StoreInt32(&state.running, 0)
+		}()
+		start := time.Now()
+		_ = m.Update()
+		elapsed := time.Since(start)
+		if elapsed > 500*time.Millisecond {
+			logWarn("Monitor '%s' slow update: %v", m.GetName(), elapsed)
+		}
+	}(item, st)
+}
+
 func (r *MonitorRegistry) Update(names []string) error {
 	r.mutex.RLock()
-	items := make([]MonitorItem, 0, len(names))
 	for _, name := range names {
-		if item, exists := r.items[name]; exists {
-			items = append(items, item)
+		if item, ok := r.items[name]; ok {
+			r.scheduleUpdate(item)
 		}
 	}
 	r.mutex.RUnlock()
-
-	for _, item := range items {
-		start := time.Now()
-		done := make(chan struct{}, 1)
-		go func(m MonitorItem) {
-			defer func() {
-				if rec := recover(); rec != nil {
-					logWarn("Monitor '%s' update panic: %v", m.GetName(), rec)
-				}
-				done <- struct{}{}
-			}()
-			_ = m.Update()
-		}(item)
-
-		select {
-		case <-done:
-			elapsed := time.Since(start)
-			if elapsed > 500*time.Millisecond {
-				logWarn("Monitor '%s' slow update: %v", item.GetName(), elapsed)
-			}
-		case <-time.After(300 * time.Millisecond):
-			logWarn("Monitor '%s' update timeout", item.GetName())
-		}
-	}
 	return nil
 }
 
 func (r *MonitorRegistry) UpdateAll() error {
 	r.mutex.RLock()
-	items := make([]MonitorItem, 0, len(r.items))
 	for _, item := range r.items {
-		items = append(items, item)
+		r.scheduleUpdate(item)
 	}
 	r.mutex.RUnlock()
-
-	for _, item := range items {
-		start := time.Now()
-		done := make(chan struct{}, 1)
-		go func(m MonitorItem) {
-			defer func() {
-				if rec := recover(); rec != nil {
-					logWarn("Monitor '%s' update panic: %v", m.GetName(), rec)
-				}
-				done <- struct{}{}
-			}()
-			_ = m.Update()
-		}(item)
-
-		select {
-		case <-done:
-			elapsed := time.Since(start)
-			if elapsed > 500*time.Millisecond {
-				logWarn("Monitor '%s' slow update: %v", item.GetName(), elapsed)
-			}
-		case <-time.After(300 * time.Millisecond):
-			logWarn("Monitor '%s' update timeout", item.GetName())
-		}
-	}
 	return nil
 }
 
@@ -256,128 +250,97 @@ func GetMonitorRegistryWithConfig(requiredMonitors []string, networkInterface st
 	return globalMonitorRegistry
 }
 
-// SetGlobalMonitorConfig sets the global monitor configuration
-func SetGlobalMonitorConfig(config *MonitorConfig) {
-	globalMonitorConfig = config
-}
-
-// GetGlobalMonitorConfig returns the global monitor configuration
-func GetGlobalMonitorConfig() *MonitorConfig {
-	return globalMonitorConfig
-}
+// Set/Get global config
+func SetGlobalMonitorConfig(config *MonitorConfig) { globalMonitorConfig = config }
+func GetGlobalMonitorConfig() *MonitorConfig       { return globalMonitorConfig }
 
 func performInitialUpdate() {
 	registry := globalMonitorRegistry
-	registry.mutex.RLock()
-	items := make([]MonitorItem, 0, len(registry.items))
-	for _, item := range registry.items {
-		items = append(items, item)
-	}
-	registry.mutex.RUnlock()
-
-	for _, item := range items {
-		_ = item.Update()
-	}
+	// 改为异步调度，避免初始化阶段阻塞
+	_ = registry.UpdateAll()
 }
 
-// MonitorItemConfig defines the configuration for a monitor
 type MonitorItemConfig struct {
 	Name     string
 	Creator  func() MonitorItem
 	Required bool
 }
 
-// MonitorRegistryConfig holds all monitor configurations
-type MonitorRegistryConfig struct {
-	Monitors []MonitorItemConfig
-}
+type MonitorRegistryConfig struct{ Monitors []MonitorItemConfig }
 
-// getMonitorRegistryConfig returns the configuration for all monitors
 func getMonitorRegistryConfig() *MonitorRegistryConfig {
-	return &MonitorRegistryConfig{
-		Monitors: []MonitorItemConfig{
-			{"cpu_usage", func() MonitorItem { return NewCPUUsageMonitor() }, true},
-			{"cpu_temp", func() MonitorItem { return NewCPUTempMonitor() }, true},
-			{"cpu_freq", func() MonitorItem { return NewCPUFreqMonitor() }, true},
-			{"cpu_model", func() MonitorItem { return NewCPUModelMonitor() }, true},
-			{"cpu_cores", func() MonitorItem { return NewCPUCoresMonitor() }, true},
-
-			{"memory_usage", func() MonitorItem { return NewMemoryUsageMonitor() }, true},
-			{"memory_used", func() MonitorItem { return NewMemoryUsedMonitor() }, true},
-			{"memory_total", func() MonitorItem { return NewMemoryTotalMonitor() }, true},
-			{"memory_usage_text", func() MonitorItem { return NewMemoryUsageTextMonitor() }, true},
-			{"memory_usage_progress", func() MonitorItem { return NewMemoryUsageProgressMonitor() }, true},
-			{"swap_usage", func() MonitorItem { return NewSwapUsageMonitor() }, true},
-
-			{"gpu_usage", NewGPUUsageMonitor, true},
-			{"gpu_temp", NewGPUTempMonitor, true},
-			{"gpu_freq", NewGPUFreqMonitor, true},
-			{"gpu_fps", NewGPUFPSMonitor, true},
-			{"gpu_model", NewGPUModelMonitor, true},
-			{"gpu_memory_total", NewGPUMemoryTotalMonitor, true},
-			{"gpu_memory_used", NewGPUMemoryUsedMonitor, true},
-			{"gpu_memory_usage", NewGPUMemoryUsageMonitor, true},
-
-			{"disk_default_temp", NewDiskDefaultTempMonitor, true},
-			{"disk_default_read_speed", NewDiskDefaultReadSpeedMonitor, true},
-			{"disk_default_write_speed", NewDiskDefaultWriteSpeedMonitor, true},
-			{"disk_default_usage", NewDiskDefaultUsageMonitor, true},
-			{"disk_default_model", NewDiskDefaultModelMonitor, true},
-			{"disk_default_name", NewDiskDefaultNameMonitor, true},
-
-			{"net_default_upload", func() MonitorItem {
-				var ni string
-				if cfg := GetGlobalMonitorConfig(); cfg != nil {
-					ni = cfg.GetNetworkInterface()
-				}
-				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "upload", "net_default")
-			}, true},
-			{"net_default_download", func() MonitorItem {
-				var ni string
-				if cfg := GetGlobalMonitorConfig(); cfg != nil {
-					ni = cfg.GetNetworkInterface()
-				}
-				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "download", "net_default")
-			}, true},
-			{"net_default_ip", func() MonitorItem {
-				var ni string
-				if cfg := GetGlobalMonitorConfig(); cfg != nil {
-					ni = cfg.GetNetworkInterface()
-				}
-				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "ip", "net_default")
-			}, true},
-			{"net_default_interface", func() MonitorItem {
-				var ni string
-				if cfg := GetGlobalMonitorConfig(); cfg != nil {
-					ni = cfg.GetNetworkInterface()
-				}
-				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "name", "net_default")
-			}, true},
-
-			// add current time monitor
-			{"current_time", func() MonitorItem { return NewCurrentTimeMonitor() }, true},
-		},
-	}
+	return &MonitorRegistryConfig{Monitors: []MonitorItemConfig{
+		{"cpu_usage", func() MonitorItem { return NewCPUUsageMonitor() }, true},
+		{"cpu_temp", func() MonitorItem { return NewCPUTempMonitor() }, true},
+		{"cpu_freq", func() MonitorItem { return NewCPUFreqMonitor() }, true},
+		{"cpu_model", func() MonitorItem { return NewCPUModelMonitor() }, true},
+		{"cpu_cores", func() MonitorItem { return NewCPUCoresMonitor() }, true},
+		{"memory_usage", func() MonitorItem { return NewMemoryUsageMonitor() }, true},
+		{"memory_used", func() MonitorItem { return NewMemoryUsedMonitor() }, true},
+		{"memory_total", func() MonitorItem { return NewMemoryTotalMonitor() }, true},
+		{"memory_usage_text", func() MonitorItem { return NewMemoryUsageTextMonitor() }, true},
+		{"memory_usage_progress", func() MonitorItem { return NewMemoryUsageProgressMonitor() }, true},
+		{"swap_usage", func() MonitorItem { return NewSwapUsageMonitor() }, true},
+		{"gpu_usage", NewGPUUsageMonitor, true},
+		{"gpu_temp", NewGPUTempMonitor, true},
+		{"gpu_freq", NewGPUFreqMonitor, true},
+		{"gpu_fps", NewGPUFPSMonitor, true},
+		{"gpu_model", NewGPUModelMonitor, true},
+		{"gpu_memory_total", NewGPUMemoryTotalMonitor, true},
+		{"gpu_memory_used", NewGPUMemoryUsedMonitor, true},
+		{"gpu_memory_usage", NewGPUMemoryUsageMonitor, true},
+		{"disk_default_temp", NewDiskDefaultTempMonitor, true},
+		{"disk_default_read_speed", NewDiskDefaultReadSpeedMonitor, true},
+		{"disk_default_write_speed", NewDiskDefaultWriteSpeedMonitor, true},
+		{"disk_default_usage", NewDiskDefaultUsageMonitor, true},
+		{"disk_default_model", NewDiskDefaultModelMonitor, true},
+		{"disk_default_name", NewDiskDefaultNameMonitor, true},
+		{"net_default_upload", func() MonitorItem {
+			var ni string
+			if cfg := GetGlobalMonitorConfig(); cfg != nil {
+				ni = cfg.GetNetworkInterface()
+			}
+			return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "upload", "net_default")
+		}, true},
+		{"net_default_download", func() MonitorItem {
+			var ni string
+			if cfg := GetGlobalMonitorConfig(); cfg != nil {
+				ni = cfg.GetNetworkInterface()
+			}
+			return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "download", "net_default")
+		}, true},
+		{"net_default_ip", func() MonitorItem {
+			var ni string
+			if cfg := GetGlobalMonitorConfig(); cfg != nil {
+				ni = cfg.GetNetworkInterface()
+			}
+			return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "ip", "net_default")
+		}, true},
+		{"net_default_interface", func() MonitorItem {
+			var ni string
+			if cfg := GetGlobalMonitorConfig(); cfg != nil {
+				ni = cfg.GetNetworkInterface()
+			}
+			return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "name", "net_default")
+		}, true},
+		{"current_time", func() MonitorItem { return NewCurrentTimeMonitor() }, true},
+	}}
 }
 
 func initializeMonitorItems(requiredMonitors []string, networkInterface string) {
 	registry := globalMonitorRegistry
-
 	config := getMonitorRegistryConfig()
 	for _, monitorConfig := range config.Monitors {
 		registry.Register(monitorConfig.Creator())
 	}
-
 	for fanIndex := 1; fanIndex <= 10; fanIndex++ {
 		registry.Register(NewSystemFanMonitor(fanIndex))
 	}
-
 	for diskIndex := 1; diskIndex <= 5; diskIndex++ {
 		registry.Register(NewDiskNameMonitor(diskIndex))
 		registry.Register(NewDiskSizeMonitor(diskIndex))
 		registry.Register(NewDiskTempMonitorByIndex(diskIndex))
 	}
-
 	initializeFanMonitors(registry, requiredMonitors)
 }
 

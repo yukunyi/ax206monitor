@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,14 @@ var (
 	lastDiskStats      map[string]*DiskIOSnapshot
 	cachedDiskTempPath string
 	cachedGPUTempPath  string
+
+	// per-device disk temperature sensor path cache with TTL
+	diskTempCacheMu sync.Mutex
+	diskTempCache   = make(map[string]struct {
+		path string
+		last time.Time
+	})
+	diskTempCacheTTL = 30 * time.Second
 )
 
 func getRealCPUTemperature() float64 {
@@ -861,6 +870,25 @@ func detectLinuxDiskInfo() []*DiskInfo {
 
 // getDiskTemperatureByName tries to get disk temperature by device name
 func getDiskTemperatureByName(deviceName string) float64 {
+	// 1) try cached path first (per device)
+	diskTempCacheMu.Lock()
+	entry, ok := diskTempCache[deviceName]
+	if ok && time.Since(entry.last) < diskTempCacheTTL && entry.path != "" {
+		p := entry.path
+		diskTempCacheMu.Unlock()
+		if tempData, err := ioutil.ReadFile(p); err == nil {
+			if temp, err := strconv.ParseFloat(strings.TrimSpace(string(tempData)), 64); err == nil {
+				t := temp / 1000.0
+				if t > 0 && t < 100 {
+					return t
+				}
+			}
+		}
+		// fallthrough to rescan if cache invalid
+	} else {
+		diskTempCacheMu.Unlock()
+	}
+
 	// Method 1: Try to find temperature in hwmon for this specific disk
 	if hwmonEntries, err := ioutil.ReadDir("/sys/class/hwmon"); err == nil {
 		for _, entry := range hwmonEntries {
@@ -886,6 +914,13 @@ func getDiskTemperatureByName(deviceName string) float64 {
 										tempCelsius := temp / 1000.0              // Convert from millidegrees to degrees
 										if tempCelsius > 0 && tempCelsius < 100 { // Sanity check
 											logDebugModule("disk", "Found temperature for %s via hwmon %s: %.1f°C", deviceName, name, tempCelsius)
+											// cache sensor path
+											diskTempCacheMu.Lock()
+											diskTempCache[deviceName] = struct {
+												path string
+												last time.Time
+											}{path: tempPath, last: time.Now()}
+											diskTempCacheMu.Unlock()
 											return tempCelsius
 										}
 									}
@@ -912,6 +947,13 @@ func getDiskTemperatureByName(deviceName string) float64 {
 								tempCelsius := temp / 1000.0
 								if tempCelsius > 0 && tempCelsius < 100 {
 									logDebugModule("disk", "Found temperature for %s via device path: %.1f°C", deviceName, tempCelsius)
+									// cache sensor path
+									diskTempCacheMu.Lock()
+									diskTempCache[deviceName] = struct {
+										path string
+										last time.Time
+									}{path: tempPath, last: time.Now()}
+									diskTempCacheMu.Unlock()
 									return tempCelsius
 								}
 							}
@@ -938,6 +980,13 @@ func getDiskTemperatureByName(deviceName string) float64 {
 										tempCelsius := temp / 1000.0
 										if tempCelsius > 0 && tempCelsius < 100 {
 											logDebugModule("disk", "Found temperature for %s via nvme path: %.1f°C", deviceName, tempCelsius)
+											// cache sensor path
+											diskTempCacheMu.Lock()
+											diskTempCache[deviceName] = struct {
+												path string
+												last time.Time
+											}{path: tempPath, last: time.Now()}
+											diskTempCacheMu.Unlock()
 											return tempCelsius
 										}
 									}

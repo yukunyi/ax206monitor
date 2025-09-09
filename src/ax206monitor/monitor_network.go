@@ -223,7 +223,8 @@ func NewNetworkInterfaceManager() *NetworkInterfaceManager {
 func GetNetworkInterfaceManager() *NetworkInterfaceManager {
 	networkInterfaceManagerOnce.Do(func() {
 		networkInterfaceManager = NewNetworkInterfaceManager()
-		networkInterfaceManager.refreshInterface()
+		// Avoid blocking during initialization: refresh in background
+		go networkInterfaceManager.refreshInterface()
 	})
 	return networkInterfaceManager
 }
@@ -339,25 +340,9 @@ func (n *NetworkInterfaceMonitor) Update() error {
 			n.SetAvailable(false)
 		}
 	case "ip":
-		ip := "-"
-		ifaces, err := gopsutilNet.Interfaces()
-		if err == nil {
-			for _, it := range ifaces {
-				if it.Name == n.interfaceName {
-					for _, a := range it.Addrs {
-						if a.Addr != "" {
-							p := net.ParseIP(strings.Split(a.Addr, "/")[0])
-							if p != nil && !p.IsLoopback() {
-								ip = p.String()
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-		n.SetValue(ip)
-		n.SetAvailable(ip != "-")
+		refreshIPIfNeeded(n.interfaceName)
+		n.SetValue(cachedIP)
+		n.SetAvailable(cachedIP != "-")
 	case "name":
 		if n.interfaceName == "" {
 			n.SetValue("-")
@@ -512,4 +497,47 @@ func GetConfiguredNetworkInterface(configInterface string) string {
 		return manager.GetDefaultInterface()
 	}
 	return configInterface
+}
+
+var (
+	ipCacheMutex   sync.Mutex
+	cachedIP       string
+	lastIPCheck    time.Time
+	ipCacheTTL     = 2 * time.Second
+	ipFetchRunning bool
+)
+
+func refreshIPIfNeeded(iface string) {
+	ipCacheMutex.Lock()
+	now := time.Now()
+	if now.Sub(lastIPCheck) < ipCacheTTL || ipFetchRunning || iface == "" {
+		ipCacheMutex.Unlock()
+		return
+	}
+	ipFetchRunning = true
+	ipCacheMutex.Unlock()
+	go func(ifn string) {
+		ip := "-"
+		ifaces, err := gopsutilNet.Interfaces()
+		if err == nil {
+			for _, it := range ifaces {
+				if it.Name == ifn {
+					for _, a := range it.Addrs {
+						if a.Addr != "" {
+							p := net.ParseIP(strings.Split(a.Addr, "/")[0])
+							if p != nil && !p.IsLoopback() {
+								ip = p.String()
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		ipCacheMutex.Lock()
+		cachedIP = ip
+		lastIPCheck = time.Now()
+		ipFetchRunning = false
+		ipCacheMutex.Unlock()
+	}(iface)
 }
