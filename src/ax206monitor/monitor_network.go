@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,487 +13,370 @@ import (
 )
 
 const (
-	// Network speed calculation constants
-	speedWindowDuration = 3 * time.Second // 3-second sliding window
-	maxSpeedSamples     = 10              // Maximum samples to keep
-	minSamplesForAvg    = 2               // Minimum samples needed for average calculation
+	speedWindowDuration = 3 * time.Second
+	maxSpeedSamples     = 10
+	minSamplesForAvg    = 2
+	minNetSampleGap     = 150 * time.Millisecond
 )
+
+// 刷新间隔与单例
+type singleton struct{}
 
 var (
-	currentNetworkInterface     string
-	lastInterfaceRefresh        time.Time
-	interfaceRefreshInterval    = 1 * time.Minute
-	interfaceRefreshMutex       sync.RWMutex
-	networkInterfaceUnavailable bool
-	lastUnavailableTime         time.Time
-	fastRefreshInterval         = 5 * time.Second // Fast refresh when interface unavailable
-	bootupRefreshInterval       = 2 * time.Second // Very fast refresh during bootup
-	bootupDuration              = 2 * time.Minute // Consider first 2 minutes as bootup period
-	startTime                   = time.Now()      // Program start time
+	interfaceRefreshInterval = 1 * time.Minute
+	fastRefreshInterval      = 5 * time.Second
+	bootupRefreshInterval    = 2 * time.Second
+	bootupDuration           = 2 * time.Minute
+
+	networkInterfaceManagerOnce sync.Once
+	networkInterfaceManager     *NetworkInterfaceManager
 )
 
-// NetworkSpeedSample represents a single speed measurement
-type NetworkSpeedSample struct {
-	timestamp time.Time
-	bytes     uint64
-	speed     float64 // MB/s
+// 网络后台采样缓存
+type netSample struct {
+	time time.Time
+	tx   uint64
+	rx   uint64
 }
 
+type netSampler struct {
+	mutex       sync.RWMutex
+	iface       string
+	last        netSample
+	avgUpload   float64 // MB/s
+	avgDownload float64 // MB/s
+	running     bool
+	stopCh      chan struct{}
+}
+
+var globalNetSampler = &netSampler{stopCh: make(chan struct{}, 1)}
+
+func (ns *netSampler) setInterface(name string) {
+	ns.mutex.Lock()
+	if ns.iface != name {
+		ns.iface = name
+		ns.last = netSample{}
+		ns.avgUpload = 0
+		ns.avgDownload = 0
+	}
+	ns.mutex.Unlock()
+}
+
+func (ns *netSampler) start() {
+	ns.mutex.Lock()
+	if ns.running {
+		ns.mutex.Unlock()
+		return
+	}
+	ns.running = true
+	ns.mutex.Unlock()
+	go ns.loop()
+}
+
+func (ns *netSampler) stop() {
+	select {
+	case ns.stopCh <- struct{}{}:
+	default:
+	}
+}
+
+func (ns *netSampler) loop() {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !isRenderActive() {
+				continue
+			}
+			ns.sampleOnce()
+		case <-ns.stopCh:
+			ns.mutex.Lock()
+			ns.running = false
+			ns.mutex.Unlock()
+			return
+		}
+	}
+}
+
+func (ns *netSampler) sampleOnce() {
+	ns.mutex.RLock()
+	iface := ns.iface
+	prev := ns.last
+	ns.mutex.RUnlock()
+	if iface == "" {
+		return
+	}
+	stats, err := gopsutilNet.IOCounters(true)
+	if err != nil {
+		return
+	}
+	for _, s := range stats {
+		if s.Name == iface {
+			now := time.Now()
+			cur := netSample{time: now, tx: s.BytesSent, rx: s.BytesRecv}
+			if !prev.time.IsZero() {
+				dt := now.Sub(prev.time).Seconds()
+				if dt >= 0.15 && dt <= 10.0 {
+					u := float64(cur.tx-prev.tx) / dt / 1024 / 1024
+					d := float64(cur.rx-prev.rx) / dt / 1024 / 1024
+					ns.mutex.Lock()
+					ns.avgUpload = (ns.avgUpload*0.7 + u*0.3)
+					ns.avgDownload = (ns.avgDownload*0.7 + d*0.3)
+					ns.last = cur
+					ns.mutex.Unlock()
+					return
+				}
+			}
+			ns.mutex.Lock()
+			ns.last = cur
+			ns.mutex.Unlock()
+			return
+		}
+	}
+}
+
+func (ns *netSampler) get(upload bool) (float64, bool) {
+	ns.mutex.RLock()
+	defer ns.mutex.RUnlock()
+	if ns.iface == "" {
+		return 0, false
+	}
+	if upload {
+		return ns.avgUpload, true
+	}
+	return ns.avgDownload, true
+}
+
+// NetworkInterfaceMonitor（精简，不再持有采样窗口等状态）
 type NetworkInterfaceMonitor struct {
 	*BaseMonitorItem
 	interfaceName string
 	metricType    string
-	lastBytes     uint64
-	lastTime      time.Time
-	speedSamples  []NetworkSpeedSample // Sliding window for speed calculation
 	mutex         sync.RWMutex
 }
 
-func (n *NetworkInterfaceMonitor) GetInterfaceName() string {
-	return n.interfaceName
-}
+func (n *NetworkInterfaceMonitor) GetInterfaceName() string { return n.interfaceName }
 
 func NewNetworkInterfaceMonitor(interfaceName, metricType, prefix string) *NetworkInterfaceMonitor {
+	if prefix == "" {
+		prefix = "net_default"
+	}
 	var name, label, unit string
 	var precision int
-	var maxValue float64
-
 	switch metricType {
 	case "upload":
-		name = "net1_upload"
+		name = fmt.Sprintf("%s_upload", prefix)
 		label = "Upload"
-		unit = "" // Dynamic unit will be set in SetValue
+		unit = " MiB/s"
 		precision = 2
-		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "download":
-		name = "net1_download"
+		name = fmt.Sprintf("%s_download", prefix)
 		label = "Download"
-		unit = "" // Dynamic unit will be set in SetValue
+		unit = " MiB/s"
 		precision = 2
-		maxValue = getNetworkInterfaceMaxSpeed(interfaceName)
 	case "ip":
-		name = "net1_ip"
+		name = fmt.Sprintf("%s_ip", prefix)
 		label = "IP"
-		unit = ""
 		precision = 0
-		maxValue = 0
 	case "name":
-		name = "net1_interface"
+		name = fmt.Sprintf("%s_interface", prefix)
 		label = ""
-		unit = ""
 		precision = 0
-		maxValue = 0
 	default:
 		return nil
 	}
-
-	monitor := &NetworkInterfaceMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(name, label, 0, maxValue, unit, precision),
-		interfaceName:   interfaceName,
-		metricType:      metricType,
-		speedSamples:    make([]NetworkSpeedSample, 0, maxSpeedSamples),
+	mon := &NetworkInterfaceMonitor{BaseMonitorItem: NewBaseMonitorItem(name, label, 0, 0, unit, precision), interfaceName: interfaceName, metricType: metricType}
+	if interfaceName != "" {
+		globalNetSampler.setInterface(interfaceName)
+		globalNetSampler.start()
 	}
-
-	// For name type, set the value immediately if interface is available
-	if metricType == "name" {
-		if interfaceName != "" {
-			monitor.SetValue(interfaceName)
-			monitor.SetAvailable(true)
-		} else {
-			monitor.SetValue("-")
-			monitor.SetAvailable(false)
-		}
-	}
-
-	// For IP type, set initial value
-	if metricType == "ip" {
-		if interfaceName != "" {
-			monitor.SetValue("-")
-			monitor.SetAvailable(false) // Will be updated in first Update() call
-		} else {
-			monitor.SetValue("-")
-			monitor.SetAvailable(false)
-		}
-	}
-
-	return monitor
+	return mon
 }
 
-// formatNetworkSpeed formats network speed with appropriate unit and spacing
-func formatNetworkSpeed(speedMBps float64) (float64, string) {
-	if speedMBps >= 1.0 {
-		return speedMBps, " MiB/s"
-	} else if speedMBps >= 0.001 {
-		return speedMBps * 1024, " KiB/s"
-	} else {
-		return speedMBps * 1024 * 1024, " B/s"
+// NetworkInterfaceManager
+type NetworkInterfaceManager struct {
+	orderedInterfaces     []string
+	defaultInterface      string
+	lastRefresh           time.Time
+	unavailable           bool
+	lastUnavailableTime   time.Time
+	refreshInterval       time.Duration
+	fastRefreshInterval   time.Duration
+	bootupRefreshInterval time.Duration
+	mutex                 sync.RWMutex
+	startTime             time.Time
+	callbacks             []func(string)
+	refreshRunning        bool
+}
+
+func NewNetworkInterfaceManager() *NetworkInterfaceManager {
+	return &NetworkInterfaceManager{
+		refreshInterval:       interfaceRefreshInterval,
+		fastRefreshInterval:   fastRefreshInterval,
+		bootupRefreshInterval: bootupRefreshInterval,
+		startTime:             time.Now(),
+		callbacks:             make([]func(string), 0),
 	}
 }
 
-// addSpeedSample adds a new speed sample to the sliding window
-func (n *NetworkInterfaceMonitor) addSpeedSample(timestamp time.Time, bytes uint64, speed float64) {
-	// Remove old samples outside the window
-	cutoff := timestamp.Add(-speedWindowDuration)
-	validSamples := make([]NetworkSpeedSample, 0, len(n.speedSamples))
-	for _, sample := range n.speedSamples {
-		if sample.timestamp.After(cutoff) {
-			validSamples = append(validSamples, sample)
-		}
-	}
-
-	// Add new sample
-	newSample := NetworkSpeedSample{
-		timestamp: timestamp,
-		bytes:     bytes,
-		speed:     speed,
-	}
-	validSamples = append(validSamples, newSample)
-
-	// Keep only the most recent samples if we exceed the limit
-	if len(validSamples) > maxSpeedSamples {
-		validSamples = validSamples[len(validSamples)-maxSpeedSamples:]
-	}
-
-	n.speedSamples = validSamples
+func GetNetworkInterfaceManager() *NetworkInterfaceManager {
+	networkInterfaceManagerOnce.Do(func() {
+		networkInterfaceManager = NewNetworkInterfaceManager()
+		networkInterfaceManager.refreshInterface()
+	})
+	return networkInterfaceManager
 }
 
-// calculateAverageSpeed calculates the average speed from samples in the sliding window
-func (n *NetworkInterfaceMonitor) calculateAverageSpeed() float64 {
-	if len(n.speedSamples) < minSamplesForAvg {
-		return 0.0
+func (nim *NetworkInterfaceManager) needsRefresh(now time.Time) bool {
+	nim.mutex.RLock()
+	defer nim.mutex.RUnlock()
+	interval := nim.refreshInterval
+	if now.Sub(nim.startTime) < bootupDuration {
+		interval = nim.bootupRefreshInterval
+	} else if nim.unavailable {
+		interval = nim.fastRefreshInterval
 	}
+	return now.Sub(nim.lastRefresh) >= interval
+}
 
+func (nim *NetworkInterfaceManager) TryRefreshAsync() {
+	if !nim.needsRefresh(time.Now()) {
+		return
+	}
+	nim.mutex.Lock()
+	if nim.refreshRunning {
+		nim.mutex.Unlock()
+		return
+	}
+	nim.refreshRunning = true
+	nim.mutex.Unlock()
+	go func() { nim.refreshInterface(); nim.mutex.Lock(); nim.refreshRunning = false; nim.mutex.Unlock() }()
+}
+
+func (nim *NetworkInterfaceManager) GetDefaultInterface() string {
+	nim.mutex.RLock()
+	defer nim.mutex.RUnlock()
+	if nim.defaultInterface != "" {
+		return nim.defaultInterface
+	}
+	if len(nim.orderedInterfaces) > 0 {
+		return nim.orderedInterfaces[0]
+	}
+	return ""
+}
+
+func (nim *NetworkInterfaceManager) refreshInterface() {
+	interfaces := getActiveNetworkInterfaces()
 	now := time.Now()
-	cutoff := now.Add(-speedWindowDuration)
-
-	var totalSpeed float64
-	var validSamples int
-	var totalWeight float64
-
-	// Use weighted average based on sample age (newer samples have more weight)
-	for _, sample := range n.speedSamples {
-		if sample.timestamp.After(cutoff) {
-			// Calculate weight based on age (newer = higher weight)
-			age := now.Sub(sample.timestamp).Seconds()
-			weight := 1.0 - (age / speedWindowDuration.Seconds())
-			if weight < 0.1 {
-				weight = 0.1 // Minimum weight
+	nim.mutex.Lock()
+	defer nim.mutex.Unlock()
+	if len(interfaces) > 0 {
+		nim.orderedInterfaces = interfaces
+		prevDefault := nim.defaultInterface
+		nim.defaultInterface = ""
+		for _, ifn := range interfaces {
+			if hasDefaultGateway(ifn) {
+				nim.defaultInterface = ifn
+				break
 			}
-
-			totalSpeed += sample.speed * weight
-			totalWeight += weight
-			validSamples++
 		}
+		if nim.defaultInterface == "" {
+			nim.defaultInterface = interfaces[0]
+		}
+		if prevDefault != nim.defaultInterface {
+			logInfoModule("network", "Default network interface: %s", nim.defaultInterface)
+			for _, cb := range nim.callbacks {
+				go cb(nim.defaultInterface)
+			}
+		}
+		nim.lastRefresh = now
+		if nim.unavailable {
+			nim.unavailable = false
+			logInfoModule("network", "Network interface recovered: %s", nim.defaultInterface)
+		}
+	} else {
+		if !nim.unavailable {
+			nim.unavailable = true
+			nim.lastUnavailableTime = now
+			if now.Sub(nim.startTime) < bootupDuration {
+				logInfoModule("network", "No active network interface found during bootup, will retry")
+			} else {
+				logWarnModule("network", "No active network interface found, will retry")
+			}
+		}
+		nim.orderedInterfaces = nil
+		nim.defaultInterface = ""
+		nim.lastRefresh = now
 	}
-
-	if validSamples == 0 || totalWeight == 0 {
-		return 0.0
-	}
-
-	return totalSpeed / totalWeight
-}
-
-// SetNetworkSpeedValue sets the network speed value with dynamic unit
-func (n *NetworkInterfaceMonitor) SetNetworkSpeedValue(speedMBps float64) {
-	n.mutex.Lock()
-	defer n.mutex.Unlock()
-
-	value, unit := formatNetworkSpeed(speedMBps)
-	n.value.Value = value
-	n.value.Unit = unit
-}
-
-// setNetworkSpeedValueUnsafe sets the network speed value without locking (internal use)
-func (n *NetworkInterfaceMonitor) setNetworkSpeedValueUnsafe(speedMBps float64) {
-	value, unit := formatNetworkSpeed(speedMBps)
-	n.value.Value = value
-	n.value.Unit = unit
-}
-
-// GetDisplayValue returns the value that will be displayed (for color calculation)
-func (n *NetworkInterfaceMonitor) GetDisplayValue() float64 {
-	n.mutex.RLock()
-	defer n.mutex.RUnlock()
-
-	if val, ok := n.value.Value.(float64); ok {
-		return val
-	}
-	return 0.0
 }
 
 func (n *NetworkInterfaceMonitor) Update() error {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-
-	// Update interface name if needed
-	n.refreshInterfaceIfNeeded()
-
+	noteRenderAccess()
+	manager := GetNetworkInterfaceManager()
+	manager.TryRefreshAsync()
+	iface := manager.GetDefaultInterface()
+	if iface != n.interfaceName {
+		n.interfaceName = iface
+		globalNetSampler.setInterface(iface)
+		globalNetSampler.start()
+	}
 	switch n.metricType {
-	case "upload", "download":
-		return n.updateSpeed()
-	case "ip":
-		return n.updateIP()
-	case "name":
-		return n.updateName()
-	}
-	return nil
-}
-
-func (n *NetworkInterfaceMonitor) refreshInterfaceIfNeeded() {
-	// First check if refresh is needed (with read lock)
-	interfaceRefreshMutex.RLock()
-	now := time.Now()
-	refreshInterval := interfaceRefreshInterval
-
-	// Use different refresh intervals based on system state
-	if now.Sub(startTime) < bootupDuration {
-		// During bootup period, refresh more frequently
-		refreshInterval = bootupRefreshInterval
-	} else if networkInterfaceUnavailable {
-		// When interface is unavailable, use fast refresh
-		refreshInterval = fastRefreshInterval
-	}
-
-	needsRefresh := now.Sub(lastInterfaceRefresh) >= refreshInterval
-	currentInterface := currentNetworkInterface
-	interfaceRefreshMutex.RUnlock()
-
-	if needsRefresh {
-		// Only acquire write lock if refresh is actually needed
-		interfaceRefreshMutex.Lock()
-
-		// Double-check after acquiring write lock
-		if now.Sub(lastInterfaceRefresh) >= refreshInterval {
-			interfaces := getActiveNetworkInterfaces()
-			if len(interfaces) > 0 {
-				newInterface := interfaces[0]
-				if currentNetworkInterface != newInterface {
-					logInfoModule("network", "Interface changed from '%s' to '%s'", currentNetworkInterface, newInterface)
-					currentNetworkInterface = newInterface
-				}
-				lastInterfaceRefresh = now
-
-				// Mark interface as available if it was previously unavailable
-				if networkInterfaceUnavailable {
-					networkInterfaceUnavailable = false
-					logInfoModule("network", "Network interface recovered: %s", currentNetworkInterface)
-				}
-				currentInterface = currentNetworkInterface
-			} else {
-				// No active interfaces found
-				if !networkInterfaceUnavailable {
-					networkInterfaceUnavailable = true
-					lastUnavailableTime = now
-					if now.Sub(startTime) < bootupDuration {
-						logInfoModule("network", "No active network interface found during bootup, will retry every %v", bootupRefreshInterval)
-					} else {
-						logWarnModule("network", "No active network interface found, will retry every %v", fastRefreshInterval)
-					}
-				}
-				lastInterfaceRefresh = now
-			}
+	case "upload":
+		if v, ok := globalNetSampler.get(true); ok {
+			n.SetValue(v)
+			n.SetAvailable(true)
 		} else {
-			// Another goroutine already refreshed
-			currentInterface = currentNetworkInterface
-		}
-
-		interfaceRefreshMutex.Unlock()
-	}
-
-	// Update local interface name
-	n.interfaceName = currentInterface
-}
-
-// forceRefreshInterface forces an immediate refresh of the network interface
-func (n *NetworkInterfaceMonitor) forceRefreshInterface() {
-	interfaceRefreshMutex.Lock()
-	defer interfaceRefreshMutex.Unlock()
-
-	interfaces := getActiveNetworkInterfaces()
-	if len(interfaces) > 0 {
-		newInterface := interfaces[0]
-		if currentNetworkInterface != newInterface {
-			logInfoModule("network", "Interface changed from '%s' to '%s' (forced refresh)", currentNetworkInterface, newInterface)
-			currentNetworkInterface = newInterface
-		}
-		lastInterfaceRefresh = time.Now()
-
-		// Mark interface as available if it was previously unavailable
-		if networkInterfaceUnavailable {
-			networkInterfaceUnavailable = false
-			logInfoModule("network", "Network interface recovered: %s (forced refresh)", currentNetworkInterface)
-		}
-		n.interfaceName = currentNetworkInterface
-	} else {
-		// Still no active interfaces found
-		if !networkInterfaceUnavailable {
-			networkInterfaceUnavailable = true
-			lastUnavailableTime = time.Now()
-			logWarnModule("network", "No active network interface found (forced refresh)")
-		}
-		lastInterfaceRefresh = time.Now()
-	}
-}
-
-func (n *NetworkInterfaceMonitor) updateSpeed() error {
-	// If no interface name, try to refresh
-	if n.interfaceName == "" {
-		n.refreshInterfaceIfNeeded()
-		if n.interfaceName == "" {
 			n.SetAvailable(false)
-			return fmt.Errorf("no network interface available")
 		}
-	}
-
-	stats, err := gopsutilNet.IOCounters(true)
-	if err != nil {
-		n.SetAvailable(false)
-		return err
-	}
-
-	for _, stat := range stats {
-		if stat.Name == n.interfaceName {
-			now := time.Now()
-			var currentBytes uint64
-
-			if n.metricType == "upload" {
-				currentBytes = stat.BytesSent
-			} else {
-				currentBytes = stat.BytesRecv
-			}
-
-			// Calculate instantaneous speed if we have previous data
-			if !n.lastTime.IsZero() {
-				duration := now.Sub(n.lastTime).Seconds()
-
-				// Only calculate if duration is reasonable (between 0.1s and 10s)
-				if duration >= 0.1 && duration <= 10.0 {
-					if currentBytes >= n.lastBytes {
-						// Normal case: bytes increased
-						instantSpeed := float64(currentBytes-n.lastBytes) / duration / 1024 / 1024
-
-						// Filter out unrealistic speeds (> 10 GB/s)
-						if instantSpeed <= 10000.0 {
-							// Add sample to sliding window
-							n.addSpeedSample(now, currentBytes, instantSpeed)
-
-							// Calculate and set average speed
-							avgSpeed := n.calculateAverageSpeed()
-							n.setNetworkSpeedValueUnsafe(avgSpeed)
-							n.SetAvailable(true)
-
-							logDebugModule("network", "Interface %s: instant=%.2f MB/s, avg=%.2f MB/s, samples=%d",
-								n.interfaceName, instantSpeed, avgSpeed, len(n.speedSamples))
-						} else {
-							logWarnModule("network", "Interface %s: unrealistic speed %.2f MB/s, ignoring",
-								n.interfaceName, instantSpeed)
+	case "download":
+		if v, ok := globalNetSampler.get(false); ok {
+			n.SetValue(v)
+			n.SetAvailable(true)
+		} else {
+			n.SetAvailable(false)
+		}
+	case "ip":
+		ip := "-"
+		ifaces, err := gopsutilNet.Interfaces()
+		if err == nil {
+			for _, it := range ifaces {
+				if it.Name == n.interfaceName {
+					for _, a := range it.Addrs {
+						if a.Addr != "" {
+							p := net.ParseIP(strings.Split(a.Addr, "/")[0])
+							if p != nil && !p.IsLoopback() {
+								ip = p.String()
+								break
+							}
 						}
-					} else {
-						// Handle counter reset (currentBytes < lastBytes)
-						logDebugModule("network", "Interface %s: counter reset detected, resetting samples", n.interfaceName)
-						n.speedSamples = n.speedSamples[:0] // Clear samples
-						n.setNetworkSpeedValueUnsafe(0.0)
 					}
-				} else {
-					logDebugModule("network", "Interface %s: unusual duration %.2fs, skipping calculation",
-						n.interfaceName, duration)
 				}
 			}
-
-			n.lastBytes = currentBytes
-			n.lastTime = now
-			return nil
 		}
-	}
-
-	// Interface not found in stats, force refresh interface list
-	logDebugModule("network", "Interface %s not found in stats, forcing interface refresh", n.interfaceName)
-	n.forceRefreshInterface()
-
-	n.SetAvailable(false)
-	return fmt.Errorf("interface %s not found", n.interfaceName)
-}
-
-func (n *NetworkInterfaceMonitor) updateIP() error {
-	// If no interface name, try to refresh
-	if n.interfaceName == "" {
-		n.refreshInterfaceIfNeeded()
+		n.SetValue(ip)
+		n.SetAvailable(ip != "-")
+	case "name":
 		if n.interfaceName == "" {
 			n.SetValue("-")
 			n.SetAvailable(false)
-			return fmt.Errorf("no network interface available")
+		} else {
+			n.SetValue(n.interfaceName)
+			n.SetAvailable(true)
 		}
 	}
-
-	interfaces, err := gopsutilNet.Interfaces()
-	if err != nil {
-		n.SetAvailable(false)
-		return err
-	}
-
-	var ipv4Addr, ipv6Addr string
-
-	for _, iface := range interfaces {
-		if iface.Name == n.interfaceName {
-			for _, addr := range iface.Addrs {
-				if addr.Addr == "" {
-					continue
-				}
-
-				ip := net.ParseIP(strings.Split(addr.Addr, "/")[0])
-				if ip == nil {
-					continue
-				}
-
-				if isLocalIP(ip) {
-					continue
-				}
-
-				if ip.To4() != nil {
-					ipv4Addr = ip.String()
-				} else if ip.To16() != nil {
-					ipv6Addr = ip.String()
-				}
-			}
-			break // Found the interface, no need to continue
-		}
-	}
-
-	if ipv4Addr != "" {
-		n.SetValue(ipv4Addr)
-		n.SetAvailable(true)
-		return nil
-	}
-
-	if ipv6Addr != "" {
-		n.SetValue(ipv6Addr)
-		n.SetAvailable(true)
-		return nil
-	}
-
-	// Interface found but no valid IP, force refresh interface list
-	logDebugModule("network", "Interface %s found but no valid IP, forcing interface refresh", n.interfaceName)
-	n.forceRefreshInterface()
-
-	n.SetValue("-")
-	n.SetAvailable(false)
-	return fmt.Errorf("no valid IP found for interface %s", n.interfaceName)
-}
-
-func (n *NetworkInterfaceMonitor) updateName() error {
-	// If no interface name, try to refresh
-	if n.interfaceName == "" {
-		n.refreshInterfaceIfNeeded()
-		if n.interfaceName == "" {
-			n.SetValue("-")
-			n.SetAvailable(false)
-			return fmt.Errorf("no network interface available")
-		}
-	}
-
-	n.SetValue(n.interfaceName)
-	n.SetAvailable(true)
 	return nil
+}
+
+func (n *NetworkInterfaceMonitor) GetDisplayValue() float64 {
+	n.mutex.RLock()
+	defer n.mutex.RUnlock()
+	if val, ok := n.value.Value.(float64); ok {
+		return val
+	}
+	return 0.0
 }
 
 func isLocalIP(ip net.IP) bool {
@@ -507,15 +392,12 @@ func getActiveNetworkInterfaces() []string {
 	if err != nil {
 		return []string{}
 	}
-
 	var activeInterfaces []string
 	var defaultInterface string
-
 	for _, iface := range interfaces {
 		if isVirtualInterface(iface.Name) {
 			continue
 		}
-
 		if len(iface.Flags) > 0 {
 			hasUp := false
 			hasLoopback := false
@@ -527,17 +409,15 @@ func getActiveNetworkInterfaces() []string {
 					hasLoopback = true
 				}
 			}
-
 			if hasUp && !hasLoopback && hasValidIP(iface) {
 				activeInterfaces = append(activeInterfaces, iface.Name)
-
 				if hasDefaultGateway(iface.Name) {
 					defaultInterface = iface.Name
 				}
 			}
 		}
 	}
-
+	sort.Strings(activeInterfaces)
 	if defaultInterface != "" {
 		result := []string{defaultInterface}
 		for _, iface := range activeInterfaces {
@@ -547,7 +427,6 @@ func getActiveNetworkInterfaces() []string {
 		}
 		return result
 	}
-
 	return activeInterfaces
 }
 
@@ -556,13 +435,11 @@ func isVirtualInterface(name string) bool {
 		"docker", "br-", "veth", "virbr", "vmnet", "vboxnet",
 		"tap", "tun", "lo", "dummy", "bond", "team", "vlan",
 	}
-
 	for _, prefix := range virtualPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -571,22 +448,39 @@ func hasValidIP(iface gopsutilNet.InterfaceStat) bool {
 		if addr.Addr == "" {
 			continue
 		}
-
 		ip := net.ParseIP(strings.Split(addr.Addr, "/")[0])
 		if ip == nil {
 			continue
 		}
-
 		if !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
 			return true
 		}
 	}
-
 	return false
 }
 
 func hasDefaultGateway(interfaceName string) bool {
-	return true
+	data, err := ioutil.ReadFile("/proc/net/route")
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines[1:] {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		iface := fields[0]
+		destination := fields[1]
+		mask := fields[7]
+		if iface == interfaceName && destination == "00000000" && mask == "00000000" {
+			return true
+		}
+	}
+	return false
 }
 
 func getNetworkInterfaceMaxSpeed(interfaceName string) float64 {
@@ -594,7 +488,6 @@ func getNetworkInterfaceMaxSpeed(interfaceName string) float64 {
 	if err != nil {
 		return 0
 	}
-
 	for _, iface := range interfaces {
 		if iface.Name == interfaceName {
 			if iface.MTU > 0 {
@@ -609,24 +502,14 @@ func getNetworkInterfaceMaxSpeed(interfaceName string) float64 {
 			}
 		}
 	}
-
 	return 0
 }
 
 func GetConfiguredNetworkInterface(configInterface string) string {
 	if configInterface == "" || configInterface == "auto" {
-		interfaces := getActiveNetworkInterfaces()
-		if len(interfaces) > 0 {
-			interfaceRefreshMutex.Lock()
-			currentNetworkInterface = interfaces[0]
-			lastInterfaceRefresh = time.Now()
-			interfaceRefreshMutex.Unlock()
-			logInfoModule("network", "Auto-detected network interface: %s", interfaces[0])
-			return interfaces[0]
-		}
-		logWarnModule("network", "No active network interface found")
-		return ""
+		manager := GetNetworkInterfaceManager()
+		manager.TryRefreshAsync()
+		return manager.GetDefaultInterface()
 	}
-	logInfoModule("network", "Using configured network interface: %s", configInterface)
 	return configInterface
 }

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"image"
 	"os"
 	"os/signal"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +52,8 @@ func main() {
 	configDirFlag := flag.String("config-dir", defaultConfigDir, "Configuration directory")
 	listConfigsFlag := flag.Bool("list-configs", false, "List available configuration files")
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
+	// New: dump all monitor values for N seconds and exit
+	dumpSecondsFlag := flag.Int("dump", 0, "Dump all monitor values for N seconds and exit (0 to disable)")
 
 	flag.Parse()
 
@@ -91,9 +95,89 @@ func main() {
 	// Initialize system information cache and print details
 	initializeCache()
 
-	requiredMonitors := getRequiredMonitors(config)
+	// Initialize network interface manager early to ensure proper detection
 	networkInterface := config.GetNetworkInterface()
+	if networkInterface == "" || networkInterface == "auto" {
+		logInfo("Initializing network interface detection...")
+		manager := GetNetworkInterfaceManager()
+		manager.TryRefreshAsync()
+		for i := 0; i < 5; i++ {
+			time.Sleep(2 * time.Second)
+			if def := manager.GetDefaultInterface(); def != "" {
+				logInfo("Network interface detected: %s", def)
+				break
+			}
+		}
+	}
+
+	requiredMonitors := getRequiredMonitors(config)
 	registry := GetMonitorRegistryWithConfig(requiredMonitors, networkInterface)
+
+	// New: dump mode - print all monitors and exit
+	if *dumpSecondsFlag > 0 {
+		interval := time.Second
+		end := time.Now().Add(time.Duration(*dumpSecondsFlag) * time.Second)
+		logInfo("Dumping all monitor values for %d seconds...", *dumpSecondsFlag)
+
+		// build stable, sorted name list
+		names := make([]string, 0)
+		for n := range registry.GetAll() {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+
+		for frame := 0; time.Now().Before(end); frame++ {
+			noteRenderAccess()
+			start := time.Now()
+			items := registry.GetAll()
+
+			// concurrent updates with context timeout per frame
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			doneCh := make(chan struct{}, len(items))
+			for _, it := range items {
+				go func(m MonitorItem) {
+					defer func() { doneCh <- struct{}{} }()
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						_ = m.Update()
+					}
+				}(it)
+			}
+			// wait for either all or timeout
+			waitCount := 0
+			for waitCount < len(items) {
+				select {
+				case <-doneCh:
+					waitCount++
+				case <-ctx.Done():
+					waitCount = len(items)
+				}
+			}
+			cancel()
+
+			// print
+			logInfoModule("dump", "frame=%d time=%s", frame, time.Now().Format("15:04:05"))
+			for _, name := range names {
+				it := items[name]
+				val := "-"
+				if it != nil && it.IsAvailable() {
+					if mv := it.GetValue(); mv != nil {
+						val = FormatMonitorValue(mv, true, "")
+					}
+				}
+				logInfoModule("dump", "%-28s = %s", name, val)
+			}
+
+			// pacing
+			elapsed := time.Since(start)
+			if elapsed < interval {
+				time.Sleep(interval - elapsed)
+			}
+		}
+		return
+	}
 
 	fontCache, err := loadFontCache()
 	if err != nil {
@@ -166,6 +250,7 @@ func main() {
 		case <-ticker.C:
 			cycleStart := time.Now()
 			cache := GetMonitorCache()
+			noteRenderAccess()
 			cache.StartRender()
 
 			// Monitor update timing
@@ -188,9 +273,8 @@ func main() {
 			// Async output (non-blocking)
 			select {
 			case outputChan <- img:
-				// Successfully queued for output
+				// ok
 			default:
-				// Previous output still in progress, skip this frame
 				logWarn("Output queue full, skipping frame")
 			}
 

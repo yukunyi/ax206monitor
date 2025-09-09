@@ -8,6 +8,17 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+)
+
+// 缓存与节流
+var (
+	fansCache       []FanInfo
+	fansCacheTime   time.Time
+	fansCacheMutex  sync.RWMutex
+	lastFanLogCount int
+	lastFanLogTime  time.Time
 )
 
 type FanMonitor struct {
@@ -72,6 +83,16 @@ func getLinuxFanInfo() []FanInfo {
 		return []FanInfo{}
 	}
 
+	// 缓存有效期，例如 1 秒
+	fansCacheMutex.RLock()
+	if time.Since(fansCacheTime) < 1*time.Second && fansCache != nil {
+		cached := make([]FanInfo, len(fansCache))
+		copy(cached, fansCache)
+		fansCacheMutex.RUnlock()
+		return cached
+	}
+	fansCacheMutex.RUnlock()
+
 	fans := []FanInfo{}
 	cpuFanFound := false
 	gpuFanFound := false
@@ -80,97 +101,67 @@ func getLinuxFanInfo() []FanInfo {
 	hwmonDirs := []string{"/sys/class/hwmon"}
 	for _, hwmonDir := range hwmonDirs {
 		if entries, err := ioutil.ReadDir(hwmonDir); err == nil {
-			logDebugModule("fan", "Found %d hwmon entries", len(entries))
 			for _, entry := range entries {
 				// hwmon entries are usually symlinks, so we need to check if they point to directories
 				hwmonPath := filepath.Join(hwmonDir, entry.Name())
 				if stat, err := os.Stat(hwmonPath); err != nil || !stat.IsDir() {
-					logDebugModule("fan", "Skipping non-directory or inaccessible: %s", entry.Name())
 					continue
 				}
-
-				logDebugModule("fan", "Checking hwmon path: %s", hwmonPath)
 
 				// Read hwmon name to identify the device
 				nameFile := filepath.Join(hwmonPath, "name")
 				var deviceName string
 				if nameData, err := ioutil.ReadFile(nameFile); err == nil {
 					deviceName = strings.TrimSpace(string(nameData))
-					logDebugModule("fan", "Device name: %s", deviceName)
 				} else {
 					// Skip if we can't read the name
-					logDebugModule("fan", "Cannot read name file %s: %v", nameFile, err)
 					continue
 				}
 
 				// Find all fan input files
 				fanFiles, err := filepath.Glob(filepath.Join(hwmonPath, "fan*_input"))
 				if err != nil {
-					logDebugModule("fan", "Error globbing fan files in %s: %v", hwmonPath, err)
 					continue
 				}
-
-				logDebugModule("fan", "Found %d fan files in %s", len(fanFiles), hwmonPath)
 				for _, fanFile := range fanFiles {
-					logDebugModule("fan", "Processing fan file: %s", fanFile)
 					if data, err := ioutil.ReadFile(fanFile); err == nil {
 						speedStr := strings.TrimSpace(string(data))
 						if speed, err := strconv.Atoi(speedStr); err == nil && speed > 0 {
-							// Determine fan type and name based on device name and label
-							var fanName string
-
-							// Try to get a more descriptive name from label file first
+							// Try label
 							labelFile := strings.Replace(fanFile, "_input", "_label", 1)
 							labelName := ""
 							if labelData, err := ioutil.ReadFile(labelFile); err == nil {
 								labelName = strings.TrimSpace(string(labelData))
 							}
 
-							// Categorize fan based on device name and label
 							deviceLower := strings.ToLower(deviceName)
 							labelLower := strings.ToLower(labelName)
 
-							if strings.Contains(deviceLower, "cpu") ||
-								strings.Contains(deviceLower, "coretemp") ||
-								strings.Contains(deviceLower, "k10temp") ||
-								strings.Contains(deviceLower, "zenpower") ||
-								strings.Contains(labelLower, "cpu") {
+							var fanName string
+							if strings.Contains(deviceLower, "cpu") || strings.Contains(deviceLower, "coretemp") || strings.Contains(deviceLower, "k10temp") || strings.Contains(deviceLower, "zenpower") || strings.Contains(labelLower, "cpu") {
 								if !cpuFanFound {
 									fanName = "CPU Fan"
 									cpuFanFound = true
 								} else {
-									continue // Skip additional CPU fans
+									continue
 								}
-							} else if strings.Contains(deviceLower, "gpu") ||
-								strings.Contains(deviceLower, "nouveau") ||
-								strings.Contains(deviceLower, "amdgpu") ||
-								strings.Contains(deviceLower, "radeon") ||
-								strings.Contains(labelLower, "gpu") {
+							} else if strings.Contains(deviceLower, "gpu") || strings.Contains(deviceLower, "nouveau") || strings.Contains(deviceLower, "amdgpu") || strings.Contains(deviceLower, "radeon") || strings.Contains(labelLower, "gpu") {
 								if !gpuFanFound {
 									fanName = "GPU Fan"
 									gpuFanFound = true
 								} else {
-									continue // Skip additional GPU fans
+									continue
 								}
 							} else {
-								// System fan - start from 1
 								sysFanCount++
-								if sysFanCount <= 10 { // Limit to sysfan1-10
+								if sysFanCount <= 10 {
 									fanName = fmt.Sprintf("SysFan%d", sysFanCount)
 								} else {
-									continue // Skip fans beyond sysfan10
+									continue
 								}
 							}
 
-							fans = append(fans, FanInfo{
-								Name:  fanName,
-								Speed: speed,
-								Index: len(fans) + 1,
-							})
-
-							// Debug logging
-							logDebugModule("fan", "Found fan: %s = %d RPM (device: %s, label: %s)",
-								fanName, speed, deviceName, labelName)
+							fans = append(fans, FanInfo{Name: fanName, Speed: speed, Index: len(fans) + 1})
 						}
 					}
 				}
@@ -178,7 +169,20 @@ func getLinuxFanInfo() []FanInfo {
 		}
 	}
 
-	logInfoModule("fan", "Detected %d fans total", len(fans))
+	// 更新缓存
+	fansCacheMutex.Lock()
+	fansCache = make([]FanInfo, len(fans))
+	copy(fansCache, fans)
+	fansCacheTime = time.Now()
+	fansCacheMutex.Unlock()
+
+	// 数量变化或超过时间窗才打印Info日志
+	if len(fans) != lastFanLogCount || time.Since(lastFanLogTime) > 5*time.Second {
+		lastFanLogCount = len(fans)
+		lastFanLogTime = time.Now()
+		logInfoModule("fan", "Detected %d fans total", len(fans))
+	}
+
 	return fans
 }
 

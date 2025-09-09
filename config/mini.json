@@ -53,7 +53,7 @@
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "disk_max_temp": {
+    "disk_default_temp": {
       "low_threshold": 50,
       "high_threshold": 65,
       "low_color": "#22c55e",
@@ -81,28 +81,28 @@
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "net1_upload": {
+    "net_default_upload": {
       "low_threshold": 10,
       "high_threshold": 50,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "net1_download": {
+    "net_default_download": {
       "low_threshold": 10,
       "high_threshold": 50,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "disk_total_read_speed": {
+    "disk_default_read_speed": {
       "low_threshold": 104.857600,
       "high_threshold": 209.715200,
       "low_color": "#22c55e",
       "medium_color": "#eab308",
       "high_color": "#ef4444"
     },
-    "disk_total_write_speed": {
+    "disk_default_write_speed": {
       "low_threshold": 104.857600,
       "high_threshold": 209.715200,
       "low_color": "#22c55e",
@@ -127,7 +127,7 @@
   "items": [
     {
       "type": "value",
-      "monitor": "net1_ip",
+      "monitor": "net_default_ip",
       "x": 5,
       "y": 5,
       "width": 180,
@@ -169,7 +169,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "net1_upload",
+      "monitor": "net_default_upload",
       "x": 0,
       "y": 122,
       "width": 238,
@@ -179,7 +179,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "net1_download",
+      "monitor": "net_default_download",
       "x": 240,
       "y": 122,
       "width": 240,
@@ -229,7 +229,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_max_temp",
+      "monitor": "disk_default_temp",
       "x": 0,
       "y": 254,
       "width": 158,
@@ -239,7 +239,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_total_read_speed",
+      "monitor": "disk_default_read_speed",
       "x": 160,
       "y": 254,
       "width": 158,
@@ -249,7 +249,7 @@
     },
     {
       "type": "big_value",
-      "monitor": "disk_total_write_speed",
+      "monitor": "disk_default_write_speed",
       "x": 320,
       "y": 254,
       "width": 160,

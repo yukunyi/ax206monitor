@@ -57,6 +57,85 @@ func NewDisk1NameMonitor() MonitorItem {
 	})
 }
 
+// Disk default monitors using dynamic default disk index
+func NewDiskDefaultTempMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateTemperatureMonitor("disk_default_temp", "Disk Temp", func() (float64, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].Temperature
+			return val, val > 0
+		}
+		return 0, false
+	})
+}
+
+func NewDiskDefaultReadSpeedMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateSpeedMonitor("disk_default_read_speed", "Disk Read", func() (float64, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].ReadSpeed
+			return val, val >= 0
+		}
+		return 0, false
+	})
+}
+
+func NewDiskDefaultWriteSpeedMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateSpeedMonitor("disk_default_write_speed", "Disk Write", func() (float64, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].WriteSpeed
+			return val, val >= 0
+		}
+		return 0, false
+	})
+}
+
+func NewDiskDefaultUsageMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateUsageMonitor("disk_default_usage", "Disk Usage", func() (float64, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].Usage
+			return val, val >= 0
+		}
+		return 0, false
+	})
+}
+
+func NewDiskDefaultModelMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateStringMonitor("disk_default_model", "Disk Model", func() (string, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].Model
+			return val, val != ""
+		}
+		return "", false
+	})
+}
+
+func NewDiskDefaultNameMonitor() MonitorItem {
+	factory := GetMonitorFactory()
+	return factory.CreateStringMonitor("disk_default_name", "Disk Name", func() (string, bool) {
+		initializeCache()
+		idx := getDefaultDiskIndex()
+		if idx >= 0 && idx < len(cachedDiskInfo) {
+			val := cachedDiskInfo[idx].Name
+			return val, val != ""
+		}
+		return "", false
+	})
+}
+
 // DiskIOStats represents disk I/O statistics
 type DiskIOStats struct {
 	ReadBytes    uint64
@@ -177,26 +256,19 @@ func (d *DiskLatencyMonitor) Update() error {
 
 // getDiskLatency calculates average disk latency
 func getDiskLatency() float64 {
-	// For now, return a basic estimation based on disk activity
-	// Real latency calculation would require parsing /proc/diskstats over time
 	stats := getCurrentDiskIOStats()
 	if len(stats) == 0 {
 		return 0.0
 	}
-
-	// Simple estimation: if disks are active (read/write speed > 0), assume some latency
 	var activeDisks int
 	for _, stat := range stats {
 		if stat.ReadSpeed > 0 || stat.WriteSpeed > 0 {
 			activeDisks++
 		}
 	}
-
 	if activeDisks > 0 {
-		// Return a basic latency estimate (1-10ms range)
-		return 2.5 // Average latency estimate in ms
+		return 2.5
 	}
-
 	return 0.0
 }
 
@@ -218,35 +290,9 @@ func NewDiskIOPSMonitor() *DiskIOPSMonitor {
 }
 
 func (d *DiskIOPSMonitor) Update() error {
-	iops := getDiskIOPS()
-	if iops >= 0 {
-		d.SetValue(iops)
-		d.SetAvailable(true)
-	} else {
-		d.SetAvailable(false)
-	}
+	// Placeholder for actual IOPS calculation logic
+	d.SetAvailable(false)
 	return nil
-}
-
-// getDiskIOPS calculates current disk IOPS
-func getDiskIOPS() float64 {
-	// Estimate IOPS based on disk activity
-	stats := getCurrentDiskIOStats()
-	if len(stats) == 0 {
-		return 0.0
-	}
-
-	// Simple estimation based on read/write speeds
-	var totalIOPS float64
-
-	for _, stat := range stats {
-		// Rough estimation: 1 MB/s ≈ 250 IOPS (assuming 4KB blocks)
-		readIOPS := stat.ReadSpeed * 250
-		writeIOPS := stat.WriteSpeed * 250
-		totalIOPS += readIOPS + writeIOPS
-	}
-
-	return totalIOPS
 }
 
 // DiskUtilizationMonitor displays disk utilization percentage

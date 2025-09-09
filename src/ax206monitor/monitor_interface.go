@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 type MonitorItemType int
@@ -137,9 +138,7 @@ type MonitorRegistry struct {
 }
 
 func NewMonitorRegistry() *MonitorRegistry {
-	return &MonitorRegistry{
-		items: make(map[string]MonitorItem),
-	}
+	return &MonitorRegistry{items: make(map[string]MonitorItem)}
 }
 
 func (r *MonitorRegistry) Register(item MonitorItem) {
@@ -175,8 +174,26 @@ func (r *MonitorRegistry) Update(names []string) error {
 	r.mutex.RUnlock()
 
 	for _, item := range items {
-		if err := item.Update(); err != nil {
-			continue
+		start := time.Now()
+		done := make(chan struct{}, 1)
+		go func(m MonitorItem) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					logWarn("Monitor '%s' update panic: %v", m.GetName(), rec)
+				}
+				done <- struct{}{}
+			}()
+			_ = m.Update()
+		}(item)
+
+		select {
+		case <-done:
+			elapsed := time.Since(start)
+			if elapsed > 500*time.Millisecond {
+				logWarn("Monitor '%s' slow update: %v", item.GetName(), elapsed)
+			}
+		case <-time.After(300 * time.Millisecond):
+			logWarn("Monitor '%s' update timeout", item.GetName())
 		}
 	}
 	return nil
@@ -191,8 +208,26 @@ func (r *MonitorRegistry) UpdateAll() error {
 	r.mutex.RUnlock()
 
 	for _, item := range items {
-		if err := item.Update(); err != nil {
-			continue
+		start := time.Now()
+		done := make(chan struct{}, 1)
+		go func(m MonitorItem) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					logWarn("Monitor '%s' update panic: %v", m.GetName(), rec)
+				}
+				done <- struct{}{}
+			}()
+			_ = m.Update()
+		}(item)
+
+		select {
+		case <-done:
+			elapsed := time.Since(start)
+			if elapsed > 500*time.Millisecond {
+				logWarn("Monitor '%s' slow update: %v", item.GetName(), elapsed)
+			}
+		case <-time.After(300 * time.Millisecond):
+			logWarn("Monitor '%s' update timeout", item.GetName())
 		}
 	}
 	return nil
@@ -241,239 +276,114 @@ func performInitialUpdate() {
 	registry.mutex.RUnlock()
 
 	for _, item := range items {
-		go func(item MonitorItem) {
-			item.Update()
-		}(item)
+		_ = item.Update()
+	}
+}
+
+// MonitorItemConfig defines the configuration for a monitor
+type MonitorItemConfig struct {
+	Name     string
+	Creator  func() MonitorItem
+	Required bool
+}
+
+// MonitorRegistryConfig holds all monitor configurations
+type MonitorRegistryConfig struct {
+	Monitors []MonitorItemConfig
+}
+
+// getMonitorRegistryConfig returns the configuration for all monitors
+func getMonitorRegistryConfig() *MonitorRegistryConfig {
+	return &MonitorRegistryConfig{
+		Monitors: []MonitorItemConfig{
+			{"cpu_usage", func() MonitorItem { return NewCPUUsageMonitor() }, true},
+			{"cpu_temp", func() MonitorItem { return NewCPUTempMonitor() }, true},
+			{"cpu_freq", func() MonitorItem { return NewCPUFreqMonitor() }, true},
+			{"cpu_model", func() MonitorItem { return NewCPUModelMonitor() }, true},
+			{"cpu_cores", func() MonitorItem { return NewCPUCoresMonitor() }, true},
+
+			{"memory_usage", func() MonitorItem { return NewMemoryUsageMonitor() }, true},
+			{"memory_used", func() MonitorItem { return NewMemoryUsedMonitor() }, true},
+			{"memory_total", func() MonitorItem { return NewMemoryTotalMonitor() }, true},
+			{"memory_usage_text", func() MonitorItem { return NewMemoryUsageTextMonitor() }, true},
+			{"memory_usage_progress", func() MonitorItem { return NewMemoryUsageProgressMonitor() }, true},
+			{"swap_usage", func() MonitorItem { return NewSwapUsageMonitor() }, true},
+
+			{"gpu_usage", NewGPUUsageMonitor, true},
+			{"gpu_temp", NewGPUTempMonitor, true},
+			{"gpu_freq", NewGPUFreqMonitor, true},
+			{"gpu_fps", NewGPUFPSMonitor, true},
+			{"gpu_model", NewGPUModelMonitor, true},
+			{"gpu_memory_total", NewGPUMemoryTotalMonitor, true},
+			{"gpu_memory_used", NewGPUMemoryUsedMonitor, true},
+			{"gpu_memory_usage", NewGPUMemoryUsageMonitor, true},
+
+			{"disk_default_temp", NewDiskDefaultTempMonitor, true},
+			{"disk_default_read_speed", NewDiskDefaultReadSpeedMonitor, true},
+			{"disk_default_write_speed", NewDiskDefaultWriteSpeedMonitor, true},
+			{"disk_default_usage", NewDiskDefaultUsageMonitor, true},
+			{"disk_default_model", NewDiskDefaultModelMonitor, true},
+			{"disk_default_name", NewDiskDefaultNameMonitor, true},
+
+			{"net_default_upload", func() MonitorItem {
+				var ni string
+				if cfg := GetGlobalMonitorConfig(); cfg != nil {
+					ni = cfg.GetNetworkInterface()
+				}
+				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "upload", "net_default")
+			}, true},
+			{"net_default_download", func() MonitorItem {
+				var ni string
+				if cfg := GetGlobalMonitorConfig(); cfg != nil {
+					ni = cfg.GetNetworkInterface()
+				}
+				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "download", "net_default")
+			}, true},
+			{"net_default_ip", func() MonitorItem {
+				var ni string
+				if cfg := GetGlobalMonitorConfig(); cfg != nil {
+					ni = cfg.GetNetworkInterface()
+				}
+				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "ip", "net_default")
+			}, true},
+			{"net_default_interface", func() MonitorItem {
+				var ni string
+				if cfg := GetGlobalMonitorConfig(); cfg != nil {
+					ni = cfg.GetNetworkInterface()
+				}
+				return NewNetworkInterfaceMonitor(GetConfiguredNetworkInterface(ni), "name", "net_default")
+			}, true},
+
+			// add current time monitor
+			{"current_time", func() MonitorItem { return NewCurrentTimeMonitor() }, true},
+		},
 	}
 }
 
 func initializeMonitorItems(requiredMonitors []string, networkInterface string) {
 	registry := globalMonitorRegistry
 
-	// Create a map for quick lookup of required monitors
-	required := make(map[string]bool)
-	if requiredMonitors != nil {
-		for _, monitor := range requiredMonitors {
-			required[monitor] = true
-		}
+	config := getMonitorRegistryConfig()
+	for _, monitorConfig := range config.Monitors {
+		registry.Register(monitorConfig.Creator())
 	}
 
-	// Helper function to check if a monitor is required
-	isRequired := func(name string) bool {
-		if requiredMonitors == nil {
-			return true // Initialize all if no filter provided
-		}
-		return required[name]
-	}
-
-	// Initialize basic monitors only if required
-	if isRequired("cpu_usage") {
-		registry.Register(NewCPUUsageMonitor())
-	}
-	if isRequired("cpu_temp") {
-		registry.Register(NewCPUTempMonitor())
-	}
-	if isRequired("cpu_freq") {
-		registry.Register(NewCPUFreqMonitor())
-	}
-	if isRequired("cpu_model") {
-		registry.Register(NewCPUModelMonitor())
-	}
-	if isRequired("cpu_cores") {
-		registry.Register(NewCPUCoresMonitor())
-	}
-	if isRequired("memory_usage") {
-		registry.Register(NewMemoryUsageMonitor())
-	}
-	if isRequired("memory_used") {
-		registry.Register(NewMemoryUsedMonitor())
-	}
-	if isRequired("memory_total") {
-		registry.Register(NewMemoryTotalMonitor())
-	}
-	if isRequired("memory_usage_text") {
-		registry.Register(NewMemoryUsageTextMonitor())
-	}
-	if isRequired("memory_usage_progress") {
-		registry.Register(NewMemoryUsageProgressMonitor())
-	}
-	if isRequired("swap_usage") {
-		registry.Register(NewSwapUsageMonitor())
-	}
-	if isRequired("gpu_usage") {
-		registry.Register(NewGPUUsageMonitor())
-	}
-	if isRequired("gpu_temp") {
-		registry.Register(NewGPUTempMonitor())
-	}
-	if isRequired("gpu_freq") {
-		registry.Register(NewGPUFreqMonitor())
-	}
-	if isRequired("gpu_fps") {
-		registry.Register(NewGPUFPSMonitor())
-	}
-	if isRequired("gpu_model") {
-		registry.Register(NewGPUModelMonitor())
-	}
-	if isRequired("gpu_memory_total") {
-		registry.Register(NewGPUMemoryTotalMonitor())
-	}
-	if isRequired("gpu_memory_used") {
-		registry.Register(NewGPUMemoryUsedMonitor())
-	}
-	if isRequired("gpu_memory_usage") {
-		registry.Register(NewGPUMemoryUsageMonitor())
-	}
-	if isRequired("disk_temp") {
-		registry.Register(NewDiskTempMonitor())
-	}
-	if isRequired("disk_usage") {
-		registry.Register(NewDiskUsageMonitor())
-	}
-	if isRequired("disk_read_speed") {
-		registry.Register(NewDiskReadSpeedMonitor())
-	}
-	if isRequired("disk_write_speed") {
-		registry.Register(NewDiskWriteSpeedMonitor())
-	}
-	if isRequired("disk_latency") {
-		registry.Register(NewDiskLatencyMonitor())
-	}
-	if isRequired("disk_iops") {
-		registry.Register(NewDiskIOPSMonitor())
-	}
-	if isRequired("disk_utilization") {
-		registry.Register(NewDiskUtilizationMonitor())
-	}
-	if isRequired("disk_queue_depth") {
-		registry.Register(NewDiskQueueDepthMonitor())
-	}
-	if isRequired("disk_max_temp") {
-		registry.Register(NewDiskMaxTempMonitor())
-	}
-	if isRequired("disk_total_read_speed") {
-		registry.Register(NewDiskTotalReadSpeedMonitor())
-	}
-	if isRequired("disk_total_write_speed") {
-		registry.Register(NewDiskTotalWriteSpeedMonitor())
-	}
-	if isRequired("cpu_fan_speed") {
-		registry.Register(NewCPUFanMonitor())
-	}
-	if isRequired("gpu_fan_speed") {
-		registry.Register(NewGPUFanMonitor())
-	}
-
-	// Initialize system fan monitors (sysfan1-10)
 	for fanIndex := 1; fanIndex <= 10; fanIndex++ {
-		fanKey := fmt.Sprintf("sysfan%d_speed", fanIndex)
-		if isRequired(fanKey) {
-			registry.Register(NewSystemFanMonitor(fanIndex))
-		}
+		registry.Register(NewSystemFanMonitor(fanIndex))
 	}
 
-	// Initialize disk monitors (disk1-disk5)
 	for diskIndex := 1; diskIndex <= 5; diskIndex++ {
-		diskNameKey := fmt.Sprintf("disk%d_name", diskIndex)
-		diskSizeKey := fmt.Sprintf("disk%d_size", diskIndex)
-		diskTempKey := fmt.Sprintf("disk%d_temp", diskIndex)
-
-		if isRequired(diskNameKey) {
-			registry.Register(NewDiskNameMonitor(diskIndex))
-		}
-		if isRequired(diskSizeKey) {
-			registry.Register(NewDiskSizeMonitor(diskIndex))
-		}
-		if isRequired(diskTempKey) {
-			registry.Register(NewDiskTempMonitorByIndex(diskIndex))
-		}
+		registry.Register(NewDiskNameMonitor(diskIndex))
+		registry.Register(NewDiskSizeMonitor(diskIndex))
+		registry.Register(NewDiskTempMonitorByIndex(diskIndex))
 	}
 
-	// Initialize new disk1_ monitors
-	if isRequired("disk1_temp") {
-		registry.Register(NewDisk1TempMonitor())
-	}
-	if isRequired("disk1_read_speed") {
-		registry.Register(NewDisk1ReadSpeedMonitor())
-	}
-	if isRequired("disk1_write_speed") {
-		registry.Register(NewDisk1WriteSpeedMonitor())
-	}
-	if isRequired("disk1_usage") {
-		registry.Register(NewDisk1UsageMonitor())
-	}
-	if isRequired("disk1_model") {
-		registry.Register(NewDisk1ModelMonitor())
-	}
-	if isRequired("disk1_name") {
-		registry.Register(NewDisk1NameMonitor())
-	}
-	if isRequired("load_avg") {
-		registry.Register(NewLoadAvgMonitor())
-	}
-	if isRequired("current_time") {
-		registry.Register(NewCurrentTimeMonitor())
-	}
-
-	initializeNetworkMonitors(registry, requiredMonitors, networkInterface)
 	initializeFanMonitors(registry, requiredMonitors)
 }
 
-func initializeNetworkMonitors(registry *MonitorRegistry, requiredMonitors []string, networkInterface string) {
-	// Helper function to check if a monitor is required
-	isRequired := func(name string) bool {
-		if requiredMonitors == nil {
-			return true
-		}
-		for _, monitor := range requiredMonitors {
-			if monitor == name {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Get the configured network interface
-	configuredInterface := GetConfiguredNetworkInterface(networkInterface)
-	if configuredInterface == "" {
-		return // No valid interface found
-	}
-
-	// Initialize network monitors only if required (legacy names)
-	if isRequired("net_upload") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "upload", ""))
-	}
-	if isRequired("net_download") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "download", ""))
-	}
-	if isRequired("net_ip") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "ip", ""))
-	}
-	if isRequired("net_interface") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
-	}
-
-	// Initialize new net1_ monitors using the same configured interface
-	if isRequired("net1_upload") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "upload", ""))
-	}
-	if isRequired("net1_download") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "download", ""))
-	}
-	if isRequired("net1_ip") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "ip", ""))
-	}
-	if isRequired("net1_interface") {
-		registry.Register(NewNetworkInterfaceMonitor(configuredInterface, "name", ""))
-	}
-}
-
 func initializeFanMonitors(registry *MonitorRegistry, requiredMonitors []string) {
-	// Initialize up to 10 fan monitors (fan1-fan10)
 	for fanIndex := 1; fanIndex <= 10; fanIndex++ {
 		fanMonitorName := fmt.Sprintf("fan%d", fanIndex)
-
-		// Check if this fan monitor is required
 		if requiredMonitors != nil {
 			required := false
 			for _, monitor := range requiredMonitors {
@@ -486,8 +396,6 @@ func initializeFanMonitors(registry *MonitorRegistry, requiredMonitors []string)
 				continue
 			}
 		}
-
-		// Create fan monitor with index (1-based)
 		registry.Register(NewFanMonitor(fanIndex, ""))
 	}
 }

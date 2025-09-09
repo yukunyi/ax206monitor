@@ -39,232 +39,32 @@
     "border_color": "#475569"
   },
   "color_thresholds": {
-    "cpu_temp": {
-      "low_threshold": 60,
-      "high_threshold": 75,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "gpu_temp": {
-      "low_threshold": 60,
-      "high_threshold": 75,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "disk1_temp": {
-      "low_threshold": 50,
-      "high_threshold": 65,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "cpu_usage": {
-      "low_threshold": 60,
-      "high_threshold": 75,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "memory_usage": {
-      "low_threshold": 60,
-      "high_threshold": 75,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "gpu_usage": {
-      "low_threshold": 60,
-      "high_threshold": 75,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "net1_upload": {
-      "low_threshold": 1,
-      "high_threshold": 10,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    },
-    "net1_download": {
-      "low_threshold": 1,
-      "high_threshold": 10,
-      "low_color": "#22c55e",
-      "medium_color": "#eab308",
-      "high_color": "#ef4444"
-    }
+    "cpu_temp": {"low_threshold": 60, "high_threshold": 75, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "gpu_temp": {"low_threshold": 60, "high_threshold": 75, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "disk_default_temp": {"low_threshold": 50, "high_threshold": 65, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "cpu_usage": {"low_threshold": 60, "high_threshold": 75, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "memory_usage": {"low_threshold": 60, "high_threshold": 75, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "gpu_usage": {"low_threshold": 60, "high_threshold": 75, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "net_default_upload": {"low_threshold": 1, "high_threshold": 10, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"},
+    "net_default_download": {"low_threshold": 1, "high_threshold": 10, "low_color": "#22c55e", "medium_color": "#eab308", "high_color": "#ef4444"}
   },
   "items": [
-    {
-      "type": "value",
-      "monitor": "current_time",
-      "x": 5,
-      "y": 5,
-      "width": 235,
-      "height": 20,
-      "font_size": 12,
-      "bg": "#020617",
-      "label": false
-    },
-    {
-      "type": "value",
-      "monitor": "net1_ip",
-      "x": 245,
-      "y": 5,
-      "width": 230,
-      "height": 20,
-      "font_size": 12,
-      "bg": "#020617"
-    },
-    {
-      "type": "big_value",
-      "monitor": "cpu_temp",
-      "x": 5,
-      "y": 30,
-      "width": 155,
-      "height": 65,
-      "font_size": 24,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "gpu_temp",
-      "x": 165,
-      "y": 30,
-      "width": 155,
-      "height": 65,
-      "font_size": 24,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "disk1_temp",
-      "x": 325,
-      "y": 30,
-      "width": 150,
-      "height": 65,
-      "font_size": 24,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "value",
-      "monitor": "cpu_usage",
-      "x": 5,
-      "y": 100,
-      "width": 155,
-      "height": 50,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "value",
-      "monitor": "memory_usage",
-      "x": 165,
-      "y": 100,
-      "width": 155,
-      "height": 50,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "value",
-      "monitor": "gpu_usage",
-      "x": 325,
-      "y": 100,
-      "width": 150,
-      "height": 50,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "disk1_read_speed",
-      "x": 5,
-      "y": 155,
-      "width": 155,
-      "height": 55,
-      "font_size": 18,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "disk1_write_speed",
-      "x": 165,
-      "y": 155,
-      "width": 155,
-      "height": 55,
-      "font_size": 18,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "net1_upload",
-      "x": 325,
-      "y": 155,
-      "width": 150,
-      "height": 55,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "chart",
-      "monitor": "cpu_usage",
-      "x": 5,
-      "y": 215,
-      "width": 155,
-      "height": 50,
-      "history": true
-    },
-    {
-      "type": "chart",
-      "monitor": "memory_usage",
-      "x": 165,
-      "y": 215,
-      "width": 155,
-      "height": 50,
-      "history": true
-    },
-    {
-      "type": "big_value",
-      "monitor": "net1_download",
-      "x": 325,
-      "y": 215,
-      "width": 150,
-      "height": 50,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "cpu_freq",
-      "x": 5,
-      "y": 270,
-      "width": 155,
-      "height": 45,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "gpu_freq",
-      "x": 165,
-      "y": 270,
-      "width": 155,
-      "height": 45,
-      "font_size": 16,
-      "bg": "#0f172a"
-    },
-    {
-      "type": "big_value",
-      "monitor": "load_avg",
-      "x": 325,
-      "y": 270,
-      "width": 150,
-      "height": 45,
-      "font_size": 16,
-      "bg": "#0f172a"
-    }
+    {"type": "value", "monitor": "current_time", "x": 5, "y": 5, "width": 235, "height": 20, "font_size": 12, "bg": "#020617", "label": false},
+    {"type": "value", "monitor": "net_default_ip", "x": 245, "y": 5, "width": 230, "height": 20, "font_size": 12, "bg": "#020617"},
+    {"type": "big_value", "monitor": "cpu_temp", "x": 5, "y": 30, "width": 155, "height": 65, "font_size": 24, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "gpu_temp", "x": 165, "y": 30, "width": 155, "height": 65, "font_size": 24, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "disk_default_temp", "x": 325, "y": 30, "width": 150, "height": 65, "font_size": 24, "bg": "#0f172a"},
+    {"type": "value", "monitor": "cpu_usage", "x": 5, "y": 100, "width": 155, "height": 50, "font_size": 16, "bg": "#0f172a"},
+    {"type": "value", "monitor": "memory_usage", "x": 165, "y": 100, "width": 155, "height": 50, "font_size": 16, "bg": "#0f172a"},
+    {"type": "value", "monitor": "gpu_usage", "x": 325, "y": 100, "width": 150, "height": 50, "font_size": 16, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "disk_default_read_speed", "x": 5, "y": 155, "width": 155, "height": 55, "font_size": 18, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "disk_default_write_speed", "x": 165, "y": 155, "width": 155, "height": 55, "font_size": 18, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "net_default_upload", "x": 325, "y": 155, "width": 150, "height": 55, "font_size": 16, "bg": "#0f172a"},
+    {"type": "chart", "monitor": "cpu_usage", "x": 5, "y": 215, "width": 155, "height": 50, "history": true},
+    {"type": "chart", "monitor": "memory_usage", "x": 165, "y": 215, "width": 155, "height": 50, "history": true},
+    {"type": "big_value", "monitor": "net_default_download", "x": 325, "y": 215, "width": 150, "height": 50, "font_size": 16, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "cpu_freq", "x": 5, "y": 270, "width": 155, "height": 45, "font_size": 16, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "gpu_freq", "x": 165, "y": 270, "width": 155, "height": 45, "font_size": 16, "bg": "#0f172a"},
+    {"type": "big_value", "monitor": "load_avg", "x": 325, "y": 270, "width": 150, "height": 45, "font_size": 16, "bg": "#0f172a"}
   ]
 }
