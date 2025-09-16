@@ -97,7 +97,7 @@ mkdir -p "$WINDOWS_PACKAGE"
 echo "Copying files to Windows package directory..."
 cp dist/ax206monitor-windows-amd64.exe "$WINDOWS_PACKAGE/ax206monitor.exe"
 cp -r config "$WINDOWS_PACKAGE/"
-cp config/windows.json "$WINDOWS_PACKAGE/config/default.json"
+cp config/mini.json "$WINDOWS_PACKAGE/config/default.json"
 if [ -f README.md ]; then
     cp README.md "$WINDOWS_PACKAGE/"
 fi
