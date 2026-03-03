@@ -731,3 +731,24 @@ button[data-action="remove-custom"]:hover:not(:disabled) {
   padding-bottom: 2rem;
 }
 
+
+/* Truncate long texts */
+.list button {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block; 
+}
+
+select {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.editor-panel .grid,
+.custom-card .grid,
+.layout-single .grid {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
