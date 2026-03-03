@@ -718,3 +718,16 @@ button[data-action="remove-custom"]:hover:not(:disabled) {
     min-height: auto;
   }
 }
+
+/* Main Content Wrapper */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-content {
+  flex: 1;
+  padding-bottom: 2rem;
+}
+
