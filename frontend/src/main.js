@@ -23,7 +23,8 @@ const state = {
   dirty: false,
   drag: null,
   previewScale: 1,
-  previewImageURL: "",
+  previewImageBitmap: null,
+  previewRefreshPending: false,
   previewError: "",
   previewSyncTimer: null,
   previewSyncing: false,
@@ -34,15 +35,29 @@ const state = {
   savePromise: null,
   polling: false,
   pollTimer: null,
+  runtimeStream: null,
+  runtimeStreamReady: false,
+  runtimeStreamReqSeq: 1,
+  runtimeStreamPending: {},
+  runtimeStreamReconnectTimer: null,
   activeTab: "basic",
   addItemType: "value",
   addItemMonitor: "",
   ui: {
     purePreview: false,
+    showGrid: true,
+    snapEnabled: true,
+    snapSize: 10,
+    previewZoomAuto: true,
+    previewZoom: 100,
+    previewFitScale: 1,
     elementListScrollTop: 0,
     centerGuides: null,
     colorPickers: [],
   },
+  previewFetchTimer: null,
+  previewResizeObserver: null,
+  previewWrapperSize: { width: 0, height: 0 },
 };
 
 function deepClone(obj) {
@@ -229,6 +244,7 @@ function ensureConfig(cfg) {
   config.name = String(config.name || "web");
   config.width = Math.max(10, num(config.width, 480));
   config.height = Math.max(10, num(config.height, 320));
+  config.layout_padding = normalizeLayoutPadding(config.layout_padding, config.width, config.height);
   config.default_font_size = Math.max(1, num(config.default_font_size, 16));
   config.default_color = String(config.default_color || "#f8fafc");
   config.default_background = String(config.default_background || "#0b1220");
@@ -245,6 +261,7 @@ function ensureConfig(cfg) {
   config.refresh_interval = Math.max(100, num(config.refresh_interval, 1000));
   config.history_size = Math.max(10, num(config.history_size, 150));
   config.network_interface = String(config.network_interface || "auto");
+  config.enable_rtss_collect = !!config.enable_rtss_collect;
   config.libre_hardware_monitor_url = String(config.libre_hardware_monitor_url ?? "");
   config.coolercontrol_url = String(config.coolercontrol_url ?? "");
   config.coolercontrol_username = String(config.coolercontrol_username || "");
@@ -264,14 +281,15 @@ function createItemByType(type) {
   const itemType = normalizeItemType(type);
   const monitor = state.addItemMonitor || state.monitorOptions[0] || "";
   const defaultPointSize = Math.max(10, num(state.config?.history_size, 150));
+  const padding = getLayoutPadding(state.config);
   const base = {
     type: itemType,
     edit_ui_name: "",
     monitor: MONITOR_ELEMENT_TYPES.has(itemType) ? monitor : "",
     unit: MONITOR_ELEMENT_TYPES.has(itemType) ? "auto" : "",
     unit_color: "",
-    x: 10,
-    y: 10,
+    x: padding,
+    y: padding,
     width: itemType === "label" ? 140 : 120,
     height: itemType === "label" ? 34 : 40,
     text: itemType === "label" ? "Label" : "",
@@ -315,6 +333,180 @@ async function api(path, options = {}) {
     throw new Error(`${res.status} ${text || res.statusText}`);
   }
   return res.json();
+}
+
+function runtimeStreamURL() {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/api/ws`;
+}
+
+function isRuntimeStreamReady() {
+  return !!state.runtimeStream && state.runtimeStreamReady && state.runtimeStream.readyState === WebSocket.OPEN;
+}
+
+function clearRuntimeStreamPending(errorMessage = "实时连接已断开") {
+  const entries = Object.entries(state.runtimeStreamPending || {});
+  state.runtimeStreamPending = {};
+  for (const [, pending] of entries) {
+    if (pending?.timer) {
+      window.clearTimeout(pending.timer);
+    }
+    if (pending?.reject) {
+      pending.reject(new Error(errorMessage));
+    }
+  }
+}
+
+async function applyPreviewImageBase64(base64Text) {
+  const raw = String(base64Text || "").trim();
+  if (!raw) return;
+  const binary = window.atob(raw);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: "image/png" });
+  const bitmap = await decodePreviewBitmap(blob);
+  if (state.previewImageBitmap && typeof state.previewImageBitmap.close === "function") {
+    state.previewImageBitmap.close();
+  }
+  state.previewImageBitmap = bitmap;
+  state.previewError = "";
+  updatePreviewDOM();
+  const errorEl = document.getElementById("preview-render-error");
+  if (errorEl) {
+    errorEl.textContent = "";
+  }
+}
+
+function handleRuntimeStreamMessage(message) {
+  if (!message || typeof message !== "object") return;
+
+  if (message.type === "response") {
+    const id = String(message.id || "");
+    if (!id || !state.runtimeStreamPending[id]) return;
+    const pending = state.runtimeStreamPending[id];
+    delete state.runtimeStreamPending[id];
+    if (pending.timer) {
+      window.clearTimeout(pending.timer);
+    }
+    if (message.ok) {
+      pending.resolve(message.result || {});
+    } else {
+      pending.reject(new Error(message.error || "请求失败"));
+    }
+    return;
+  }
+
+  if (message.type === "runtime") {
+    if (message.snapshot) {
+      applySnapshotUpdate(message.snapshot, { fromWS: true });
+    }
+    if (message.preview_png) {
+      void applyPreviewImageBase64(message.preview_png).catch(() => {});
+    }
+  }
+}
+
+function connectRuntimeStream() {
+  if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.OPEN) {
+    return;
+  }
+  if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
+    return;
+  }
+
+  if (state.runtimeStreamReconnectTimer) {
+    window.clearTimeout(state.runtimeStreamReconnectTimer);
+    state.runtimeStreamReconnectTimer = null;
+  }
+
+  try {
+    const ws = new WebSocket(runtimeStreamURL());
+    state.runtimeStream = ws;
+    state.runtimeStreamReady = false;
+
+    ws.onopen = () => {
+      state.runtimeStreamReady = true;
+      setError("");
+      stopPolling();
+      void runtimeStreamCall("request_runtime", {}, 4000).catch(() => {});
+      if (state.dirty) {
+        schedulePreviewSync(true);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      if (!event?.data) return;
+      try {
+        const message = JSON.parse(event.data);
+        handleRuntimeStreamMessage(message);
+      } catch (_) {
+        // ignore malformed message
+      }
+    };
+
+    ws.onerror = () => {
+      // will be handled by onclose
+    };
+
+    ws.onclose = () => {
+      state.runtimeStreamReady = false;
+      if (state.runtimeStream === ws) {
+        state.runtimeStream = null;
+      }
+      clearRuntimeStreamPending("实时连接已关闭");
+      startPolling();
+      state.runtimeStreamReconnectTimer = window.setTimeout(() => {
+        state.runtimeStreamReconnectTimer = null;
+        connectRuntimeStream();
+      }, 1000);
+    };
+  } catch (_) {
+    startPolling();
+  }
+}
+
+function closeRuntimeStream() {
+  if (state.runtimeStreamReconnectTimer) {
+    window.clearTimeout(state.runtimeStreamReconnectTimer);
+    state.runtimeStreamReconnectTimer = null;
+  }
+  const ws = state.runtimeStream;
+  state.runtimeStream = null;
+  state.runtimeStreamReady = false;
+  clearRuntimeStreamPending("实时连接已关闭");
+  if (ws) {
+    try {
+      ws.close();
+    } catch (_) {
+      // ignore
+    }
+  }
+}
+
+function runtimeStreamCall(type, payload = {}, timeoutMs = 6000) {
+  if (!isRuntimeStreamReady()) {
+    return Promise.reject(new Error("实时连接未就绪"));
+  }
+  const id = `${Date.now()}_${state.runtimeStreamReqSeq++}`;
+  const request = { type, id, ...payload };
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      if (state.runtimeStreamPending[id]) {
+        delete state.runtimeStreamPending[id];
+      }
+      reject(new Error("实时请求超时"));
+    }, timeoutMs);
+    state.runtimeStreamPending[id] = { resolve, reject, timer };
+    try {
+      state.runtimeStream.send(JSON.stringify(request));
+    } catch (error) {
+      window.clearTimeout(timer);
+      delete state.runtimeStreamPending[id];
+      reject(error instanceof Error ? error : new Error("实时发送失败"));
+    }
+  });
 }
 
 function applyProfilesPayload(payload) {
@@ -398,8 +590,8 @@ function monitorLabel(name) {
 function monitorDisplayName(name) {
   const key = String(name || "");
   const label = monitorLabel(key);
-  if (label && label !== key) {
-    return `${label} (${key})`;
+  if (label) {
+    return label;
   }
   return key;
 }
@@ -465,10 +657,18 @@ async function saveEditingProfile() {
   const payloadConfig = ensureConfig(deepClone(state.config));
   state.savePromise = (async () => {
     try {
-      const response = await api(`/api/profiles/${encodeURIComponent(profileName)}`, {
-        method: "PUT",
-        body: JSON.stringify({ config: payloadConfig }),
-      });
+      let response;
+      if (isRuntimeStreamReady()) {
+        response = await runtimeStreamCall("save_profile_config", {
+          profile: profileName,
+          config: payloadConfig,
+        });
+      } else {
+        response = await api(`/api/profiles/${encodeURIComponent(profileName)}`, {
+          method: "PUT",
+          body: JSON.stringify({ config: payloadConfig }),
+        });
+      }
       applyProfilesPayload(response);
       state.config = ensureConfig(payloadConfig);
       clearDirty();
@@ -510,11 +710,18 @@ async function syncPreviewConfig() {
   state.previewSyncing = true;
   try {
     const cfg = ensureConfig(deepClone(state.config));
-    await api("/api/preview/config", {
-      method: "POST",
-      body: JSON.stringify({ config: cfg }),
-    });
-    await refreshPreviewImage();
+    if (isRuntimeStreamReady()) {
+      await runtimeStreamCall("preview_config", { config: cfg }, 5000);
+    } else if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
+      schedulePreviewSync(false);
+      return;
+    } else {
+      await api("/api/preview/config", {
+        method: "POST",
+        body: JSON.stringify({ config: cfg }),
+      });
+      await refreshPreviewImage();
+    }
   } catch (error) {
     state.previewError = `预览同步失败: ${error.message}`;
     const errorEl = document.getElementById("preview-render-error");
@@ -543,6 +750,9 @@ function render() {
     app.innerHTML = `<div class="panel"><h2>加载失败</h2><p class="error">${escapeHTML(state.error)}</p></div>`;
     return;
   }
+  if (state.editingProfile) {
+    cfg.name = state.editingProfile;
+  }
 
   app.innerHTML = `
     ${renderTopBar()}
@@ -561,6 +771,7 @@ function render() {
     </main>
   `;
 
+  ensurePreviewResizeObserver();
   attachPreviewDragHandlers();
   updateRuntimePanelDOM();
   initColorPickers();
@@ -569,6 +780,49 @@ function render() {
   if (nextList) {
     nextList.scrollTop = Math.max(0, num(state.ui.elementListScrollTop, 0));
   }
+}
+
+function updateElementListSelectionDOM() {
+  const list = document.getElementById("elements-list");
+  if (!list) return;
+  const buttons = list.querySelectorAll("button[data-action='select-item']");
+  for (const button of buttons) {
+    const index = Number(button.dataset.index);
+    const active = Number.isFinite(index) && index === state.selectedItem;
+    button.classList.toggle("active", active);
+  }
+}
+
+function updatePreviewSelectedNoticeDOM() {
+  const selected = state.config?.items?.[state.selectedItem];
+  const indexEl = document.getElementById("preview-selected-index");
+  if (indexEl) {
+    indexEl.textContent = selected ? String(state.selectedItem + 1) : "无";
+  }
+}
+
+function rerenderEditorPanelDOM() {
+  const editorPanel = document.getElementById("editor-panel");
+  if (!editorPanel || !state.config) return false;
+  const currentScrollTop = editorPanel.scrollTop;
+  destroyColorPickers();
+  editorPanel.innerHTML = renderElementEditor(state.config.items[state.selectedItem]);
+  initColorPickers();
+  editorPanel.scrollTop = currentScrollTop;
+  return true;
+}
+
+function syncElementSelectionUI(options = {}) {
+  const rerenderEditor = options.rerenderEditor !== false;
+  if (state.activeTab !== "elements") return;
+  refreshSelectedItem();
+  updateElementListSelectionDOM();
+  if (rerenderEditor && !rerenderEditorPanelDOM()) {
+    render();
+    return;
+  }
+  updatePreviewSelectedNoticeDOM();
+  updatePreviewDOM();
 }
 
 function renderTopBar() {
@@ -589,6 +843,7 @@ function renderTopBar() {
         </label>
         <button data-action="activate-profile">设为激活</button>
         <button data-action="create-profile">新建</button>
+        <button data-action="rename-profile" ${editingInfo?.readonly ? "disabled" : ""}>重命名</button>
         <button data-action="save-profile-as">复制</button>
         <button data-action="delete-profile" ${editingInfo?.readonly ? "disabled" : ""}>删除</button>
         <button data-action="refresh-profiles">刷新</button>
@@ -630,13 +885,14 @@ function renderBasicTab(cfg) {
       <div class="panel">
         <h3>基础参数</h3>
         <div class="grid">
-          ${fieldText("name", "名称", cfg.name)}
           ${fieldNumber("width", "宽度", cfg.width)}
           ${fieldNumber("height", "高度", cfg.height)}
+          ${fieldNumber("layout_padding", "布局内边距", cfg.layout_padding)}
           ${fieldSelectMultiple("output_types", "输出类型(多选)", outputOptions, 2)}
           ${fieldNumber("refresh_interval", "刷新间隔(ms)", cfg.refresh_interval)}
           ${fieldNumber("history_size", "折线历史长度", cfg.history_size)}
           ${fieldSelect("network_interface", "网络接口", networkOptions)}
+          ${fieldCheckbox("enable_rtss_collect", "启用 RTSS 采集(Windows)", !!cfg.enable_rtss_collect)}
           ${fieldText("libre_hardware_monitor_url", "Libre URL", cfg.libre_hardware_monitor_url)}
           ${fieldText("coolercontrol_url", "CoolerControl URL", cfg.coolercontrol_url)}
           ${fieldText("coolercontrol_username", "CoolerControl 用户名", cfg.coolercontrol_username)}
@@ -675,11 +931,9 @@ function renderElementsTab(cfg) {
 
   return `
     <div class="elements-layout">
-      <div class="elements-left">
-        <div class="panel preview-panel">${renderPreview(cfg)}</div>
-        <div class="panel list-panel">${renderElementList(cfg, selected, typeOptions)}</div>
-      </div>
-      <div class="panel editor-panel">${renderElementEditor(selected)}</div>
+      <div class="panel list-panel">${renderElementList(cfg, selected, typeOptions)}</div>
+      <div class="panel preview-panel">${renderPreview(cfg)}</div>
+      <div class="panel editor-panel" id="editor-panel">${renderElementEditor(selected)}</div>
     </div>
   `;
 }
@@ -725,7 +979,7 @@ function renderElementList(cfg, selected, typeOptions) {
 
 function renderElementEditor(item) {
   if (!item) {
-    return `<h3>元素编辑</h3><div class="notice">请选择左侧列表中的屏幕元素</div>`;
+    return `<h3>元素编辑</h3><div class="notice">请先在左侧元素列表中选择一个屏幕元素</div>`;
   }
 
   const typeOptions = (state.meta?.item_types || ELEMENT_TYPES)
@@ -771,16 +1025,16 @@ function renderLabelEditorBlock(item) {
   return `
     <div class="editor-block">
       <h4>标签属性</h4>
-      <div class="grid monitor-main-row">
-        ${itemTextField("text", item.text)}
-        ${itemNumberField("font_size", item.font_size)}
+      <div class="grid monitor-main-row compact-row">
+        ${itemTextField("text", item.text, "compact-lg")}
+        ${itemNumberField("font_size", item.font_size, "compact-sm")}
       </div>
-      <div class="grid label-appearance-row">
-        ${itemColorField("color", item.color)}
-        ${itemColorField("bg", item.bg)}
-        ${itemColorField("border_color", item.border_color)}
-        ${itemNumberField("border_width", item.border_width)}
-        ${itemNumberField("radius", item.radius)}
+      <div class="grid label-appearance-row compact-row">
+        ${itemColorField("color", item.color, "compact-color")}
+        ${itemColorField("bg", item.bg, "compact-color")}
+        ${itemColorField("border_color", item.border_color, "compact-color")}
+        ${itemNumberField("border_width", item.border_width, "compact-sm")}
+        ${itemNumberField("radius", item.radius, "compact-sm")}
       </div>
     </div>
   `;
@@ -793,37 +1047,34 @@ function renderMonitorEditorBlock(item) {
   const isChart = item.type === "line_chart";
   const isProgress = item.type === "progress";
   const typeLabel = isChart ? "line_chart" : (isProgress ? "progress" : "value");
-  const pointSizeField = isChart ? itemNumberField("point_size", item.point_size ?? state.config?.history_size ?? 150) : "";
 
   return `
     <div class="editor-block">
       <h4>监控属性</h4>
       <div class="editor-group-title">通用</div>
-      <div class="grid monitor-main-row">
-        ${itemNumberField("font_size", item.font_size)}
-        ${itemTextField("unit", item.unit || "auto")}
-        ${itemNumberField("unit_font_size", item.unit_font_size)}
-      </div>
-      <div class="grid monitor-unit-row">
-        ${itemColorField("color", item.color)}
-        ${itemColorField("unit_color", item.unit_color)}
+      <div class="grid monitor-main-row compact-row">
+        ${itemNumberField("font_size", item.font_size, "compact-sm")}
+        ${itemTextField("unit", item.unit || "auto", "compact-md")}
+        ${itemNumberField("unit_font_size", item.unit_font_size, "compact-sm")}
+        ${itemColorField("color", item.color, "compact-color")}
+        ${itemColorField("unit_color", item.unit_color, "compact-color")}
       </div>
 
       ${isProgressLike ? `
         <div class="editor-group-title">${escapeHTML(typeLabel)} 专属</div>
-        <div class="grid monitor-range-row">
-          ${itemNumberField("min_value", item.min_value)}
-          ${itemNumberField("max_value", item.max_value)}
-          ${isProgress ? itemNumberField("max", item.max) : pointSizeField}
+        <div class="grid monitor-range-row compact-row">
+          ${itemNumberField("min_value", item.min_value, "compact-sm")}
+          ${itemNumberField("max_value", item.max_value, "compact-sm")}
+          ${isProgress ? itemNumberField("max", item.max, "compact-sm") : itemNumberField("point_size", item.point_size ?? state.config?.history_size ?? 150, "compact-sm")}
         </div>
       ` : ""}
 
       <div class="editor-group-title">外观</div>
-      <div class="grid appearance-row">
-        ${itemColorField("bg", item.bg)}
-        ${itemColorField("border_color", item.border_color)}
-        ${itemNumberField("border_width", item.border_width)}
-        ${itemNumberField("radius", item.radius)}
+      <div class="grid appearance-row compact-row">
+        ${itemColorField("bg", item.bg, "compact-color")}
+        ${itemColorField("border_color", item.border_color, "compact-color")}
+        ${itemNumberField("border_width", item.border_width, "compact-sm")}
+        ${itemNumberField("radius", item.radius, "compact-sm")}
       </div>
       <div class="editor-group-title">等级</div>
       <div class="grid mode-row">
@@ -866,11 +1117,11 @@ function renderShapeEditorBlock(item) {
   return `
     <div class="editor-block">
       <h4>图形属性</h4>
-      <div class="grid shape-row">
-        ${itemColorField("bg", item.bg)}
-        ${itemColorField("border_color", item.border_color)}
-        ${itemNumberField("border_width", item.border_width)}
-        ${itemNumberField("radius", item.radius)}
+      <div class="grid shape-row compact-row">
+        ${itemColorField("bg", item.bg, "compact-color")}
+        ${itemColorField("border_color", item.border_color, "compact-color")}
+        ${itemNumberField("border_width", item.border_width, "compact-sm")}
+        ${itemNumberField("radius", item.radius, "compact-sm")}
       </div>
     </div>
   `;
@@ -878,17 +1129,33 @@ function renderShapeEditorBlock(item) {
 
 function renderPreview(cfg) {
   const selected = cfg.items[state.selectedItem];
-  const { purePreview } = state.ui;
+  const purePreview = !!state.ui.purePreview;
+  const showGrid = !!state.ui.showGrid;
+  const snapEnabled = !!state.ui.snapEnabled;
+  const snapSize = clamp(Math.round(num(state.ui.snapSize, 10)), 2, 100);
+  const previewZoomAuto = state.ui.previewZoomAuto !== false;
+  const previewZoom = clamp(Math.round(num(state.ui.previewZoom, 100)), 25, 400);
   return `
     <h3>预览</h3>
-    <div class="inline-actions">
+    <div class="inline-actions preview-toolbar">
       <label><input type="checkbox" data-ui-field="purePreview" ${purePreview ? "checked" : ""} /> 纯预览模式</label>
+      <label><input type="checkbox" data-ui-field="previewZoomAuto" ${previewZoomAuto ? "checked" : ""} /> 自动缩放</label>
+      <label>缩放
+        <input class="zoom-range" type="range" min="25" max="400" step="5" data-ui-field="previewZoom" value="${previewZoom}" ${previewZoomAuto ? "disabled" : ""} />
+        <span id="preview-zoom-value">${previewZoom}%</span>
+      </label>
+      <button data-action="preview-zoom-reset" type="button">100%</button>
+      <label><input type="checkbox" data-ui-field="showGrid" ${showGrid ? "checked" : ""} /> 网格</label>
+      <label><input type="checkbox" data-ui-field="snapEnabled" ${snapEnabled ? "checked" : ""} /> 吸附</label>
+      <label>网格尺寸
+        <input class="snap-size-input" type="number" min="2" max="100" step="1" data-ui-field="snapSize" value="${snapSize}" />
+      </label>
     </div>
     <div class="preview-wrapper" id="preview-wrapper">
-      <div class="preview-stage" id="preview-stage" style="width:${cfg.width}px;height:${cfg.height}px"></div>
+      <canvas class="preview-canvas" id="preview-canvas" width="1" height="1"></canvas>
     </div>
     <div id="preview-render-error" class="error">${escapeHTML(state.previewError || "")}</div>
-    <div class="notice">Go 渲染图实时预览；仅选中元素可拖拽/缩放。当前选中：${selected ? `${state.selectedItem + 1}` : "无"}</div>
+    <div class="notice">Go 渲染图实时预览；仅选中元素可拖拽/缩放。当前选中：<span id="preview-selected-index">${selected ? `${state.selectedItem + 1}` : "无"}</span></div>
   `;
 }
 
@@ -965,15 +1232,13 @@ function renderCustomTab(cfg) {
 function renderLibreCustom(index, monitor) {
   const options = (state.monitorOptions || [])
     .filter((name) => String(name).startsWith("libre_"))
-    .map((name) => ({ name, label: monitorLabel(name) || name }));
+    .map((name) => ({ name, label: monitorDisplayName(name) }));
   const selected = String(monitor.source || "");
   const sensorOptions = ["<option value=\"\">(none)</option>"]
     .concat(
       options.map((item) => {
-        const labelParts = [item.label || item.name || "unnamed"];
-        if (item.unit) labelParts.push(item.unit);
-        const label = labelParts.join(" | ");
-        return `<option value=\"${escapeAttr(item.name)}\" ${selected === item.name ? "selected" : ""}>${escapeHTML(label)}</option>`;
+        const optionLabel = item.label || item.name || "unnamed";
+        return `<option value=\"${escapeAttr(item.name)}\" ${selected === item.name ? "selected" : ""}>${escapeHTML(optionLabel)}</option>`;
       }),
     )
     .join("");
@@ -987,15 +1252,13 @@ function renderLibreCustom(index, monitor) {
 function renderCoolerControlCustom(index, monitor) {
   const options = (state.monitorOptions || [])
     .filter((name) => String(name).startsWith("coolercontrol_"))
-    .map((name) => ({ name, label: monitorLabel(name) || name }));
+    .map((name) => ({ name, label: monitorDisplayName(name) }));
   const selected = String(monitor.source || "");
   const sourceOptions = ["<option value=\"\">(none)</option>"]
     .concat(
       options.map((item) => {
-        const labelParts = [item.label || item.name || "unnamed"];
-        if (item.unit) labelParts.push(item.unit);
-        const label = labelParts.join(" | ");
-        return `<option value=\"${escapeAttr(item.name)}\" ${selected === item.name ? "selected" : ""}>${escapeHTML(label)}</option>`;
+        const optionLabel = item.label || item.name || "unnamed";
+        return `<option value=\"${escapeAttr(item.name)}\" ${selected === item.name ? "selected" : ""}>${escapeHTML(optionLabel)}</option>`;
       }),
     )
     .join("");
@@ -1077,8 +1340,8 @@ function renderRuntimeValueRows() {
       const item = values[name] || {};
       const cls = item.available ? "" : " unavailable";
       const label = String(item.label || "").trim();
-      const title = label ? `${label} (${name})` : name;
-      return `<div class="runtime-row${cls}"><span>${escapeHTML(title)}</span><span>${escapeHTML(item.text || "-")}</span></div>`;
+      const display = label || name;
+      return `<div class="runtime-row${cls}"><span title="${escapeAttr(name)}">${escapeHTML(display)}</span><span>${escapeHTML(item.text || "-")}</span></div>`;
     })
     .join("");
 }
@@ -1117,8 +1380,10 @@ function collectFontOptions(cfg) {
   return Array.from(set).sort();
 }
 
-function fieldText(field, label, value = "") {
-  return `<div class="field"><label>${label}</label><input data-field="${field}" value="${escapeAttr(value ?? "")}" /></div>`;
+function fieldText(field, label, value = "", readonly = false, title = "") {
+  const readonlyAttr = readonly ? " readonly" : "";
+  const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
+  return `<div class="field"><label>${label}</label><input data-field="${field}" value="${escapeAttr(value ?? "")}"${readonlyAttr}${titleAttr} /></div>`;
 }
 
 function fieldNumber(field, label, value = 0) {
@@ -1146,17 +1411,24 @@ function fieldSelectMultiple(field, label, optionsHTML, size = 3) {
   return `<div class="field"><label>${label}</label><select data-field="${field}" data-kind="multi-select" multiple size="${size}">${optionsHTML}</select></div>`;
 }
 
-function itemTextField(field, value) {
-  return `<div class="field"><label>${field}</label><input data-item-field="${field}" data-item-kind="text" value="${escapeAttr(value ?? "")}" /></div>`;
+function fieldCheckbox(field, label, checked = false) {
+  return `<div class="field"><label><input type="checkbox" data-field="${field}" data-kind="checkbox" ${checked ? "checked" : ""} /> ${label}</label></div>`;
 }
 
-function itemNumberField(field, value) {
-  return `<div class="field"><label>${field}</label><input type="number" data-item-field="${field}" data-item-kind="nullable-number" value="${escapeAttr(value ?? "")}" /></div>`;
+function itemTextField(field, value, className = "") {
+  const cls = className ? `field ${className}` : "field";
+  return `<div class="${cls}"><label>${field}</label><input data-item-field="${field}" data-item-kind="text" value="${escapeAttr(value ?? "")}" /></div>`;
 }
 
-function itemColorField(field, value) {
+function itemNumberField(field, value, className = "") {
+  const cls = className ? `field ${className}` : "field";
+  return `<div class="${cls}"><label>${field}</label><input type="number" data-item-field="${field}" data-item-kind="nullable-number" value="${escapeAttr(value ?? "")}" /></div>`;
+}
+
+function itemColorField(field, value, className = "") {
+  const cls = className ? `field ${className}` : "field";
   return `
-    <div class="field">
+    <div class="${cls}">
       <label>${field}</label>
       <div class="color-input-row color-picker-row">
         <button type="button" class="color-picker-trigger" aria-label="${escapeAttr(field)}"></button>
@@ -1224,6 +1496,66 @@ function escapeAttr(text) {
 
 function clamp(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function normalizeLayoutPadding(value, width, height) {
+  const w = Math.max(10, Math.round(num(width, 10)));
+  const h = Math.max(10, Math.round(num(height, 10)));
+  const maxPadding = Math.max(0, Math.floor((Math.min(w, h) - 10) / 2));
+  return clamp(Math.round(num(value, 0)), 0, maxPadding);
+}
+
+function getLayoutPadding(cfg = state.config) {
+  if (!cfg) return 0;
+  return normalizeLayoutPadding(cfg.layout_padding, cfg.width, cfg.height);
+}
+
+function getLayoutBounds(cfg = state.config) {
+  if (!cfg) {
+    return { left: 0, top: 0, right: 0, bottom: 0, padding: 0 };
+  }
+  const padding = getLayoutPadding(cfg);
+  const width = Math.max(10, Math.round(num(cfg.width, 10)));
+  const height = Math.max(10, Math.round(num(cfg.height, 10)));
+  const left = padding;
+  const top = padding;
+  const right = Math.max(left, width - padding);
+  const bottom = Math.max(top, height - padding);
+  return { left, top, right, bottom, padding };
+}
+
+function clampItemRectToBounds(rect, cfg = state.config) {
+  const bounds = getLayoutBounds(cfg);
+  const maxWidth = Math.max(10, Math.round(bounds.right - bounds.left));
+  const maxHeight = Math.max(10, Math.round(bounds.bottom - bounds.top));
+  const width = clamp(Math.round(num(rect?.width, 10)), 10, maxWidth);
+  const height = clamp(Math.round(num(rect?.height, 10)), 10, maxHeight);
+  const maxX = Math.max(bounds.left, Math.round(bounds.right - width));
+  const maxY = Math.max(bounds.top, Math.round(bounds.bottom - height));
+  const x = clamp(Math.round(num(rect?.x, bounds.left)), bounds.left, maxX);
+  const y = clamp(Math.round(num(rect?.y, bounds.top)), bounds.top, maxY);
+  return { x, y, width, height };
+}
+
+function clampAllItemsToBounds() {
+  if (!state.config?.items?.length) return false;
+  let changed = false;
+  for (const item of state.config.items) {
+    const next = clampItemRectToBounds({
+      x: num(item.x, 0),
+      y: num(item.y, 0),
+      width: Math.max(10, num(item.width, 10)),
+      height: Math.max(10, num(item.height, 10)),
+    });
+    if (item.x !== next.x || item.y !== next.y || item.width !== next.width || item.height !== next.height) {
+      item.x = next.x;
+      item.y = next.y;
+      item.width = next.width;
+      item.height = next.height;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function parseColorValue(value) {
@@ -1381,51 +1713,350 @@ function escapeAlpha(value) {
   return parseColorValue(value).alpha.toFixed(2);
 }
 
-function updatePreviewDOM() {
-  const stage = document.getElementById("preview-stage");
-  const wrapper = document.getElementById("preview-wrapper");
-  if (!stage || !wrapper || !state.config) return;
-
-  const cfg = state.config;
-  const maxWidth = wrapper.clientWidth - 20;
-  const scale = Math.min(1, maxWidth / Math.max(cfg.width, 1));
-  state.previewScale = scale;
-  stage.style.transform = `scale(${scale})`;
-  stage.classList.toggle("pure-preview", !!state.ui.purePreview);
-  stage.style.backgroundImage = "none";
-
-  const previewImage = `<img id="preview-image" class="preview-image" alt="Go Render Preview" src="${escapeAttr(state.previewImageURL || "")}" draggable="false" />`;
-  const guides = state.ui.centerGuides;
-  const guideHTML = guides
-    ? `${guides.showVertical ? `<div class="preview-guide vertical" style="left:${num(guides.x)}px"></div>` : ""}${
-      guides.showHorizontal ? `<div class="preview-guide horizontal" style="top:${num(guides.y)}px"></div>` : ""
-    }`
-    : "";
-  stage.innerHTML =
-    previewImage +
-    guideHTML +
-    cfg.items
-      .map((item, index) => {
-        const selected = index === state.selectedItem ? "selected" : "";
-        return `<div class="preview-item ${selected}" data-preview-index="${index}" style="left:${num(item.x)}px;top:${num(item.y)}px;width:${Math.max(10, num(item.width))}px;height:${Math.max(10, num(item.height))}px;">
-          ${selected ? `<div class="resize-handle" data-preview-resize="${index}"></div>` : ""}
-        </div>`;
-      })
-      .join("");
+function getPreviewZoomPercent() {
+  const value = clamp(Math.round(num(state.ui.previewZoom, 100)), 25, 400);
+  state.ui.previewZoom = value;
+  return value;
 }
 
-function updateCenterGuides(item) {
+function getSnapSize() {
+  const value = clamp(Math.round(num(state.ui.snapSize, 10)), 2, 100);
+  state.ui.snapSize = value;
+  return value;
+}
+
+function snapToGrid(value, offset = 0) {
+  if (!state.ui.snapEnabled) return Math.round(value);
+  const snapSize = getSnapSize();
+  const base = num(offset, 0);
+  return Math.round((value - base) / snapSize) * snapSize + base;
+}
+
+function calcPreviewFitScale(wrapper, cfg) {
+  if (!wrapper || !cfg) return 1;
+  const width = Math.max(1, wrapper.clientWidth - 24);
+  const height = Math.max(1, wrapper.clientHeight - 24);
+  const fit = Math.min(width / Math.max(cfg.width, 1), height / Math.max(cfg.height, 1));
+  if (!Number.isFinite(fit) || fit <= 0) {
+    return 1;
+  }
+  return fit;
+}
+
+function updatePreviewFitScaleFromDOM(forceRender = false) {
+  const wrapper = document.getElementById("preview-wrapper");
+  if (!wrapper || !state.config) return;
+  state.previewWrapperSize = {
+    width: Math.round(num(wrapper.clientWidth, 0)),
+    height: Math.round(num(wrapper.clientHeight, 0)),
+  };
+  state.ui.previewFitScale = calcPreviewFitScale(wrapper, state.config);
+  if (forceRender) {
+    updatePreviewDOM();
+  }
+}
+
+function ensurePreviewResizeObserver() {
+  const wrapper = document.getElementById("preview-wrapper");
+  if (!wrapper) {
+    if (state.previewResizeObserver) {
+      try {
+        state.previewResizeObserver.disconnect();
+      } catch (_) {
+        // ignore
+      }
+    }
+    state.previewWrapperSize = { width: 0, height: 0 };
+    return;
+  }
+
+  if (!state.previewResizeObserver && typeof ResizeObserver !== "undefined") {
+    state.previewResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries?.[0];
+      if (!entry || !state.config) return;
+      const rect = entry.contentRect || {};
+      const width = Math.round(num(rect.width, 0));
+      const height = Math.round(num(rect.height, 0));
+      if (width === state.previewWrapperSize.width && height === state.previewWrapperSize.height) {
+        return;
+      }
+      state.previewWrapperSize = { width, height };
+      updatePreviewFitScaleFromDOM(true);
+    });
+  }
+
+  if (state.previewResizeObserver) {
+    try {
+      state.previewResizeObserver.disconnect();
+    } catch (_) {
+      // ignore
+    }
+    state.previewResizeObserver.observe(wrapper);
+  }
+  state.previewWrapperSize = {
+    width: Math.round(num(wrapper.clientWidth, 0)),
+    height: Math.round(num(wrapper.clientHeight, 0)),
+  };
+  updatePreviewFitScaleFromDOM(false);
+}
+
+function updatePreviewDOM() {
+  const canvas = document.getElementById("preview-canvas");
+  const wrapper = document.getElementById("preview-wrapper");
+  if (!canvas || !wrapper || !state.config) return;
+
+  const cfg = state.config;
+  const autoZoom = state.ui.previewZoomAuto !== false;
+  const zoom = getPreviewZoomPercent() / 100;
+  const snapSize = getSnapSize();
+  let scale = zoom;
+  if (autoZoom) {
+    // Keep scale stable during drag to avoid jitter caused by transient overlay/layout changes.
+    if (state.drag && state.previewScale > 0) {
+      scale = state.previewScale;
+    } else {
+      const fit = num(state.ui.previewFitScale, 0);
+      if (fit > 0) {
+        scale = fit;
+      } else {
+        scale = calcPreviewFitScale(wrapper, cfg);
+        state.ui.previewFitScale = scale;
+      }
+    }
+  }
+  scale = Math.max(0.05, scale);
+  state.previewScale = scale;
+  const displayWidth = Math.max(1, cfg.width * scale);
+  const displayHeight = Math.max(1, cfg.height * scale);
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const cssWidth = `${displayWidth}px`;
+  const cssHeight = `${displayHeight}px`;
+  if (canvas.style.width !== cssWidth) {
+    canvas.style.width = cssWidth;
+  }
+  if (canvas.style.height !== cssHeight) {
+    canvas.style.height = cssHeight;
+  }
+  const nextWidth = Math.max(1, Math.round(displayWidth * dpr));
+  const nextHeight = Math.max(1, Math.round(displayHeight * dpr));
+  if (canvas.width !== nextWidth) {
+    canvas.width = nextWidth;
+  }
+  if (canvas.height !== nextHeight) {
+    canvas.height = nextHeight;
+  }
+
+  const zoomLabel = document.getElementById("preview-zoom-value");
+  if (zoomLabel) {
+    const zoomText = `${Math.round((autoZoom ? scale : zoom) * 100)}%`;
+    zoomLabel.textContent = autoZoom ? `自动 ${zoomText}` : zoomText;
+  }
+  const snapInput = document.querySelector("[data-ui-field='snapSize']");
+  if (snapInput && String(snapInput.value) !== String(snapSize)) {
+    snapInput.value = String(snapSize);
+  }
+  const zoomInput = document.querySelector("[data-ui-field='previewZoom']");
+  if (zoomInput && String(zoomInput.value) !== String(state.ui.previewZoom)) {
+    zoomInput.value = String(state.ui.previewZoom);
+  }
+  if (zoomInput) {
+    zoomInput.disabled = autoZoom;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.save();
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  ctx.clearRect(0, 0, cfg.width, cfg.height);
+  ctx.fillStyle = colorToCanvas(cfg.default_background || "#0b1220", "rgba(11, 18, 32, 1)");
+  ctx.fillRect(0, 0, cfg.width, cfg.height);
+
+  if (state.previewImageBitmap) {
+    try {
+      ctx.drawImage(state.previewImageBitmap, 0, 0, cfg.width, cfg.height);
+    } catch (_) {
+      // ignore stale bitmap draw failure
+    }
+  }
+
+  const gridEnabled = !!state.ui.showGrid && !state.ui.purePreview;
+  if (gridEnabled && snapSize > 0) {
+    const bounds = getLayoutBounds(cfg);
+    const left = Math.round(bounds.left);
+    const top = Math.round(bounds.top);
+    const right = Math.round(bounds.right);
+    const bottom = Math.round(bounds.bottom);
+    ctx.save();
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.2)";
+    ctx.lineWidth = Math.max(1 / Math.max(scale, 1), 0.5 / scale);
+    ctx.beginPath();
+    for (let x = left; x <= right; x += snapSize) {
+      ctx.moveTo(x + 0.5, top);
+      ctx.lineTo(x + 0.5, bottom);
+    }
+    if ((right - left) % snapSize !== 0) {
+      ctx.moveTo(right + 0.5, top);
+      ctx.lineTo(right + 0.5, bottom);
+    }
+    for (let y = top; y <= bottom; y += snapSize) {
+      ctx.moveTo(left, y + 0.5);
+      ctx.lineTo(right, y + 0.5);
+    }
+    if ((bottom - top) % snapSize !== 0) {
+      ctx.moveTo(left, bottom + 0.5);
+      ctx.lineTo(right, bottom + 0.5);
+    }
+    ctx.stroke();
+
+    if (bounds.padding > 0) {
+      ctx.strokeStyle = "rgba(59, 130, 246, 0.35)";
+      ctx.lineWidth = Math.max(1.2 / Math.max(scale, 1), 0.8 / scale);
+      ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, right - left), Math.max(0, bottom - top));
+    }
+    ctx.restore();
+  }
+
+  if (!state.ui.purePreview) {
+    for (let i = 0; i < cfg.items.length; i += 1) {
+      const rect = getPreviewItemRect(i);
+      if (!rect) continue;
+      const selected = i === state.selectedItem;
+
+      ctx.save();
+      ctx.fillStyle = selected ? "rgba(59, 130, 246, 0.14)" : "rgba(255, 255, 255, 0.05)";
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      ctx.lineWidth = selected ? 2 / scale : 1 / scale;
+      ctx.strokeStyle = selected ? "#3b82f6" : "rgba(255, 255, 255, 0.35)";
+      if (!selected) {
+        ctx.setLineDash([4 / scale, 4 / scale]);
+      }
+      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      ctx.restore();
+
+      if (selected) {
+        const handle = getResizeHandleRect(rect);
+        ctx.save();
+        ctx.fillStyle = "#09090b";
+        ctx.strokeStyle = "#3b82f6";
+        ctx.lineWidth = 2 / scale;
+        ctx.beginPath();
+        ctx.arc(handle.cx, handle.cy, handle.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    const guides = state.ui.centerGuides;
+    if (guides?.showVertical) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      ctx.moveTo(num(guides.x), 0);
+      ctx.lineTo(num(guides.x), cfg.height);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (guides?.showHorizontal) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      ctx.moveTo(0, num(guides.y));
+      ctx.lineTo(cfg.width, num(guides.y));
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  ctx.restore();
+}
+
+function colorToCanvas(value, fallback = "rgba(0, 0, 0, 1)") {
+  const parsed = parseColorValue(value);
+  const hex = parsed.hex.replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return fallback;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const a = clamp(num(parsed.alpha, 1), 0, 1);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function getPreviewItemRect(index) {
+  const item = state.config?.items?.[index];
+  if (!item) return null;
+  const draft = state.drag?.index === index && state.drag?.draft ? state.drag.draft : null;
+  const source = draft || item;
+  return {
+    x: num(source.x),
+    y: num(source.y),
+    width: Math.max(10, num(source.width)),
+    height: Math.max(10, num(source.height)),
+  };
+}
+
+function getResizeHandleRect(rect) {
+  const scale = Math.max(state.previewScale, 0.05);
+  const size = Math.max(10 / scale, 4);
+  const x = rect.x + rect.width - size / 2;
+  const y = rect.y + rect.height - size / 2;
+  return {
+    x,
+    y,
+    size,
+    radius: size / 2,
+    cx: x + size / 2,
+    cy: y + size / 2,
+  };
+}
+
+function pointInRect(x, y, rect) {
+  return x >= rect.x && y >= rect.y && x <= rect.x + rect.width && y <= rect.y + rect.height;
+}
+
+function getPreviewPointerPosition(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return {
+    x: (event.clientX - rect.left) / Math.max(state.previewScale, 0.01),
+    y: (event.clientY - rect.top) / Math.max(state.previewScale, 0.01),
+  };
+}
+
+function findPreviewHit(point) {
+  if (!point || !state.config) return null;
+  const selectedRect = getPreviewItemRect(state.selectedItem);
+  if (selectedRect) {
+    const handle = getResizeHandleRect(selectedRect);
+    if (pointInRect(point.x, point.y, { x: handle.x, y: handle.y, width: handle.size, height: handle.size })) {
+      return { index: state.selectedItem, mode: "resize", rect: selectedRect };
+    }
+  }
+
+  for (let i = state.config.items.length - 1; i >= 0; i -= 1) {
+    const rect = getPreviewItemRect(i);
+    if (!rect) continue;
+    if (pointInRect(point.x, point.y, rect)) {
+      return { index: i, mode: "move", rect };
+    }
+  }
+  return null;
+}
+
+function updateCenterGuides(rect) {
   const cfg = state.config;
   const movingIndex = Number(state.drag?.index);
-  if (!cfg || !item || state.drag?.mode !== "move" || !Number.isFinite(movingIndex)) {
+  if (!cfg || !rect || state.drag?.mode !== "move" || !Number.isFinite(movingIndex)) {
     state.ui.centerGuides = null;
     return;
   }
 
-  const width = Math.max(10, num(item.width));
-  const height = Math.max(10, num(item.height));
-  const centerX = num(item.x) + width / 2;
-  const centerY = num(item.y) + height / 2;
+  const width = Math.max(10, num(rect.width));
+  const height = Math.max(10, num(rect.height));
+  const centerX = num(rect.x) + width / 2;
+  const centerY = num(rect.y) + height / 2;
   const threshold = 4;
   let nearestX = null;
   let nearestY = null;
@@ -1469,56 +2100,53 @@ function updateCenterGuides(item) {
 
 function attachPreviewDragHandlers() {
   updatePreviewDOM();
-  const stage = document.getElementById("preview-stage");
-  if (!stage) return;
+  const canvas = document.getElementById("preview-canvas");
+  if (!canvas) return;
 
-  stage.addEventListener("pointerdown", (event) => {
+  canvas.addEventListener("pointerdown", (event) => {
     if (state.ui.purePreview || isEditingProfileReadOnly()) {
       state.ui.centerGuides = null;
       return;
     }
 
-    const resizeHandle = event.target.closest(".resize-handle");
-    if (resizeHandle) {
-      const index = Number(resizeHandle.dataset.previewResize);
-      const item = state.config.items[index];
-      if (!item) return;
-      state.selectedItem = index;
-      state.drag = {
-        mode: "resize",
-        index,
-        startX: event.clientX,
-        startY: event.clientY,
-        originW: num(item.width),
-        originH: num(item.height),
-      };
-      render();
+    const point = getPreviewPointerPosition(event, canvas);
+    const hit = findPreviewHit(point);
+    if (!hit) return;
+
+    if (hit.index !== state.selectedItem) {
+      state.selectedItem = hit.index;
+      syncElementSelectionUI({ rerenderEditor: true });
       return;
     }
 
-    const target = event.target.closest(".preview-item");
-    if (!target) return;
-    const index = Number(target.dataset.previewIndex);
-    if (!Number.isFinite(index)) return;
-
-    if (index !== state.selectedItem) {
-      state.selectedItem = index;
-      render();
-      return;
-    }
-
-    state.selectedItem = index;
-    const item = state.config.items[index];
+    event.preventDefault();
+    canvas.setPointerCapture?.(event.pointerId);
+    const rect = hit.rect || getPreviewItemRect(hit.index);
+    if (!rect) return;
     state.drag = {
-      mode: "move",
-      index,
+      mode: hit.mode === "resize" ? "resize" : "move",
+      index: hit.index,
       startX: event.clientX,
       startY: event.clientY,
-      originX: num(item.x),
-      originY: num(item.y),
+      originX: num(rect.x),
+      originY: num(rect.y),
+      originW: Math.max(10, num(rect.width)),
+      originH: Math.max(10, num(rect.height)),
+      draft: {
+        x: num(rect.x),
+        y: num(rect.y),
+        width: Math.max(10, num(rect.width)),
+        height: Math.max(10, num(rect.height)),
+      },
+      changed: false,
     };
-    updateCenterGuides(item);
-    render();
+    if (state.drag.mode === "move") {
+      updateCenterGuides(state.drag.draft);
+    } else {
+      state.ui.centerGuides = null;
+    }
+    updatePreviewDOM();
+    renderSelectedItemValues(state.drag.draft);
   });
 }
 
@@ -1529,35 +2157,80 @@ window.addEventListener("pointermove", (event) => {
     return;
   }
   if (!state.drag || !state.config) return;
-  const item = state.config.items[state.drag.index];
-  if (!item) return;
 
   const dx = (event.clientX - state.drag.startX) / Math.max(state.previewScale, 0.01);
   const dy = (event.clientY - state.drag.startY) / Math.max(state.previewScale, 0.01);
 
-  if (state.drag.mode === "resize") {
-    item.width = Math.max(10, Math.round(state.drag.originW + dx));
-    item.height = Math.max(10, Math.round(state.drag.originH + dy));
-    state.ui.centerGuides = null;
-  } else {
-    item.x = Math.round(state.drag.originX + dx);
-    item.y = Math.round(state.drag.originY + dy);
-    updateCenterGuides(item);
+  if (!state.drag.draft) {
+    return;
   }
 
-  markDirty();
+  if (state.drag.mode === "resize") {
+    const bounds = getLayoutBounds(state.config);
+    const maxWidth = Math.max(10, Math.round(bounds.right - num(state.drag.draft.x, state.drag.originX)));
+    const maxHeight = Math.max(10, Math.round(bounds.bottom - num(state.drag.draft.y, state.drag.originY)));
+    state.drag.draft.width = clamp(Math.max(10, snapToGrid(state.drag.originW + dx)), 10, maxWidth);
+    state.drag.draft.height = clamp(Math.max(10, snapToGrid(state.drag.originH + dy)), 10, maxHeight);
+    state.ui.centerGuides = null;
+  } else {
+    const bounds = getLayoutBounds(state.config);
+    const maxX = Math.max(bounds.left, Math.round(bounds.right - num(state.drag.draft.width, state.drag.originW)));
+    const maxY = Math.max(bounds.top, Math.round(bounds.bottom - num(state.drag.draft.height, state.drag.originH)));
+    state.drag.draft.x = clamp(
+      snapToGrid(state.drag.originX + dx, bounds.left),
+      bounds.left,
+      maxX,
+    );
+    state.drag.draft.y = clamp(
+      snapToGrid(state.drag.originY + dy, bounds.top),
+      bounds.top,
+      maxY,
+    );
+    updateCenterGuides(state.drag.draft);
+  }
+
+  state.drag.changed =
+    state.drag.draft.x !== state.drag.originX ||
+    state.drag.draft.y !== state.drag.originY ||
+    state.drag.draft.width !== state.drag.originW ||
+    state.drag.draft.height !== state.drag.originH;
+
   updatePreviewDOM();
-  renderSelectedItemValues();
+  renderSelectedItemValues(state.drag.draft);
 });
 
 window.addEventListener("pointerup", () => {
+  const drag = state.drag;
   state.drag = null;
   state.ui.centerGuides = null;
+  if (drag?.changed && state.config?.items?.[drag.index]) {
+    const item = state.config.items[drag.index];
+    const clamped = clampItemRectToBounds({
+      x: num(drag.draft?.x, num(item.x)),
+      y: num(drag.draft?.y, num(item.y)),
+      width: Math.max(10, num(drag.draft?.width, num(item.width))),
+      height: Math.max(10, num(drag.draft?.height, num(item.height))),
+    });
+    item.x = clamped.x;
+    item.y = clamped.y;
+    item.width = clamped.width;
+    item.height = clamped.height;
+    markDirty();
+  }
+  renderSelectedItemValues();
   updatePreviewDOM();
+  if (state.previewRefreshPending) {
+    state.previewRefreshPending = false;
+    if (isRuntimeStreamReady()) {
+      void runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
+    } else {
+      void refreshPreviewImage();
+    }
+  }
 });
 
-function renderSelectedItemValues() {
-  const item = state.config?.items?.[state.selectedItem];
+function renderSelectedItemValues(overrideRect = null) {
+  const item = overrideRect || state.config?.items?.[state.selectedItem];
   if (!item) return;
   const xInput = document.querySelector("[data-item-field='x']");
   const yInput = document.querySelector("[data-item-field='y']");
@@ -1569,7 +2242,41 @@ function renderSelectedItemValues() {
   if (hInput) hInput.value = item.height;
 }
 
+async function decodePreviewBitmap(blob) {
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(blob);
+  }
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectURL = URL.createObjectURL(blob);
+    image.onload = () => {
+      URL.revokeObjectURL(objectURL);
+      resolve(image);
+    };
+    image.onerror = (err) => {
+      URL.revokeObjectURL(objectURL);
+      reject(err);
+    };
+    image.src = objectURL;
+  });
+}
+
 async function refreshPreviewImage() {
+  if (state.drag) {
+    state.previewRefreshPending = true;
+    return;
+  }
+  if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
+    return;
+  }
+  if (isRuntimeStreamReady()) {
+    try {
+      await runtimeStreamCall("request_runtime", {}, 3000);
+      return;
+    } catch (_) {
+      // fallback to HTTP preview fetch below
+    }
+  }
   try {
     const res = await fetch(`/api/preview?t=${Date.now()}`, { cache: "no-store" });
     if (res.status === 204) {
@@ -1581,17 +2288,14 @@ async function refreshPreviewImage() {
     }
 
     const blob = await res.blob();
-    const objectURL = URL.createObjectURL(blob);
-    if (state.previewImageURL) {
-      URL.revokeObjectURL(state.previewImageURL);
+    const bitmap = await decodePreviewBitmap(blob);
+    if (state.previewImageBitmap && typeof state.previewImageBitmap.close === "function") {
+      state.previewImageBitmap.close();
     }
-    state.previewImageURL = objectURL;
+    state.previewImageBitmap = bitmap;
     state.previewError = "";
 
-    const img = document.getElementById("preview-image");
-    if (img) {
-      img.src = objectURL;
-    }
+    updatePreviewDOM();
     const errorEl = document.getElementById("preview-render-error");
     if (errorEl) {
       errorEl.textContent = "";
@@ -1626,31 +2330,52 @@ function updateRuntimePanelDOM() {
   if (list) list.innerHTML = renderRuntimeValueRows();
 }
 
+function schedulePreviewFetch(delay = 0) {
+  if (state.previewFetchTimer) {
+    window.clearTimeout(state.previewFetchTimer);
+    state.previewFetchTimer = null;
+  }
+  state.previewFetchTimer = window.setTimeout(() => {
+    state.previewFetchTimer = null;
+    void refreshPreviewImage();
+  }, Math.max(0, delay));
+}
+
+function applySnapshotUpdate(snapshotRes, options = {}) {
+  const fromWS = !!options.fromWS;
+  state.snapshot = snapshotRes;
+  const labels = {};
+  for (const [name, item] of Object.entries(snapshotRes?.values || {})) {
+    const label = String(item?.label || "").trim();
+    labels[name] = label || name;
+  }
+  const labelChanged = labelsChanged(labels);
+  state.monitorLabels = labels;
+
+  const changed = updateMonitorOptions();
+  if (changed || labelChanged) {
+    render();
+  } else {
+    updateRuntimePanelDOM();
+    updatePreviewDOM();
+  }
+
+  if (!fromWS && !state.runtimeStream) {
+    if (state.drag) {
+      state.previewRefreshPending = true;
+    } else {
+      schedulePreviewFetch(0);
+    }
+  }
+}
+
 async function pollRuntime() {
   if (state.polling) return;
   state.polling = true;
 
   try {
     const snapshotRes = await api("/api/snapshot");
-
-    state.snapshot = snapshotRes;
-    const labels = {};
-    for (const [name, item] of Object.entries(snapshotRes?.values || {})) {
-      const label = String(item?.label || "").trim();
-      labels[name] = label || name;
-    }
-    const labelChanged = labelsChanged(labels);
-    state.monitorLabels = labels;
-
-    const changed = updateMonitorOptions();
-    if (changed || labelChanged) {
-      render();
-    } else {
-      updateRuntimePanelDOM();
-      updatePreviewDOM();
-    }
-
-    await refreshPreviewImage();
+    applySnapshotUpdate(snapshotRes);
   } catch (error) {
     setError(`轮询失败: ${error.message}`);
   } finally {
@@ -1658,7 +2383,18 @@ async function pollRuntime() {
   }
 }
 
+function startRuntimeStream() {
+  connectRuntimeStream();
+}
+
+function stopRuntimeStream() {
+  closeRuntimeStream();
+}
+
 function startPolling() {
+  if (isRuntimeStreamReady()) {
+    return;
+  }
   if (state.pollTimer) {
     window.clearInterval(state.pollTimer);
   }
@@ -1695,8 +2431,12 @@ async function init() {
   }
 
   render();
-  startPolling();
-  await pollRuntime();
+  startRuntimeStream();
+  window.setTimeout(() => {
+    if (!isRuntimeStreamReady()) {
+      void pollRuntime();
+    }
+  }, 1200);
 }
 
 function updateDefaultLevelArray(kind, index, value) {
@@ -1774,12 +2514,21 @@ app.addEventListener("input", (event) => {
 
   if (target.dataset.uiField) {
     const field = target.dataset.uiField;
-    if (field === "purePreview") {
+    if (field === "purePreview" || field === "showGrid" || field === "snapEnabled") {
       state.ui[field] = !!target.checked;
       if (field === "purePreview" && state.ui.purePreview) {
         state.drag = null;
         state.ui.centerGuides = null;
       }
+    } else if (field === "previewZoomAuto") {
+      state.ui.previewZoomAuto = !!target.checked;
+      if (!state.ui.previewZoomAuto) {
+        state.ui.previewZoom = 100;
+      }
+    } else if (field === "previewZoom") {
+      state.ui.previewZoom = clamp(Math.round(num(target.value, state.ui.previewZoom || 100)), 25, 400);
+    } else if (field === "snapSize") {
+      state.ui.snapSize = clamp(Math.round(num(target.value, state.ui.snapSize || 10)), 2, 100);
     } else if (field === "addItemType") {
       state.addItemType = target.value;
     } else if (field === "addItemMonitor") {
@@ -1859,6 +2608,8 @@ app.addEventListener("input", (event) => {
     const field = target.dataset.field;
     if (target.dataset.kind === "number") {
       state.config[field] = num(target.value, 0);
+    } else if (target.dataset.kind === "checkbox") {
+      state.config[field] = !!target.checked;
     } else if (target.dataset.kind === "multi-select") {
       state.config[field] = Array.from(target.selectedOptions).map((option) => option.value);
       if (field === "output_types") {
@@ -1872,6 +2623,24 @@ app.addEventListener("input", (event) => {
     }
     if (field === "width" || field === "height") {
       state.config[field] = Math.max(10, state.config[field]);
+      state.config.layout_padding = normalizeLayoutPadding(
+        state.config.layout_padding,
+        state.config.width,
+        state.config.height,
+      );
+      updatePreviewFitScaleFromDOM(false);
+    }
+    if (field === "layout_padding") {
+      state.config.layout_padding = normalizeLayoutPadding(
+        state.config.layout_padding,
+        state.config.width,
+        state.config.height,
+      );
+      updatePreviewFitScaleFromDOM(false);
+    }
+    if (field === "width" || field === "height" || field === "layout_padding") {
+      clampAllItemsToBounds();
+      renderSelectedItemValues();
     }
     markDirty();
     updatePreviewDOM();
@@ -1997,6 +2766,20 @@ app.addEventListener("input", (event) => {
       item[field] = target.value;
     }
 
+    if (field === "x" || field === "y" || field === "width" || field === "height") {
+      const rect = clampItemRectToBounds({
+        x: num(item.x, 0),
+        y: num(item.y, 0),
+        width: Math.max(10, num(item.width, 10)),
+        height: Math.max(10, num(item.height, 10)),
+      });
+      item.x = rect.x;
+      item.y = rect.y;
+      item.width = rect.width;
+      item.height = rect.height;
+      renderSelectedItemValues(item);
+    }
+
     ensureItemName(item, state.selectedItem);
     markDirty();
     updatePreviewDOM();
@@ -2092,7 +2875,22 @@ app.addEventListener("click", async (event) => {
   }
 
   if (action === "refresh-snapshot") {
-    await pollRuntime();
+    if (isRuntimeStreamReady()) {
+      await runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
+    } else {
+      await pollRuntime();
+    }
+    return;
+  }
+
+  if (action === "preview-zoom-reset") {
+    state.ui.previewZoomAuto = false;
+    state.ui.previewZoom = 100;
+    updatePreviewDOM();
+    const autoToggle = document.querySelector("[data-ui-field='previewZoomAuto']");
+    if (autoToggle) {
+      autoToggle.checked = false;
+    }
     return;
   }
 
@@ -2105,6 +2903,7 @@ app.addEventListener("click", async (event) => {
     "remove-item",
     "move-item-up",
     "move-item-down",
+    "rename-profile",
     "delete-profile",
   ]);
   if (isEditingProfileReadOnly() && readOnlyBlockedActions.has(action)) {
@@ -2168,17 +2967,20 @@ app.addEventListener("click", async (event) => {
     const suggested = `profile_${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
     const name = window.prompt("输入新配置名称（a-zA-Z0-9._-）", suggested);
     if (!name) return;
+    const profileName = name.trim();
+    if (!profileName) return;
     try {
       const res = await api("/api/profiles", {
         method: "POST",
         body: JSON.stringify({
-          name: name.trim(),
+          name: profileName,
           config: state.config,
           switch: false,
         }),
       });
       applyProfilesPayload(res);
-      state.editingProfile = name.trim();
+      state.editingProfile = profileName;
+      state.config.name = profileName;
       clearDirty();
       setError("");
       schedulePreviewSync(true);
@@ -2193,21 +2995,62 @@ app.addEventListener("click", async (event) => {
     const base = selectedProfileName();
     const name = window.prompt("复制为配置名称（a-zA-Z0-9._-）", `${base}_copy`);
     if (!name) return;
+    const profileName = name.trim();
+    if (!profileName) return;
 
     try {
       const res = await api("/api/profiles", {
         method: "POST",
         body: JSON.stringify({
-          name: name.trim(),
+          name: profileName,
           config: state.config,
           switch: false,
         }),
       });
       applyProfilesPayload(res);
-      state.editingProfile = name.trim();
+      state.editingProfile = profileName;
+      state.config.name = profileName;
       clearDirty();
       setError("");
       schedulePreviewSync(true);
+    } catch (error) {
+      setError(error.message);
+    }
+    render();
+    return;
+  }
+
+  if (action === "rename-profile") {
+    const oldName = state.editingProfile || selectedProfileName();
+    if (!oldName) return;
+    const input = window.prompt("输入新的配置名称（a-zA-Z0-9._-）", oldName);
+    if (!input) return;
+    const newName = input.trim();
+    if (!newName || newName === oldName) return;
+
+    try {
+      await flushAutoSave();
+      const res = await api("/api/profiles/rename", {
+        method: "POST",
+        body: JSON.stringify({
+          old_name: oldName,
+          new_name: newName,
+        }),
+      });
+      applyProfilesPayload(res);
+      state.meta = { ...(state.meta || {}), active_profile: res.active || state.meta?.active_profile || oldName };
+      if (state.editingProfile === oldName) {
+        state.editingProfile = newName;
+      }
+      if (res.config) {
+        state.config = ensureConfig(res.config);
+        refreshSelectedItem();
+        updateMonitorOptions();
+      } else {
+        state.config.name = newName;
+      }
+      clearDirty();
+      setError("");
     } catch (error) {
       setError(error.message);
     }
@@ -2256,6 +3099,11 @@ app.addEventListener("click", async (event) => {
 
   if (action === "add-item") {
     const item = createItemByType(state.addItemType);
+    const rect = clampItemRectToBounds(item);
+    item.x = rect.x;
+    item.y = rect.y;
+    item.width = rect.width;
+    item.height = rect.height;
     state.config.items.push(item);
     state.selectedItem = state.config.items.length - 1;
     ensureItemName(state.config.items[state.selectedItem], state.selectedItem);
@@ -2270,6 +3118,11 @@ app.addEventListener("click", async (event) => {
     const cloned = deepClone(item);
     cloned.x = num(cloned.x) + 10;
     cloned.y = num(cloned.y) + 10;
+    const rect = clampItemRectToBounds(cloned);
+    cloned.x = rect.x;
+    cloned.y = rect.y;
+    cloned.width = rect.width;
+    cloned.height = rect.height;
     cloned.edit_ui_name = "";
     state.config.items.push(cloned);
     state.selectedItem = state.config.items.length - 1;
@@ -2319,7 +3172,7 @@ app.addEventListener("click", async (event) => {
 
   if (action === "select-item") {
     state.selectedItem = Number(target.dataset.index);
-    render();
+    syncElementSelectionUI({ rerenderEditor: true });
     return;
   }
 
@@ -2334,7 +3187,8 @@ window.addEventListener("keydown", (event) => {
   const item = state.config.items[state.selectedItem];
   if (!item) return;
 
-  const step = event.shiftKey ? 10 : 1;
+  const snapSize = getSnapSize();
+  const step = state.ui.snapEnabled ? (event.shiftKey ? snapSize * 5 : snapSize) : (event.shiftKey ? 10 : 1);
   let moved = false;
 
   if (event.key === "ArrowLeft") {
@@ -2353,6 +3207,17 @@ window.addEventListener("keydown", (event) => {
 
   if (!moved) return;
   event.preventDefault();
+  const bounds = getLayoutBounds(state.config);
+  if (state.ui.snapEnabled) {
+    item.x = snapToGrid(item.x, bounds.left);
+    item.y = snapToGrid(item.y, bounds.top);
+  }
+  const itemWidth = Math.max(10, Math.round(num(item.width, 10)));
+  const itemHeight = Math.max(10, Math.round(num(item.height, 10)));
+  const maxX = Math.max(bounds.left, Math.round(bounds.right - itemWidth));
+  const maxY = Math.max(bounds.top, Math.round(bounds.bottom - itemHeight));
+  item.x = clamp(Math.round(num(item.x, bounds.left)), bounds.left, maxX);
+  item.y = clamp(Math.round(num(item.y, bounds.top)), bounds.top, maxY);
 
   markDirty();
   updatePreviewDOM();
@@ -2362,14 +3227,31 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("beforeunload", () => {
   destroyColorPickers();
   stopPolling();
+  stopRuntimeStream();
   if (state.previewSyncTimer) {
     window.clearTimeout(state.previewSyncTimer);
     state.previewSyncTimer = null;
   }
-  if (state.previewImageURL) {
-    URL.revokeObjectURL(state.previewImageURL);
-    state.previewImageURL = "";
+  if (state.previewFetchTimer) {
+    window.clearTimeout(state.previewFetchTimer);
+    state.previewFetchTimer = null;
   }
+  if (state.previewImageBitmap && typeof state.previewImageBitmap.close === "function") {
+    state.previewImageBitmap.close();
+  }
+  state.previewImageBitmap = null;
+  if (state.previewResizeObserver) {
+    try {
+      state.previewResizeObserver.disconnect();
+    } catch (_) {
+      // ignore
+    }
+    state.previewResizeObserver = null;
+  }
+});
+
+window.addEventListener("resize", () => {
+  updatePreviewFitScaleFromDOM(true);
 });
 
 void init();

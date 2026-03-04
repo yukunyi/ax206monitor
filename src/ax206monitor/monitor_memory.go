@@ -14,7 +14,7 @@ func NewMemoryUsageMonitor() *MemoryUsageMonitor {
 	return &MemoryUsageMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_usage",
-			"Memory",
+			"Memory usage",
 			0, 100,
 			"%",
 			0,
@@ -48,7 +48,7 @@ func NewMemoryUsedMonitor() *MemoryUsedMonitor {
 	return &MemoryUsedMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_used",
-			"Mem Used",
+			"Memory used",
 			0, maxMemory,
 			"GB",
 			1,
@@ -83,7 +83,7 @@ func NewMemoryTotalMonitor() *MemoryTotalMonitor {
 	return &MemoryTotalMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_total",
-			"Mem Total",
+			"Memory total",
 			0, maxMemory,
 			"GB",
 			1,
@@ -112,7 +112,7 @@ func NewMemoryUsageTextMonitor() *MemoryUsageTextMonitor {
 	return &MemoryUsageTextMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_usage_text",
-			"Memory",
+			"Memory usage detail",
 			0, 0,
 			"",
 			0,
@@ -146,7 +146,7 @@ func NewMemoryUsageProgressMonitor() *MemoryUsageProgressMonitor {
 	return &MemoryUsageProgressMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"memory_usage_progress",
-			"Memory",
+			"Memory usage progress",
 			0, 100,
 			"%",
 			0,
@@ -174,7 +174,7 @@ func NewSwapUsageMonitor() *SwapUsageMonitor {
 	return &SwapUsageMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"swap_usage",
-			"Swap",
+			"Swap usage",
 			0, 100,
 			"%",
 			0,

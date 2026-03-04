@@ -1,8 +1,6 @@
 package main
 
-import (
-	"github.com/fogleman/gg"
-)
+import "github.com/fogleman/gg"
 
 type ValueRenderer struct{}
 
@@ -20,67 +18,21 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 		return nil
 	}
 
-	// Draw background using common utility
-	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, item.Background)
-
-	if item.GetShowLabel() {
-		v.drawLabel(dc, item, monitor, fontCache, config)
+	radius := float64(item.Radius)
+	if radius < 0 {
+		radius = 0
 	}
+	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	if item.GetShowValue() {
-		value := monitor.GetValue()
-		text := FormatMonitorValue(value, item.GetShowUnit(), item.UnitText)
+	value := monitor.GetValue()
+	valueText, unitText := FormatMonitorValueParts(value, resolveUnitOverride(item))
+	fontSize := resolveItemFontSize(item, config, 16)
+	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 
-		fontSize := v.calculateFontSize(dc, item, text, fontCache, config)
-
-		itemColor := item.Color
-		if itemColor == "" {
-			itemColor = getDynamicColorFromMonitor(item.Monitor, monitor, config)
-		}
-
-		// Draw centered text using common utility
-		drawCenteredText(dc, text, item.X, item.Y, item.Width, item.Height, fontSize, itemColor, fontCache)
-	}
+	itemColor := resolveMonitorColor(item, monitor, config)
+	unitColor := resolveUnitColor(item, itemColor)
+	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, itemColor, unitFontSize, unitColor, fontCache)
+	drawItemBorder(dc, item)
 
 	return nil
-}
-
-// Removed duplicate functions - now using common utilities from render_common.go
-
-func (v *ValueRenderer) drawLabel(dc *gg.Context, item *ItemConfig, monitor MonitorItem, fontCache *FontCache, config *MonitorConfig) {
-	label := config.GetLabelText(monitor.GetName(), monitor.GetLabel())
-	if label == "" {
-		return
-	}
-
-	fontSize := config.GetSmallFontSize()
-	if item.FontSize > 0 {
-		fontSize = item.FontSize
-	}
-
-	font, err := fontCache.GetFont(fontSize)
-	if err != nil {
-		return
-	}
-
-	dc.SetFontFace(font)
-	dc.SetColor(parseColor(config.Colors["default_text"]))
-
-	// Use actual text height for positioning with 2px padding
-	_, textHeight := dc.MeasureString("Ag")
-	dc.DrawString(label, float64(item.X+2), float64(item.Y)+2+textHeight)
-}
-
-func (v *ValueRenderer) calculateFontSize(dc *gg.Context, item *ItemConfig, text string, fontCache *FontCache, config *MonitorConfig) int {
-	if item.ValueFontSize > 0 {
-		return item.ValueFontSize
-	}
-	if item.FontSize > 0 {
-		return item.FontSize
-	}
-
-	maxWidth := float64(item.Width) * 0.9
-	maxHeight := float64(item.Height) * 0.6
-
-	return calculateOptimalFontSize(dc, text, maxWidth, maxHeight, fontCache, 8, 20)
 }

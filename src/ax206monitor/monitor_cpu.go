@@ -14,7 +14,7 @@ func NewCPUUsageMonitor() *CPUUsageMonitor {
 	return &CPUUsageMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_usage",
-			"CPU",
+			"CPU usage",
 			0, 100,
 			"%",
 			0,
@@ -47,7 +47,7 @@ func NewCPUTempMonitor() *CPUTempMonitor {
 	return &CPUTempMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_temp",
-			"CPU Temp",
+			"CPU temperature",
 			0, 100,
 			"°C",
 			0,
@@ -79,7 +79,7 @@ func NewCPUFreqMonitor() *CPUFreqMonitor {
 	return &CPUFreqMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_freq",
-			"CPU Freq",
+			"CPU frequency",
 			0, m,
 			"MHz",
 			0,
@@ -111,7 +111,7 @@ func NewCPUModelMonitor() *CPUModelMonitor {
 	return &CPUModelMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_model",
-			"CPU Model",
+			"CPU model",
 			0, 0,
 			"",
 			0,
@@ -139,7 +139,7 @@ func NewCPUCoresMonitor() *CPUCoresMonitor {
 	return &CPUCoresMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"cpu_cores",
-			"CPU Cores",
+			"CPU cores",
 			0, 0,
 			"",
 			0,

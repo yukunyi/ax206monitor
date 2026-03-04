@@ -6,6 +6,9 @@ set -e
 
 VERSION="1.0.0"
 
+FRONTEND_DIR="frontend"
+EMBED_DIST_DIR="src/ax206monitor/webassets/webdist"
+
 # Check if Go is installed
 check_go() {
     if ! command -v go &> /dev/null; then
@@ -25,6 +28,35 @@ init_go_module() {
     echo "Downloading dependencies..."
     go mod tidy
     cd ../..
+}
+
+# Build web frontend and sync assets to embedded directory
+build_frontend_assets() {
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        echo "Frontend directory '$FRONTEND_DIR' not found, skip web UI build"
+        return
+    fi
+
+    if ! command -v npm &> /dev/null; then
+        echo "Error: npm not found, cannot build web frontend"
+        exit 1
+    fi
+
+    echo "Building Vite frontend..."
+    pushd "$FRONTEND_DIR" > /dev/null
+    npm install
+    npm run build
+    popd > /dev/null
+
+    if [ ! -f "$FRONTEND_DIR/dist/index.html" ]; then
+        echo "Error: frontend build output missing: $FRONTEND_DIR/dist/index.html"
+        exit 1
+    fi
+
+    echo "Syncing frontend dist to $EMBED_DIST_DIR ..."
+    mkdir -p "$EMBED_DIST_DIR"
+    rm -rf "$EMBED_DIST_DIR"/*
+    cp -r "$FRONTEND_DIR"/dist/* "$EMBED_DIST_DIR"/
 }
 
 # Clean previous build files
@@ -99,6 +131,7 @@ show_build_results() {
 common_build() {
     check_go
     clean_dist
+    build_frontend_assets
     init_go_module
     compile_linux
     compile_windows

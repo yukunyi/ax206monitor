@@ -19,8 +19,7 @@
     "Courier New",
     "monospace"
   ],
-  "output_type": "ax206usb",
-  "output_file": "",
+  "output_types": ["memimg"],
   "refresh_interval": 1000,
   "history_size": 600,
   "network_interface": "auto",

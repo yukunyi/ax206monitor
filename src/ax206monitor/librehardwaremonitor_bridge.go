@@ -1,0 +1,14 @@
+package main
+
+import "ax206monitor/librehardwaremonitor"
+
+type LibreHardwareMonitorNode = librehardwaremonitor.LibreHardwareMonitorNode
+type LibreHardwareMonitorSensorSnapshot = librehardwaremonitor.LibreHardwareMonitorSensorSnapshot
+type LibreHardwareMonitorSensorOption = librehardwaremonitor.LibreHardwareMonitorSensorOption
+type LibreHardwareMonitorMonitorOption = librehardwaremonitor.LibreHardwareMonitorMonitorOption
+type LibreHardwareMonitorData = librehardwaremonitor.LibreHardwareMonitorData
+type LibreHardwareMonitorClient = librehardwaremonitor.LibreHardwareMonitorClient
+
+func GetLibreHardwareMonitorClient(url string) *LibreHardwareMonitorClient {
+	return librehardwaremonitor.GetLibreHardwareMonitorClient(url)
+}

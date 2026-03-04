@@ -1,140 +1,6 @@
 package main
 
-import (
-	"sync"
-	"time"
-)
-
-// NewDisk1TempMonitor creates a disk1 temperature monitor
-func NewDisk1TempMonitor() MonitorItem {
-	return CreateDiskMonitorByIndex(1, "temp", "°C", func(disk *DiskInfo) interface{} {
-		return disk.Temperature
-	})
-}
-
-// NewDisk1ReadSpeedMonitor creates a disk1 read speed monitor
-func NewDisk1ReadSpeedMonitor() MonitorItem {
-	return CreateDiskMonitorByIndex(1, "read_speed", "MB/s", func(disk *DiskInfo) interface{} {
-		return disk.ReadSpeed
-	})
-}
-
-// NewDisk1WriteSpeedMonitor creates a disk1 write speed monitor
-func NewDisk1WriteSpeedMonitor() MonitorItem {
-	return CreateDiskMonitorByIndex(1, "write_speed", "MB/s", func(disk *DiskInfo) interface{} {
-		return disk.WriteSpeed
-	})
-}
-
-// NewDisk1UsageMonitor creates a disk1 usage monitor
-func NewDisk1UsageMonitor() MonitorItem {
-	return CreateDiskMonitorByIndex(1, "usage", "%", func(disk *DiskInfo) interface{} {
-		return disk.Usage
-	})
-}
-
-// NewDisk1ModelMonitor creates a disk1 model monitor
-func NewDisk1ModelMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateStringMonitor("disk1_model", "Disk 1 Model", func() (string, bool) {
-		initializeCache()
-		if len(cachedDiskInfo) > 0 {
-			return cachedDiskInfo[0].Model, true
-		}
-		return "Unknown", false
-	})
-}
-
-// NewDisk1NameMonitor creates a disk1 name monitor
-func NewDisk1NameMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateStringMonitor("disk1_name", "Disk 1 Name", func() (string, bool) {
-		initializeCache()
-		if len(cachedDiskInfo) > 0 {
-			return cachedDiskInfo[0].Name, true
-		}
-		return "Unknown", false
-	})
-}
-
-// Disk default monitors using dynamic default disk index
-func NewDiskDefaultTempMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateTemperatureMonitor("disk_default_temp", "Disk Temp", func() (float64, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].Temperature
-			return val, val > 0
-		}
-		return 0, false
-	})
-}
-
-func NewDiskDefaultReadSpeedMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateSpeedMonitor("disk_default_read_speed", "Disk Read", func() (float64, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].ReadSpeed
-			return val, val >= 0
-		}
-		return 0, false
-	})
-}
-
-func NewDiskDefaultWriteSpeedMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateSpeedMonitor("disk_default_write_speed", "Disk Write", func() (float64, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].WriteSpeed
-			return val, val >= 0
-		}
-		return 0, false
-	})
-}
-
-func NewDiskDefaultUsageMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateUsageMonitor("disk_default_usage", "Disk Usage", func() (float64, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].Usage
-			return val, val >= 0
-		}
-		return 0, false
-	})
-}
-
-func NewDiskDefaultModelMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateStringMonitor("disk_default_model", "Disk Model", func() (string, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].Model
-			return val, val != ""
-		}
-		return "", false
-	})
-}
-
-func NewDiskDefaultNameMonitor() MonitorItem {
-	factory := GetMonitorFactory()
-	return factory.CreateStringMonitor("disk_default_name", "Disk Name", func() (string, bool) {
-		initializeCache()
-		idx := getDefaultDiskIndex()
-		if idx >= 0 && idx < len(cachedDiskInfo) {
-			val := cachedDiskInfo[idx].Name
-			return val, val != ""
-		}
-		return "", false
-	})
-}
+import "time"
 
 // DiskIOStats represents disk I/O statistics
 type DiskIOStats struct {
@@ -155,11 +21,6 @@ type DiskLatencyStats struct {
 	WriteLatency float64 // Average write latency in ms
 	IOLatency    float64 // Average I/O latency in ms
 }
-
-var (
-	diskIOStatsMutex sync.RWMutex
-	lastDiskIOStats  map[string]*DiskIOStats
-)
 
 // getDiskReadSpeed calculates current disk read speed in MB/s
 func getDiskReadSpeed() float64 {
@@ -210,20 +71,6 @@ func getDiskWriteSpeed() float64 {
 // getCurrentDiskIOStats gets current disk I/O statistics
 func getCurrentDiskIOStats() []*DiskInfo {
 	return getCachedDiskInfo()
-}
-
-// updateDiskIOStats updates disk I/O statistics for speed calculation
-func updateDiskIOStats() {
-	diskIOStatsMutex.Lock()
-	defer diskIOStatsMutex.Unlock()
-
-	if lastDiskIOStats == nil {
-		lastDiskIOStats = make(map[string]*DiskIOStats)
-	}
-
-	// This function would be called periodically to update disk I/O stats
-	// The actual implementation would read from /proc/diskstats on Linux
-	// or use platform-specific APIs on other systems
 }
 
 // DiskLatencyMonitor displays disk latency

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"ax206monitor/coolercontrol"
+	"ax206monitor/output"
 	"fmt"
 	"io"
 	"os"
@@ -57,17 +59,31 @@ func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 func initLogger() {
 	logger = logrus.New()
 
-	var output io.Writer = os.Stdout
+	var writer io.Writer = os.Stdout
 
 	if runtime.GOOS == "windows" {
 		if logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-			output = io.MultiWriter(os.Stdout, logFile)
+			writer = io.MultiWriter(os.Stdout, logFile)
 		}
 	}
 
-	logger.SetOutput(output)
+	logger.SetOutput(writer)
 	logger.SetLevel(logrus.InfoLevel)
 	logger.SetFormatter(&CustomFormatter{})
+
+	output.SetLoggerHooks(output.LoggerHooks{
+		Info:        logInfo,
+		Warn:        logWarn,
+		Error:       logError,
+		InfoModule:  logInfoModule,
+		WarnModule:  logWarnModule,
+		ErrorModule: logErrorModule,
+		Debug:       logDebug,
+	})
+	coolercontrol.SetLoggerHooks(coolercontrol.LoggerHooks{
+		WarnModule:  logWarnModule,
+		DebugModule: logDebugModule,
+	})
 }
 
 // Convenience functions with module support

@@ -1,10 +1,5 @@
 package main
 
-import (
-	"fmt"
-	"strings"
-)
-
 // MonitorFactory provides a centralized way to create monitor items
 type MonitorFactory struct{}
 
@@ -150,49 +145,6 @@ func CreateCachedValueMonitor(name, label, unit string, min, max float64, precis
 				}
 			}
 			return 0, false
-		},
-	}
-}
-
-// CreateDiskMonitorByIndex creates a disk monitor for a specific disk index
-func CreateDiskMonitorByIndex(diskIndex int, monitorType, unit string, getValue func(*DiskInfo) interface{}) MonitorItem {
-	name := fmt.Sprintf("disk%d_%s", diskIndex, monitorType)
-	label := fmt.Sprintf("Disk %d %s", diskIndex, strings.Title(monitorType))
-
-	return &GenericMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(name, label, 0, 0, unit, 0),
-		updateFunc: func() (float64, bool) {
-			initializeCache()
-			if len(cachedDiskInfo) > diskIndex-1 && diskIndex > 0 {
-				disk := cachedDiskInfo[diskIndex-1]
-				value := getValue(disk)
-				if floatValue, ok := value.(float64); ok {
-					return floatValue, true
-				}
-				if intValue, ok := value.(int64); ok {
-					return float64(intValue), true
-				}
-			}
-			return 0, false
-		},
-	}
-}
-
-// CreateDiskStringMonitorByIndex creates a string disk monitor for a specific disk index
-func CreateDiskStringMonitorByIndex(diskIndex int, monitorType string, getValue func(*DiskInfo) string) MonitorItem {
-	name := fmt.Sprintf("disk%d_%s", diskIndex, monitorType)
-	label := fmt.Sprintf("Disk %d %s", diskIndex, monitorType)
-
-	return &GenericStringMonitor{
-		BaseMonitorItem: NewBaseMonitorItem(name, label, 0, 0, "", 0),
-		updateFunc: func() (string, bool) {
-			initializeCache()
-			if len(cachedDiskInfo) > diskIndex-1 && diskIndex > 0 {
-				disk := cachedDiskInfo[diskIndex-1]
-				value := getValue(disk)
-				return value, value != ""
-			}
-			return "", false
 		},
 	}
 }

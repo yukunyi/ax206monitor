@@ -149,54 +149,6 @@ func (p *CPUDataProvider) GetCachedData(cache *MonitorCache, requiredKeys []stri
 	return result
 }
 
-type GPUDataProvider struct{}
-
-func (p *GPUDataProvider) GetCachedData(cache *MonitorCache, requiredKeys []string) map[string]interface{} {
-	result := make(map[string]interface{})
-	needsUpdate := false
-
-	for _, key := range requiredKeys {
-		if _, exists := cache.Get(key); !exists {
-			needsUpdate = true
-			break
-		}
-	}
-
-	if !needsUpdate {
-		for _, key := range requiredKeys {
-			if value, exists := cache.Get(key); exists {
-				result[key] = value
-			}
-		}
-		return result
-	}
-
-	initializeCache()
-
-	gpuData := make(map[string]interface{})
-
-	for _, key := range requiredKeys {
-		switch key {
-		case "gpu_temp":
-			gpuData[key] = getRealGPUTemperature()
-		case "gpu_usage":
-			gpuData[key] = getRealGPUUsage()
-		case "gpu_freq":
-			gpuData[key] = getRealGPUFrequency()
-		}
-	}
-
-	cache.SetMultiple(gpuData)
-
-	for _, key := range requiredKeys {
-		if value, exists := gpuData[key]; exists {
-			result[key] = value
-		}
-	}
-
-	return result
-}
-
 type NetworkDataProvider struct{}
 
 func (p *NetworkDataProvider) GetCachedData(cache *MonitorCache, requiredKeys []string) map[string]interface{} {
@@ -239,7 +191,6 @@ func (p *NetworkDataProvider) GetCachedData(cache *MonitorCache, requiredKeys []
 
 var (
 	cpuProvider     = &CPUDataProvider{}
-	gpuProvider     = &GPUDataProvider{}
 	networkProvider = &NetworkDataProvider{}
 )
 
@@ -249,9 +200,6 @@ func GetCachedValue(monitorName string) interface{} {
 	switch {
 	case monitorName == "cpu_temp" || monitorName == "cpu_freq":
 		data := cpuProvider.GetCachedData(cache, []string{monitorName})
-		return data[monitorName]
-	case monitorName == "gpu_temp" || monitorName == "gpu_usage" || monitorName == "gpu_freq":
-		data := gpuProvider.GetCachedData(cache, []string{monitorName})
 		return data[monitorName]
 	case monitorName == "network_ip" || monitorName == "network_upload" || monitorName == "network_download":
 		data := networkProvider.GetCachedData(cache, []string{monitorName})

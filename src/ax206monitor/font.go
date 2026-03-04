@@ -17,6 +17,7 @@ type FontCache struct {
 	largeFont   font.Face
 	headerFont  font.Face
 	fontMap     map[int]font.Face
+	fontPath    string
 	mutex       sync.RWMutex
 }
 
@@ -52,6 +53,7 @@ func loadFontCache() (*FontCache, error) {
 	} else {
 		logInfoModule("font", "Using font: %s", filepath.Base(loadedFont))
 	}
+	cache.fontPath = loadedFont
 
 	var err error
 	cache.titleFont, err = gg.LoadFontFace(loadedFont, 18)
@@ -86,6 +88,23 @@ func loadFontCache() (*FontCache, error) {
 }
 
 func findSystemFont() string {
+	if cfg := GetGlobalMonitorConfig(); cfg != nil {
+		preferred := make([]string, 0, len(cfg.FontFamilies)+1)
+		if strings.TrimSpace(cfg.GetDefaultFontName()) != "" {
+			preferred = append(preferred, cfg.GetDefaultFontName())
+		}
+		for _, name := range cfg.FontFamilies {
+			trimmed := strings.TrimSpace(name)
+			if trimmed != "" {
+				preferred = append(preferred, trimmed)
+			}
+		}
+		if len(preferred) > 0 {
+			if font := findFontByName(preferred); font != "" {
+				return font
+			}
+		}
+	}
 
 	fontFiles := []string{
 		"wqy-microhei.ttc",
@@ -164,7 +183,7 @@ func (fc *FontCache) GetFont(size int) (font.Face, error) {
 	}
 	fc.mutex.RUnlock()
 
-	face, err := gg.LoadFontFace(findSystemFont(), float64(size))
+	face, err := gg.LoadFontFace(fc.fontPath, float64(size))
 	if err != nil {
 		return fc.contentFont, err
 	}

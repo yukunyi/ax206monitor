@@ -7,7 +7,6 @@ import (
 	"image"
 	"os"
 	"os/signal"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -30,43 +29,50 @@ func main() {
 
 	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
 
-	// Default to config directory in current working directory
-	defaultConfigDir := "./config"
-	defaultConfigName := ""
-
-	// Check if config directory exists in current directory first
-	if _, err := os.Stat("./config"); err == nil {
-		defaultConfigDir = "./config"
-	} else if runtime.GOOS == "linux" {
-		// Fallback to system config directory on Linux
-		if _, err := os.Stat("/etc/ax206monitor"); err == nil {
-			defaultConfigDir = "/etc/ax206monitor"
-		}
-	}
-
-	if runtime.GOOS == "windows" {
-		defaultConfigName = "windows"
-	}
-
-	configFlag := flag.String("config", defaultConfigName, "Configuration file name (without .json extension)")
-	configDirFlag := flag.String("config-dir", defaultConfigDir, "Configuration directory")
-	listConfigsFlag := flag.Bool("list-configs", false, "List available configuration files")
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
+	webModeFlag := flag.Bool("web", false, "Start web configuration UI")
+	portFlag := flag.Int("port", 18086, "Web UI listen port")
+	webDevFlag := flag.Bool("web-dev", false, "Enable web frontend development proxy mode")
+	viteURLFlag := flag.String("vite-url", "http://127.0.0.1:18087", "Vite dev server URL for web-dev mode")
+	installFlag := flag.Bool("install", false, "Install as systemd service")
+	uninstallFlag := flag.Bool("uninstall", false, "Uninstall systemd service")
+	addUdevRuleFlag := flag.Bool("add-udev-rule", false, "Install AX206 USB udev rule for current user and reload udev")
 	// New: dump all monitor values for N seconds and exit
 	dumpSecondsFlag := flag.Int("dump", 0, "Dump all monitor values for N seconds and exit (0 to disable)")
 
 	flag.Parse()
 
-	configManager := NewConfigManager(*configDirFlag)
+	if *portFlag < 1 || *portFlag > 65535 {
+		logFatal("Invalid --port value: %d", *portFlag)
+	}
 
-	if *listConfigsFlag {
-		configs, err := configManager.ListConfigs()
-		if err != nil {
-			logFatal("Config enumeration failed: %v", err)
+	if *installFlag && *uninstallFlag {
+		logFatal("--install and --uninstall cannot be used together")
+	}
+	if *addUdevRuleFlag && (*installFlag || *uninstallFlag || *webModeFlag || *listMonitorsFlag || *dumpSecondsFlag > 0) {
+		logFatal("--add-udev-rule cannot be used with other execution flags")
+	}
+
+	if *installFlag {
+		if err := InstallService(ServiceInstallOptions{
+			WebMode: *webModeFlag,
+			Port:    *portFlag,
+		}); err != nil {
+			logFatal("Service install failed: %v", err)
 		}
-		fmt.Println("Available configurations:")
-		for _, config := range configs {
-			fmt.Printf("  %s\n", config)
+		return
+	}
+
+	if *uninstallFlag {
+		if err := UninstallService(); err != nil {
+			logFatal("Service uninstall failed: %v", err)
+		}
+		return
+	}
+
+	if *addUdevRuleFlag {
+		if err := InstallAX206UdevRule(); err != nil {
+			logFatal("Failed to add udev rule: %v", err)
 		}
 		return
 	}
@@ -76,18 +82,27 @@ func main() {
 		return
 	}
 
-	if *configFlag == "" {
-		logError("Configuration name required")
-		fmt.Println("Usage: ax206monitor -config <name>")
-		fmt.Println("Use -list-configs to enumerate available configurations")
-		fmt.Println("Use -list-monitors to see all available monitor items")
+	if *webModeFlag {
+		logInfoModule("web", "Web mode enabled on port %d", *portFlag)
+		if err := RunWebServer(WebServerOptions{
+			Addr:    fmt.Sprintf("127.0.0.1:%d", *portFlag),
+			DevMode: *webDevFlag,
+			ViteURL: *viteURLFlag,
+		}); err != nil {
+			logFatal("Web server failed: %v", err)
+		}
 		return
 	}
 
-	config, err := configManager.LoadConfig(*configFlag)
-	if err != nil {
-		logFatal("Config load failed '%s': %v", *configFlag, err)
+	userConfigPath, pathErr := getUserConfigPath()
+	if pathErr != nil {
+		logFatal("Failed to resolve user config path: %v", pathErr)
 	}
+	config, err := loadUserConfigOrDefault(userConfigPath)
+	if err != nil {
+		logFatal("Config load failed '%s': %v", userConfigPath, err)
+	}
+	configSource := userConfigPath
 
 	// Set global config for monitor system
 	SetGlobalMonitorConfig(config)
@@ -178,34 +193,7 @@ func main() {
 	}
 
 	renderManager := NewRenderManager(fontCache, registry)
-	outputManager := NewOutputManager()
-
-	outputMode := strings.ToLower(config.OutputType)
-	if outputMode == "" {
-		outputMode = "file"
-	}
-
-	outputFile := config.OutputFile
-	if outputFile == "" {
-		outputFile = "monitor.png"
-	}
-
-	needDevice := (outputMode == "ax206usb" || outputMode == "both")
-
-	if needDevice {
-		logInfoModule("ax206usb", "Initializing handler")
-		handler, err := NewAX206USBOutputHandler()
-		if err != nil {
-			logErrorModule("ax206usb", "Handler creation failed: %v", err)
-		} else {
-			logInfoModule("ax206usb", "Handler ready")
-			outputManager.AddHandler(handler)
-		}
-	}
-
-	if outputMode == "file" || outputMode == "both" {
-		outputManager.AddHandler(NewFileOutputHandler(outputFile))
-	}
+	outputManager, outputTypes := buildOutputManager(config, false)
 
 	refreshInterval := time.Duration(config.RefreshInterval) * time.Millisecond
 	if refreshInterval == 0 {
@@ -214,7 +202,7 @@ func main() {
 
 	logInfo("started, pid is %d", os.Getpid())
 	logInfo("AX206 Monitor v%s", Version)
-	logInfo("Config: %s | Output: %s | Refresh: %v", *configFlag, outputMode, refreshInterval)
+	logInfo("Config: %s | Output: %s | Refresh: %v", configSource, strings.Join(outputTypes, ","), refreshInterval)
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
@@ -224,16 +212,17 @@ func main() {
 	ticker := time.NewTicker(refreshInterval)
 	defer ticker.Stop()
 
-	// Channel for async output
-	outputChan := make(chan image.Image, 1)
+	// Keep at most one pending frame and always prefer the newest frame.
+	outputChan := make(chan outputFrame, 1)
 	go func() {
-		for img := range outputChan {
+		for frame := range outputChan {
 			outputStart := time.Now()
-			if err := outputManager.Output(img); err != nil {
+			if err := outputManager.Output(frame.img); err != nil {
 				logWarn("Output failed: %v", err)
 			} else {
 				outputDuration := time.Since(outputStart)
-				logDebug("Output time: %v", outputDuration)
+				queueDelay := outputStart.Sub(frame.enqueuedAt)
+				logDebug("Output time: %v | Queue delay: %v", outputDuration, queueDelay)
 			}
 		}
 	}()
@@ -263,12 +252,15 @@ func main() {
 			}
 			renderDuration := time.Since(renderStart)
 
-			// Async output (non-blocking)
-			select {
-			case outputChan <- img:
-				// ok
-			default:
-				logWarn("Output queue full, skipping frame")
+			// Async output (non-blocking), drop stale pending frame first.
+			replaced, ok := enqueueLatestFrame(outputChan, outputFrame{
+				img:        img,
+				enqueuedAt: time.Now(),
+			})
+			if !ok {
+				logWarn("Output queue busy, skipping frame")
+			} else if replaced {
+				logDebug("Output queue replaced stale frame")
 			}
 
 			cycleDuration := time.Since(cycleStart)
@@ -283,10 +275,76 @@ func main() {
 	}
 }
 
+type outputFrame struct {
+	img        image.Image
+	enqueuedAt time.Time
+}
+
+func enqueueLatestFrame(ch chan outputFrame, frame outputFrame) (bool, bool) {
+	select {
+	case ch <- frame:
+		return false, true
+	default:
+	}
+
+	replaced := false
+	select {
+	case <-ch:
+		replaced = true
+	default:
+	}
+
+	select {
+	case ch <- frame:
+		return replaced, true
+	default:
+		return replaced, false
+	}
+}
+
 func getRequiredMonitors(config *MonitorConfig) []string {
 	monitors := make(map[string]bool)
+	queue := make([]string, 0, len(config.Items))
 	for _, item := range config.Items {
-		monitors[item.Monitor] = true
+		name := normalizeMonitorAlias(item.Monitor)
+		if name == "" {
+			continue
+		}
+		if !monitors[name] {
+			queue = append(queue, name)
+		}
+		monitors[name] = true
+	}
+
+	customByName := make(map[string]CustomMonitorConfig)
+	for _, custom := range config.CustomMonitors {
+		if custom.Name == "" {
+			continue
+		}
+		customByName[custom.Name] = custom
+	}
+
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+
+		custom, exists := customByName[name]
+		if !exists {
+			continue
+		}
+
+		if normalizeCustomMonitorType(custom.Type) != "mixed" {
+			continue
+		}
+
+		for _, source := range custom.Sources {
+			source = normalizeMonitorAlias(source)
+			if source == "" || monitors[source] {
+				continue
+			}
+			monitors[source] = true
+			queue = append(queue, source)
+		}
 	}
 
 	result := make([]string, 0, len(monitors))
@@ -294,6 +352,21 @@ func getRequiredMonitors(config *MonitorConfig) []string {
 		result = append(result, monitor)
 	}
 	return result
+}
+
+func normalizeCustomMonitorType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "mixed", "mix":
+		return "mixed"
+	case "file":
+		return "file"
+	case "coolercontrol":
+		return "coolercontrol"
+	case "librehardwaremonitor", "libre", "lhm":
+		return "librehardwaremonitor"
+	default:
+		return strings.ToLower(strings.TrimSpace(t))
+	}
 }
 
 func listAllMonitors() {

@@ -6,7 +6,8 @@ VERSION="1.0.0"
 LINUX_PACKAGE="ax206monitor-linux-amd64-v${VERSION}"
 WINDOWS_PACKAGE="ax206monitor-windows-amd64-v${VERSION}"
 DIST_DIR="dist"
-CONFIG_DIR="config"
+FRONTEND_DIR="frontend"
+EMBED_DIST_DIR="src/ax206monitor/webassets/webdist"
 
 echo "AX206 System Monitor - Package Script"
 echo "====================================="
@@ -21,6 +22,27 @@ if ! command -v go &> /dev/null; then
 fi
 
 echo "Go version: $(go version)"
+
+if ! command -v npm &> /dev/null; then
+    echo "Error: npm not found, cannot build web frontend"
+    exit 1
+fi
+
+echo "Building Vite frontend..."
+pushd "$FRONTEND_DIR" > /dev/null
+npm install
+npm run build
+popd > /dev/null
+
+if [ ! -f "$FRONTEND_DIR/dist/index.html" ]; then
+    echo "Error: frontend build output missing: $FRONTEND_DIR/dist/index.html"
+    exit 1
+fi
+
+echo "Syncing frontend dist to $EMBED_DIST_DIR ..."
+mkdir -p "$EMBED_DIST_DIR"
+rm -rf "$EMBED_DIST_DIR"/*
+cp -r "$FRONTEND_DIR"/dist/* "$EMBED_DIST_DIR"/
 
 mkdir -p dist
 
@@ -37,26 +59,7 @@ fi
 echo "Downloading dependencies..."
 go mod tidy
 
-echo "Validating configuration files..."
-cd ../../
-if [ ! -d "$CONFIG_DIR" ]; then
-    echo "Error: Configuration directory '$CONFIG_DIR' not found"
-    exit 1
-fi
-
-# Check for required configuration files
-required_configs=("mini.json" "normal.json" "full.json")
-for config in "${required_configs[@]}"; do
-    if [ ! -f "$CONFIG_DIR/$config" ]; then
-        echo "Error: Required configuration file '$config' not found in $CONFIG_DIR"
-        exit 1
-    fi
-done
-
-echo "Found configuration files:"
-ls -la "$CONFIG_DIR"/*.json
-
-cd src/ax206monitor
+cd ../../src/ax206monitor
 
 echo "Compiling Linux version..."
 GOOS=linux GOARCH=amd64 go build \
@@ -81,14 +84,11 @@ mkdir -p "$LINUX_PACKAGE"
 
 echo "Copying files to Linux package directory..."
 cp dist/ax206monitor-linux-amd64 "$LINUX_PACKAGE/ax206monitor"
-cp install.sh "$LINUX_PACKAGE/"
-cp -r config "$LINUX_PACKAGE/"
 if [ -f README.md ]; then
     cp README.md "$LINUX_PACKAGE/"
 fi
 
 chmod +x "$LINUX_PACKAGE/ax206monitor"
-chmod +x "$LINUX_PACKAGE/install.sh"
 
 echo "Creating Windows package directory..."
 rm -rf "$WINDOWS_PACKAGE"
@@ -96,8 +96,6 @@ mkdir -p "$WINDOWS_PACKAGE"
 
 echo "Copying files to Windows package directory..."
 cp dist/ax206monitor-windows-amd64.exe "$WINDOWS_PACKAGE/ax206monitor.exe"
-cp -r config "$WINDOWS_PACKAGE/"
-cp config/mini.json "$WINDOWS_PACKAGE/config/default.json"
 if [ -f README.md ]; then
     cp README.md "$WINDOWS_PACKAGE/"
 fi
@@ -115,14 +113,10 @@ EOF
 echo "Verifying Linux package contents..."
 echo "Linux package directory contents:"
 ls -la "$LINUX_PACKAGE/"
-echo "Configuration files:"
-ls -la "$LINUX_PACKAGE/config/"
 
 echo "Verifying Windows package contents..."
 echo "Windows package directory contents:"
 ls -la "$WINDOWS_PACKAGE/"
-echo "Configuration files:"
-ls -la "$WINDOWS_PACKAGE/config/"
 
 echo "Creating Linux tar archive..."
 tar -czf "dist/$LINUX_PACKAGE.tar.gz" "$LINUX_PACKAGE"
@@ -149,16 +143,14 @@ echo ""
 echo "Linux:"
 echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
 echo "2. Enter directory: cd $LINUX_PACKAGE"
-echo "3. Install as root: sudo ./install.sh"
-echo "4. Run: ax206monitor -config <config_name>"
+echo "3. Install as root service: sudo ./ax206monitor --install"
+echo "4. Install as user service: ./ax206monitor --install"
+echo "5. Run in foreground: ./ax206monitor"
 echo ""
 echo "Windows:"
 echo "1. Extract: dist/$WINDOWS_PACKAGE.zip (or .tar.gz)"
 echo "2. Double-click start.bat or ax206monitor.exe"
-echo "3. Configure Libre Hardware Monitor URL in config/default.json"
-echo ""
-echo "Available configurations:"
-ls config/*.json | sed 's/config\///g' | sed 's/\.json//g' | sed 's/^/  /'
+echo "3. Use Web UI if needed: ax206monitor.exe --web --port 18086"
 
 echo ""
 echo "Note: Ensure AX206 device is connected with proper USB permissions before running"

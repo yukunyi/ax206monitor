@@ -25,11 +25,11 @@ func NewRenderManager(fontCache *FontCache, registry *MonitorRegistry) *RenderMa
 	}
 
 	rm.RegisterRenderer(NewValueRenderer())
-	rm.RegisterRenderer(NewBigValueRenderer())
 	rm.RegisterRenderer(NewProgressRenderer())
-	rm.RegisterRenderer(NewChartRenderer())
-	rm.RegisterRenderer(NewTextRenderer())
+	rm.RegisterRenderer(NewLineChartRenderer())
+	rm.RegisterRenderer(NewLabelRenderer())
 	rm.RegisterRenderer(NewRectRenderer())
+	rm.RegisterRenderer(NewCircleRenderer())
 
 	return rm
 }
@@ -40,8 +40,7 @@ func (rm *RenderManager) RegisterRenderer(renderer RenderItem) {
 
 func (rm *RenderManager) Render(config *MonitorConfig) (image.Image, error) {
 	dc := gg.NewContext(config.Width, config.Height)
-
-	dc.SetRGBA(0.1, 0.1, 0.1, 1.0)
+	dc.SetColor(parseColor(config.GetDefaultBackgroundColor()))
 	dc.Clear()
 
 	for _, item := range config.Items {

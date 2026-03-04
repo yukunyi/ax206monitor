@@ -1,12 +1,12 @@
 # AX206 Monitor
 
-A lightweight system monitoring tool for AX206 USB displays and file output.
+A lightweight system monitoring tool for AX206 USB displays and memimg output.
 
 ## Features
 
 - Real-time system monitoring (CPU, Memory, GPU, Network, Temperature)
 - Multiple display layouts optimized for different screen sizes
-- Support for AX206 USB displays and PNG file output
+- Support for AX206 USB displays and memimg output
 - Systemd service integration for automatic startup
 
 ## Quick Installation
@@ -16,33 +16,121 @@ A lightweight system monitoring tool for AX206 USB displays and file output.
 tar -xzf ax206monitor-linux-amd64-v1.0.0.tar.gz
 cd ax206monitor-linux-amd64-v1.0.0
 
-# Install as system service
-sudo ./install.sh install
+# Install as system service (root)
+sudo ./ax206monitor --install
+
+# Or install as user service (no sudo)
+./ax206monitor --install
 ```
-
-## Available Layouts
-
-- **mini.json** - Minimal layout (480x320) - Default
-- **small.json** - Compact layout (480x320)
-- **normal.json** - Standard layout (480x320)
-- **full.json** - Complete layout (800x480)
 
 ## Service Management
 
 ```bash
-sudo systemctl status ax206monitor    # Check status
-sudo systemctl restart ax206monitor   # Restart service
-journalctl -u ax206monitor -f         # View logs
+# root service
+sudo systemctl status ax206monitor
+sudo systemctl restart ax206monitor
+sudo ./ax206monitor --uninstall
+
+# user service
+systemctl --user status ax206monitor
+systemctl --user restart ax206monitor
+./ax206monitor --uninstall
 ```
 
 ## Configuration
 
-Configuration files are located in `/etc/ax206monitor/samples/`. To change layout:
+Runtime config path: `$HOME/.config/ax206monitor/config.json`.
+
+Config directory layout:
+
+```text
+$HOME/.config/ax206monitor/
+├── config.json
+├── history/
+└── profiles/
+    ├── active-profile
+    └── *.json
+```
+
+### Custom monitors
+
+You can define custom monitor sources with `custom_monitors`:
+
+- `file`: read value from a sysfs file (supports millidegree auto conversion)
+- `mixed`: aggregate multiple monitors (`max` / `min` / `avg`)
+- `coolercontrol`: read sensor values from CoolerControl SSE stream (`/sse/status`, with `/status` fallback)
+
+```json
+{
+  "coolercontrol_url": "http://127.0.0.1:11987",
+  "custom_monitors": [
+    {
+      "name": "chipset_temp",
+      "label": "Chipset",
+      "type": "file",
+      "path": "/sys/class/hwmon/hwmon6/temp1_input"
+    },
+    {
+      "name": "board_temp_max",
+      "label": "Board Max",
+      "type": "mixed",
+      "sources": ["cpu_temp", "chipset_temp", "disk_default_temp"],
+      "aggregate": "max"
+    },
+    {
+      "name": "cc_gpu_temp",
+      "label": "CC GPU",
+      "type": "coolercontrol",
+      "device_uid": "GPU-1234",
+      "temp_name": "gpu_temp"
+    }
+  ]
+}
+```
+
+## Web Configuration UI
+
+AX206 Monitor now supports a web configuration backend (Echo) and Vite frontend editor.
+
+### Start web UI
 
 ```bash
-sudo ln -sf /etc/ax206monitor/samples/normal.json /etc/ax206monitor/default.json
-sudo systemctl restart ax206monitor
+# Release mode: serve embedded frontend resources
+./dist/ax206monitor-linux-amd64 --web --port 18086
+
+# Development mode: proxy frontend requests to Vite dev server
+./dist/ax206monitor-linux-amd64 --web --port 18086 --web-dev --vite-url http://127.0.0.1:18087
 ```
+
+Open: `http://127.0.0.1:18086`
+
+Web UI features:
+- Configure all top-level `MonitorConfig` fields (including `font_sizes`, `colors`, `labels`, `units`, `color_thresholds`)
+- Configure `custom_monitors` (`file` / `mixed` / `coolercontrol`)
+- Visual editor for `items` (add/clone, select, drag-move, resize, align, property editing, preview)
+- Preview image is rendered by Go backend (`/api/preview`, PNG)
+- Save config to `$HOME/.config/ax206monitor/config.json`
+- Structured map editors for `colors`, `labels`, `units`, `color_thresholds`
+- Import/export JSON and rollback to history versions (`~/.config/ax206monitor/history`)
+- Multi-profile management (create/switch/save-as/delete profile)
+  - Profiles directory: `~/.config/ax206monitor/profiles`
+  - Active profile marker: `~/.config/ax206monitor/profiles/active-profile`
+  - Switching profile updates `~/.config/ax206monitor/config.json`
+
+### Frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Build embedding
+
+`build.sh` / `package.sh` now automatically:
+1. Build Vite frontend (`frontend/dist`)
+2. Sync built assets to `src/ax206monitor/webassets/webdist`
+3. Embed assets into Go binary via `go:embed`
 
 ## Building from Source
 
@@ -50,7 +138,7 @@ sudo systemctl restart ax206monitor
 git clone https://github.com/yukunyi/ax206monitor.git
 cd ax206monitor
 ./build.sh
-sudo ./install.sh install
+sudo ./dist/ax206monitor-linux-amd64 --install
 ```
 
 ## Repository

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -44,7 +45,7 @@ func NewLoadAvgMonitor() *LoadAvgMonitor {
 	return &LoadAvgMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"load_avg",
-			"Load Avg",
+			"System load average",
 			0, 0,
 			"",
 			1,
@@ -72,7 +73,7 @@ func NewCurrentTimeMonitor() *CurrentTimeMonitor {
 	return &CurrentTimeMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			"current_time",
-			"Time",
+			"Current time",
 			0, 0,
 			"",
 			0,
@@ -125,7 +126,7 @@ func NewDiskNameMonitor(diskIndex int) *DiskNameMonitor {
 	return &DiskNameMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			fmt.Sprintf("disk%d_name", diskIndex),
-			fmt.Sprintf("Disk %d", diskIndex),
+			fmt.Sprintf("Disk %d name", diskIndex),
 			0, 0,
 			"",
 			0,
@@ -138,6 +139,10 @@ func (d *DiskNameMonitor) Update() error {
 	initializeCache()
 	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
 		disk := cachedDiskInfo[d.diskIndex-1]
+		if strings.TrimSpace(disk.Name) == "" {
+			d.SetAvailable(false)
+			return nil
+		}
 		d.SetValue(fmt.Sprintf("%s (%s)", disk.Name, disk.Model))
 		d.SetAvailable(true)
 	} else {
@@ -156,7 +161,7 @@ func NewDiskSizeMonitor(diskIndex int) *DiskSizeMonitor {
 	return &DiskSizeMonitor{
 		BaseMonitorItem: NewBaseMonitorItem(
 			fmt.Sprintf("disk%d_size", diskIndex),
-			fmt.Sprintf("Disk %d Size", diskIndex),
+			fmt.Sprintf("Disk %d size", diskIndex),
 			0, 0,
 			"GB",
 			0,
@@ -169,6 +174,10 @@ func (d *DiskSizeMonitor) Update() error {
 	initializeCache()
 	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
 		disk := cachedDiskInfo[d.diskIndex-1]
+		if strings.TrimSpace(disk.Name) == "" {
+			d.SetAvailable(false)
+			return nil
+		}
 		d.SetValue(disk.Size)
 		d.SetAvailable(true)
 	} else {
@@ -187,7 +196,7 @@ func NewDiskTempMonitorByIndex(diskIndex int) *DiskTempMonitorByIndex {
 	return &DiskTempMonitorByIndex{
 		BaseMonitorItem: NewBaseMonitorItem(
 			fmt.Sprintf("disk%d_temp", diskIndex),
-			fmt.Sprintf("Disk %d Temp", diskIndex),
+			fmt.Sprintf("Disk %d temperature", diskIndex),
 			0, 80,
 			"°C",
 			0,
@@ -200,6 +209,10 @@ func (d *DiskTempMonitorByIndex) Update() error {
 	initializeCache()
 	if len(cachedDiskInfo) > d.diskIndex-1 && d.diskIndex > 0 {
 		disk := cachedDiskInfo[d.diskIndex-1]
+		if strings.TrimSpace(disk.Name) == "" {
+			d.SetAvailable(false)
+			return nil
+		}
 		if disk.Temperature > 0 {
 			d.SetValue(disk.Temperature)
 			d.SetAvailable(true)

@@ -1,10 +1,6 @@
 package main
 
-import (
-	"image/color"
-
-	"github.com/fogleman/gg"
-)
+import "github.com/fogleman/gg"
 
 type RectRenderer struct{}
 
@@ -17,18 +13,14 @@ func (r *RectRenderer) GetType() string {
 }
 
 func (r *RectRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
-	// Draw background
-	if item.Background != "" {
-		dc.SetColor(parseColor(item.Background))
-		dc.DrawRoundedRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height), 5)
-		dc.Fill()
+	_ = registry
+	_ = fontCache
+
+	radius := float64(item.Radius)
+	if radius < 0 {
+		radius = 0
 	}
-
-	// Draw border
-	dc.SetColor(color.RGBA{80, 80, 80, 255})
-	dc.SetLineWidth(1)
-	dc.DrawRoundedRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height), 5)
-	dc.Stroke()
-
+	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
+	drawItemBorder(dc, item)
 	return nil
 }

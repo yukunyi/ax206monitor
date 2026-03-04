@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,12 +58,7 @@ func GetAvailableFans() []FanInfo {
 }
 
 func getWindowsFanInfo() []FanInfo {
-	// Use cached GPU info for GPU fans
 	fans := []FanInfo{}
-
-	if cachedGPUInfo != nil && len(cachedGPUInfo.Fans) > 0 {
-		fans = append(fans, cachedGPUInfo.Fans...)
-	}
 
 	// Add system fans (placeholder for Windows implementation)
 	// In a real implementation, this would use WMI or hardware monitoring libraries
@@ -100,7 +94,7 @@ func getLinuxFanInfo() []FanInfo {
 
 	hwmonDirs := []string{"/sys/class/hwmon"}
 	for _, hwmonDir := range hwmonDirs {
-		if entries, err := ioutil.ReadDir(hwmonDir); err == nil {
+		if entries, err := os.ReadDir(hwmonDir); err == nil {
 			for _, entry := range entries {
 				// hwmon entries are usually symlinks, so we need to check if they point to directories
 				hwmonPath := filepath.Join(hwmonDir, entry.Name())
@@ -111,7 +105,7 @@ func getLinuxFanInfo() []FanInfo {
 				// Read hwmon name to identify the device
 				nameFile := filepath.Join(hwmonPath, "name")
 				var deviceName string
-				if nameData, err := ioutil.ReadFile(nameFile); err == nil {
+				if nameData, err := os.ReadFile(nameFile); err == nil {
 					deviceName = strings.TrimSpace(string(nameData))
 				} else {
 					// Skip if we can't read the name
@@ -124,13 +118,13 @@ func getLinuxFanInfo() []FanInfo {
 					continue
 				}
 				for _, fanFile := range fanFiles {
-					if data, err := ioutil.ReadFile(fanFile); err == nil {
+					if data, err := os.ReadFile(fanFile); err == nil {
 						speedStr := strings.TrimSpace(string(data))
 						if speed, err := strconv.Atoi(speedStr); err == nil && speed > 0 {
 							// Try label
 							labelFile := strings.Replace(fanFile, "_input", "_label", 1)
 							labelName := ""
-							if labelData, err := ioutil.ReadFile(labelFile); err == nil {
+							if labelData, err := os.ReadFile(labelFile); err == nil {
 								labelName = strings.TrimSpace(string(labelData))
 							}
 
