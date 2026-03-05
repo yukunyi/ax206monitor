@@ -39,6 +39,7 @@ type ConfigStore struct {
 type WebMetaResponse struct {
 	ConfigPath           string   `json:"config_path"`
 	Monitors             []string `json:"monitors"`
+	Collectors           []string `json:"collectors,omitempty"`
 	ItemTypes            []string `json:"item_types"`
 	OutputTypes          []string `json:"output_types"`
 	FontFamilies         []string `json:"font_families"`
@@ -144,7 +145,7 @@ func RunWebServer(options WebServerOptions) error {
 		client := GetCoolerControlClient(
 			url,
 			cfg.GetCoolerControlUsername(),
-			cfg.CoolerControlPassword,
+			cfg.GetCoolerControlPassword(),
 		)
 		options, err := client.ListMonitorOptions()
 		if err != nil {
@@ -435,6 +436,68 @@ func RunWebServer(options WebServerOptions) error {
 		})
 	})
 
+	e.GET("/api/collectors", func(c echo.Context) error {
+		store.touchRuntime()
+		names := store.collectorNames()
+		states := store.collectorStates()
+		items := make([]map[string]interface{}, 0, len(names))
+		for _, name := range names {
+			items = append(items, map[string]interface{}{
+				"name":    name,
+				"enabled": states[name],
+			})
+		}
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"items": items,
+		})
+	})
+
+	e.POST("/api/collectors/:name/enable", func(c echo.Context) error {
+		name := strings.TrimSpace(c.Param("name"))
+		if name == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing collector name"})
+		}
+		if !store.setCollectorEnabled(name, true) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "collector not found"})
+		}
+		cfg := store.getConfig()
+		if cfg.CollectorConfig == nil {
+			cfg.CollectorConfig = map[string]CollectorConfig{}
+		}
+		entry := cfg.CollectorConfig[name]
+		entry.Enabled = boolPtr(true)
+		if entry.Options == nil {
+			entry.Options = map[string]interface{}{}
+		}
+		cfg.CollectorConfig[name] = entry
+		store.setConfig(cfg)
+		_ = saveUserConfig(store.path, cfg)
+		return c.JSON(http.StatusOK, map[string]interface{}{"ok": true})
+	})
+
+	e.POST("/api/collectors/:name/disable", func(c echo.Context) error {
+		name := strings.TrimSpace(c.Param("name"))
+		if name == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing collector name"})
+		}
+		if !store.setCollectorEnabled(name, false) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "collector not found"})
+		}
+		cfg := store.getConfig()
+		if cfg.CollectorConfig == nil {
+			cfg.CollectorConfig = map[string]CollectorConfig{}
+		}
+		entry := cfg.CollectorConfig[name]
+		entry.Enabled = boolPtr(false)
+		if entry.Options == nil {
+			entry.Options = map[string]interface{}{}
+		}
+		cfg.CollectorConfig[name] = entry
+		store.setConfig(cfg)
+		_ = saveUserConfig(store.path, cfg)
+		return c.JSON(http.StatusOK, map[string]interface{}{"ok": true})
+	})
+
 	e.GET("/api/preview", func(c echo.Context) error {
 		store.touchRuntime()
 		if pngData, ok := GetMemImgPNG(); ok {
@@ -470,7 +533,8 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 	return WebMetaResponse{
 		ConfigPath:           store.path,
 		Monitors:             collectMonitorNames(config, store.runtime),
-		ItemTypes:            []string{"value", "progress", "line_chart", "label", "rect", "circle"},
+		Collectors:           store.collectorNames(),
+		ItemTypes:            webItemTypes(),
 		OutputTypes:          []string{outputTypeMemImg, outputTypeAX206USB},
 		FontFamilies:         collectFontFamilies(config),
 		NetworkInterfaces:    listNetworkInterfaces(),
@@ -482,8 +546,8 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 
 func collectMonitorNames(config *MonitorConfig, runtimeState *WebRuntime) []string {
 	monitorSet := make(map[string]struct{})
-	registryConfig := getMonitorRegistryConfig()
-	for _, monitor := range registryConfig.Monitors {
+	registryConfig := getCollectorManagerConfig()
+	for _, monitor := range registryConfig.Items {
 		monitorSet[monitor.Name] = struct{}{}
 	}
 	if goruntime.GOOS == "windows" {
@@ -522,7 +586,7 @@ func collectMonitorNames(config *MonitorConfig, runtimeState *WebRuntime) []stri
 }
 
 func listNetworkInterfaces() []string {
-	options := []string{"auto"}
+	options := []string{}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return options
@@ -533,7 +597,7 @@ func listNetworkInterfaces() []string {
 		}
 		options = append(options, iface.Name)
 	}
-	sort.Strings(options[1:])
+	sort.Strings(options)
 	return options
 }
 
@@ -595,12 +659,23 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		OutputTypes:       []string{outputTypeMemImg},
 		RefreshInterval:   1000,
 		HistorySize:       150,
-		NetworkInterface:  "auto",
+		NetworkInterface:  "",
 		CustomMonitors:    []CustomMonitorConfig{},
+		CollectorConfig: map[string]CollectorConfig{
+			"go_native.cpu":                 {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"go_native.memory":              {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"go_native.system":              {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"go_native.disk":                {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"go_native.network":             {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"custom.all":                    {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			"external.coolercontrol":        {Enabled: boolPtr(false), Options: map[string]interface{}{}},
+			"external.librehardwaremonitor": {Enabled: boolPtr(false), Options: map[string]interface{}{}},
+			"external.rtss":                 {Enabled: boolPtr(false), Options: map[string]interface{}{}},
+		},
 		Items: []ItemConfig{
 			{
-				Type:     "value",
-				Monitor:  "cpu_temp",
+				Type:     itemTypeSimpleValue,
+				Monitor:  "go_native.cpu.temp",
 				Unit:     "auto",
 				X:        12,
 				Y:        12,
@@ -632,6 +707,19 @@ func saveUserConfig(path string, cfg *MonitorConfig) error {
 }
 
 func normalizeMonitorConfig(cfg *MonitorConfig) {
+	if cfg.CollectorConfig == nil {
+		cfg.CollectorConfig = make(map[string]CollectorConfig)
+	}
+	ensureCollectorConfigDefault(cfg, "go_native.cpu", true)
+	ensureCollectorConfigDefault(cfg, "go_native.memory", true)
+	ensureCollectorConfigDefault(cfg, "go_native.system", true)
+	ensureCollectorConfigDefault(cfg, "go_native.disk", true)
+	ensureCollectorConfigDefault(cfg, "go_native.network", true)
+	ensureCollectorConfigDefault(cfg, "custom.all", true)
+	ensureCollectorConfigDefault(cfg, "external.coolercontrol", false)
+	ensureCollectorConfigDefault(cfg, "external.librehardwaremonitor", false)
+	ensureCollectorConfigDefault(cfg, "external.rtss", false)
+
 	if cfg.FontFamilies == nil {
 		cfg.FontFamilies = getDefaultFontFamilies()
 	}
@@ -700,6 +788,10 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.DefaultThresholds = []float64{25, 50, 75, 100}
 	}
 	cfg.OutputTypes = normalizeOutputTypes(cfg.OutputTypes)
+	cfg.NetworkInterface = strings.TrimSpace(cfg.NetworkInterface)
+	if strings.EqualFold(cfg.NetworkInterface, "auto") {
+		cfg.NetworkInterface = ""
+	}
 
 	for idx := range cfg.Items {
 		item := &cfg.Items[idx]
@@ -712,7 +804,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		if item.Height <= 0 {
 			item.Height = 40
 		}
-		if item.Type == "value" || item.Type == "progress" || item.Type == "line_chart" {
+		if isCollectorItemType(item.Type) {
 			if strings.TrimSpace(item.Unit) == "" {
 				item.Unit = "auto"
 			}
@@ -724,7 +816,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		if item.UnitFontSize < 0 {
 			item.UnitFontSize = 0
 		}
-		if item.Type == "line_chart" {
+		if item.Type == itemTypeSimpleChart {
 			item.History = true
 			if item.PointSize <= 0 {
 				item.PointSize = cfg.HistorySize
@@ -736,7 +828,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 			item.History = false
 			item.PointSize = 0
 		}
-		if item.Type != "progress" && item.Type != "line_chart" {
+		if !isRangeItemType(item.Type) {
 			item.Max = 0
 			item.MaxValue = nil
 			item.MinValue = nil
@@ -766,6 +858,34 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	}
 }
 
+func boolPtr(value bool) *bool {
+	v := value
+	return &v
+}
+
+func ensureCollectorConfigDefault(cfg *MonitorConfig, name string, defaultEnabled bool) {
+	if cfg == nil {
+		return
+	}
+	current, exists := cfg.CollectorConfig[name]
+	if !exists {
+		enabled := defaultEnabled
+		cfg.CollectorConfig[name] = CollectorConfig{
+			Enabled: &enabled,
+			Options: map[string]interface{}{},
+		}
+		return
+	}
+	if current.Enabled == nil {
+		enabled := defaultEnabled
+		current.Enabled = &enabled
+	}
+	if current.Options == nil {
+		current.Options = map[string]interface{}{}
+	}
+	cfg.CollectorConfig[name] = current
+}
+
 func defaultEditUIName(current string, idx int, item *ItemConfig) string {
 	if strings.TrimSpace(current) != "" {
 		return strings.TrimSpace(current)
@@ -781,12 +901,7 @@ func defaultEditUIName(current string, idx int, item *ItemConfig) string {
 }
 
 func normalizeItemType(itemType string) string {
-	switch strings.ToLower(strings.TrimSpace(itemType)) {
-	case "value", "progress", "line_chart", "label", "rect", "circle":
-		return strings.ToLower(strings.TrimSpace(itemType))
-	default:
-		return "value"
-	}
+	return normalizeItemTypeName(itemType)
 }
 
 func normalizeMonitorAlias(name string) string {
@@ -883,11 +998,32 @@ func (s *ConfigStore) snapshot() WebSnapshotResponse {
 	return s.runtime.Snapshot()
 }
 
-func (s *ConfigStore) monitorStats() *MonitorRegistryStats {
+func (s *ConfigStore) monitorStats() *CollectorManagerStats {
 	if s.runtime == nil {
 		return nil
 	}
 	return s.runtime.MonitorStats()
+}
+
+func (s *ConfigStore) collectorStates() map[string]bool {
+	if s.runtime == nil {
+		return map[string]bool{}
+	}
+	return s.runtime.CollectorStates()
+}
+
+func (s *ConfigStore) collectorNames() []string {
+	if s.runtime == nil {
+		return []string{}
+	}
+	return s.runtime.CollectorNames()
+}
+
+func (s *ConfigStore) setCollectorEnabled(name string, enabled bool) bool {
+	if s.runtime == nil {
+		return false
+	}
+	return s.runtime.SetCollectorEnabled(name, enabled)
 }
 
 func NewProfileManager(currentConfigPath string) (*ProfileManager, error) {

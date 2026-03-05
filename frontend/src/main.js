@@ -4,18 +4,97 @@ import "@simonwep/pickr/dist/themes/nano.min.css";
 
 const app = document.querySelector("#app");
 
-const ELEMENT_TYPES = ["value", "progress", "line_chart", "label", "rect", "circle"];
-const MONITOR_ELEMENT_TYPES = new Set(["value", "progress", "line_chart"]);
-const RANGE_ELEMENT_TYPES = new Set(["progress", "line_chart"]);
-const LABEL_ELEMENT_TYPES = new Set(["label"]);
-const SHAPE_ELEMENT_TYPES = new Set(["rect", "circle"]);
-
+const SIMPLE_ELEMENT_TYPES = [
+  "simple_value",
+  "simple_progress",
+  "simple_line_chart",
+  "simple_label",
+  "simple_rect",
+  "simple_circle",
+];
+const FULL_ELEMENT_TYPES = [
+  "full_chart",
+  "full_progress",
+  "full_gauge",
+  "full_ring",
+  "full_minmax",
+  "full_delta",
+  "full_status",
+  "full_meter_h",
+  "full_meter_v",
+  "full_heat_strip",
+];
+const ELEMENT_TYPES = [...SIMPLE_ELEMENT_TYPES, ...FULL_ELEMENT_TYPES];
+const LEGACY_TYPE_MAP = {
+  value: "simple_value",
+  progress: "simple_progress",
+  line_chart: "simple_line_chart",
+  label: "simple_label",
+  rect: "simple_rect",
+  circle: "simple_circle",
+};
+const ITEM_TYPE_DISPLAY_NAMES = {
+  simple_value: "简单数值",
+  simple_progress: "简单进度条",
+  simple_line_chart: "简单折线图",
+  simple_label: "简单文本",
+  simple_rect: "简单矩形",
+  simple_circle: "简单圆形",
+  full_chart: "复杂图表",
+  full_progress: "复杂进度条",
+  full_gauge: "复杂仪表盘",
+  full_ring: "复杂环形图",
+  full_minmax: "复杂最值图",
+  full_delta: "复杂变化趋势",
+  full_status: "复杂状态卡",
+  full_meter_h: "复杂水平刻度",
+  full_meter_v: "复杂垂直刻度",
+  full_heat_strip: "复杂热度条",
+};
+const ITEM_FIELD_DISPLAY_NAMES = {
+  edit_ui_name: "名称",
+  type: "类型",
+  monitor: "采集项",
+  text: "文本",
+  x: "X",
+  y: "Y",
+  width: "宽度",
+  height: "高度",
+  font_size: "字号",
+  unit: "单位",
+  unit_font_size: "单位字号",
+  color: "主颜色",
+  unit_color: "单位颜色",
+  bg: "背景色",
+  border_color: "边框色",
+  border_width: "边框宽度",
+  radius: "圆角",
+  min_value: "最小值",
+  max_value: "最大值",
+  max: "最大刻度",
+  point_size: "历史点数",
+};
+const AUTO_APPLY_DELAY_OPTIONS = [100, 300, 500, 1000];
+const MONITOR_ELEMENT_TYPES = new Set([
+  "simple_value",
+  "simple_progress",
+  "simple_line_chart",
+  ...FULL_ELEMENT_TYPES,
+]);
+const RANGE_ELEMENT_TYPES = new Set([
+  "simple_progress",
+  "simple_line_chart",
+  ...FULL_ELEMENT_TYPES,
+]);
+const LABEL_ELEMENT_TYPES = new Set(["simple_label"]);
 const state = {
   config: null,
   meta: null,
   profiles: [],
   editingProfile: "default",
   snapshot: null,
+  collectors: [],
+  collectorsLoading: false,
   monitorOptions: [],
   monitorLabels: {},
   selectedItem: -1,
@@ -26,10 +105,8 @@ const state = {
   previewImageBitmap: null,
   previewRefreshPending: false,
   previewError: "",
-  previewSyncTimer: null,
   previewSyncing: false,
   previewSyncPending: false,
-  saveTimer: null,
   saving: false,
   savePending: false,
   savePromise: null,
@@ -41,13 +118,15 @@ const state = {
   runtimeStreamPending: {},
   runtimeStreamReconnectTimer: null,
   activeTab: "basic",
-  addItemType: "value",
+  addItemType: "simple_value",
   addItemMonitor: "",
   ui: {
     purePreview: false,
     showGrid: true,
     snapEnabled: true,
     snapSize: 10,
+    autoApply: false,
+    autoApplyDelay: 300,
     previewZoomAuto: true,
     previewZoom: 100,
     previewFitScale: 1,
@@ -55,9 +134,34 @@ const state = {
     centerGuides: null,
     colorPickers: [],
   },
+  autoApplyTimer: null,
   previewFetchTimer: null,
   previewResizeObserver: null,
   previewWrapperSize: { width: 0, height: 0 },
+};
+
+const DEFAULT_COLLECTOR_ENABLED = {
+  "go_native.cpu": true,
+  "go_native.memory": true,
+  "go_native.system": true,
+  "go_native.disk": true,
+  "go_native.network": true,
+  "custom.all": true,
+  "external.coolercontrol": false,
+  "external.librehardwaremonitor": false,
+  "external.rtss": false,
+};
+
+const COLLECTOR_NAME_ALIAS = {
+  "go_native.cpu": "CPU 原生采集器",
+  "go_native.memory": "Memory 原生采集器",
+  "go_native.system": "System 原生采集器",
+  "go_native.disk": "Disk 原生采集器",
+  "go_native.network": "Network 原生采集器",
+  "custom.all": "自定义采集器",
+  "external.coolercontrol": "CoolerControl 采集器",
+  "external.librehardwaremonitor": "LibreHardwareMonitor 采集器",
+  "external.rtss": "RTSS 采集器",
 };
 
 function deepClone(obj) {
@@ -108,6 +212,108 @@ function ensureFourColors(values, fallback) {
   return out.slice(0, 4);
 }
 
+const FULL_TYPE_ATTR_SCHEMAS = {
+  full_chart: [
+    { key: "history_points", label: "历史点数", kind: "number" },
+    { key: "show_avg_line", label: "平均线", kind: "bool" },
+    { key: "fill_area", label: "填充区域", kind: "bool" },
+    { key: "line_width", label: "线条宽度", kind: "number" },
+  ],
+  full_progress: [
+    {
+      key: "progress_style",
+      label: "进度条样式",
+      kind: "select",
+      options: ["gradient", "solid", "segmented", "stripes", "glow"],
+    },
+    { key: "segments", label: "分段数量", kind: "number" },
+    { key: "track_color", label: "轨道颜色", kind: "color" },
+    { key: "bar_radius", label: "条形圆角", kind: "number" },
+  ],
+  full_gauge: [
+    { key: "gauge_thickness", label: "仪表厚度", kind: "number" },
+  ],
+  full_ring: [
+    { key: "ring_thickness", label: "环形厚度", kind: "number" },
+  ],
+  full_minmax: [
+    { key: "history_points", label: "历史点数", kind: "number" },
+  ],
+  full_delta: [
+    { key: "history_points", label: "历史点数", kind: "number" },
+    { key: "main_font_size", label: "主值字号", kind: "number" },
+  ],
+  full_status: [
+  ],
+  full_meter_h: [
+    { key: "ticks", label: "刻度数量", kind: "number" },
+  ],
+  full_meter_v: [
+    { key: "segments", label: "分段数量", kind: "number" },
+  ],
+  full_heat_strip: [
+    { key: "cells", label: "格子数量", kind: "number" },
+    { key: "cell_gap", label: "格子间距", kind: "number" },
+  ],
+};
+const FULL_COMMON_ATTR_SCHEMAS = [
+  { key: "header_divider", label: "显示分割线", kind: "bool" },
+  { key: "header_divider_offset", label: "分割线高度", kind: "number" },
+  { key: "header_divider_color", label: "分割线颜色", kind: "color" },
+];
+
+const DEFAULT_FULL_RENDER_ATTRS = {
+  full_chart: { history_points: 90, show_avg_line: true, fill_area: true, line_width: 2 },
+  full_progress: { progress_style: "gradient", segments: 12, track_color: "#1f2937", bar_radius: 8 },
+  full_gauge: { gauge_thickness: 9 },
+  full_ring: { ring_thickness: 8 },
+  full_minmax: { history_points: 120 },
+  full_delta: { history_points: 60, main_font_size: 0 },
+  full_status: {},
+  full_meter_h: { ticks: 8 },
+  full_meter_v: { segments: 12 },
+  full_heat_strip: { cells: 12, cell_gap: 2 },
+};
+const FULL_COMMON_RENDER_ATTRS = {
+  content_padding: 1,
+  title_font_size: 0,
+  header_divider: true,
+  header_divider_offset: 3,
+  header_divider_color: "#94a3b840",
+};
+const FULL_ATTR_OPTION_DISPLAY_NAMES = {
+  gradient: "渐变",
+  solid: "纯色",
+  segmented: "分段",
+  stripes: "斜纹",
+  glow: "发光",
+};
+
+function isFullElementType(type) {
+  return String(type || "").startsWith("full_");
+}
+
+function normalizeRenderAttrsMap(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  return { ...raw };
+}
+
+function ensureItemRenderAttrs(item) {
+  if (!item) return {};
+  if (!item.render_attrs_map || typeof item.render_attrs_map !== "object" || Array.isArray(item.render_attrs_map)) {
+    item.render_attrs_map = {};
+  }
+  return item.render_attrs_map;
+}
+
+function defaultRenderAttrsForType(type) {
+  const normalized = normalizeItemType(type);
+  const defaults = DEFAULT_FULL_RENDER_ATTRS[normalized];
+  return defaults ? { ...deepClone(FULL_COMMON_RENDER_ATTRS), ...deepClone(defaults) } : deepClone(FULL_COMMON_RENDER_ATTRS);
+}
+
 function normalizeOutputTypes(values) {
   const allowed = new Set(state.meta?.output_types || ["memimg", "ax206usb"]);
   const out = [];
@@ -123,8 +329,25 @@ function normalizeOutputTypes(values) {
 }
 
 function normalizeItemType(type) {
-  const t = String(type || "").trim();
-  return ELEMENT_TYPES.includes(t) ? t : "value";
+  const raw = String(type || "").trim();
+  if (!raw) return "simple_value";
+  const lowered = raw.toLowerCase();
+  const mapped = LEGACY_TYPE_MAP[lowered] || lowered;
+  return ELEMENT_TYPES.includes(mapped) ? mapped : "simple_value";
+}
+
+function itemTypeDisplayName(type) {
+  const normalized = normalizeItemType(type);
+  return ITEM_TYPE_DISPLAY_NAMES[normalized] || normalized;
+}
+
+function itemFieldDisplayName(field) {
+  return ITEM_FIELD_DISPLAY_NAMES[field] || field;
+}
+
+function fullAttrOptionDisplayName(value) {
+  const key = String(value ?? "").trim();
+  return FULL_ATTR_OPTION_DISPLAY_NAMES[key] || key;
 }
 
 function defaultEditUIName(index, item) {
@@ -143,8 +366,10 @@ function ensureItemName(item, index) {
 }
 
 function normalizeItem(item, index = 0, defaultPointSize = 150) {
+  const itemType = normalizeItemType(item?.type);
+  const renderAttrs = normalizeRenderAttrsMap(item?.render_attrs_map || item?.renderAttrsMap);
   const result = {
-    type: normalizeItemType(item?.type),
+    type: itemType,
     edit_ui_name: String(item?.edit_ui_name || "").trim(),
     monitor: String(item?.monitor || ""),
     unit: String(item?.unit || "auto"),
@@ -153,21 +378,22 @@ function normalizeItem(item, index = 0, defaultPointSize = 150) {
     y: num(item?.y, 10),
     width: Math.max(10, num(item?.width, 120)),
     height: Math.max(10, num(item?.height, 40)),
-    text: String(item?.text || (String(item?.type || "") === "label" ? "Label" : "")),
+    text: String(item?.text || (itemType === "simple_label" ? "Label" : "")),
     color: String(item?.color || ""),
     bg: String(item?.bg || ""),
     border_color: String(item?.border_color || ""),
     border_width: Math.max(0, num(item?.border_width, 0)),
-    radius: Math.max(0, num(item?.radius, 0)),
+    radius: Math.max(0, num(item?.radius, isFullElementType(itemType) ? 2 : 0)),
     history: !!item?.history,
     point_size: Math.max(10, num(item?.point_size, defaultPointSize)),
+    render_attrs_map: renderAttrs,
   };
 
   if (item?.font_size !== undefined && item?.font_size !== null && item?.font_size !== "") {
-    result.font_size = Math.max(1, num(item.font_size, 16));
+    result.font_size = Math.max(0, num(item.font_size, 0));
   }
   if (item?.unit_font_size !== undefined && item?.unit_font_size !== null && item?.unit_font_size !== "") {
-    result.unit_font_size = Math.max(1, num(item.unit_font_size, 12));
+    result.unit_font_size = Math.max(0, num(item.unit_font_size, 0));
   }
   if (RANGE_ELEMENT_TYPES.has(result.type)) {
     if (item?.max !== undefined && item?.max !== null && item?.max !== "") {
@@ -202,12 +428,18 @@ function normalizeItem(item, index = 0, defaultPointSize = 150) {
     delete result.max_value;
     delete result.min_value;
   }
-  if (result.type === "line_chart") {
+  if (result.type === "simple_line_chart") {
     result.history = true;
     result.point_size = Math.max(10, num(result.point_size, defaultPointSize));
   } else {
     result.history = false;
     delete result.point_size;
+  }
+  if (isFullElementType(result.type)) {
+    result.render_attrs_map = {
+      ...defaultRenderAttrsForType(result.type),
+      ...result.render_attrs_map,
+    };
   }
   if (!result.edit_ui_name) {
     result.edit_ui_name = defaultEditUIName(index, result);
@@ -239,6 +471,81 @@ function normalizeCustomMonitor(item) {
   };
 }
 
+function collectorDefaultEnabled(name) {
+  if (Object.prototype.hasOwnProperty.call(DEFAULT_COLLECTOR_ENABLED, name)) {
+    return !!DEFAULT_COLLECTOR_ENABLED[name];
+  }
+  return true;
+}
+
+function ensureCollectorConfigEntry(config, collectorName) {
+  if (!config.collector_config || typeof config.collector_config !== "object") {
+    config.collector_config = {};
+  }
+  const name = String(collectorName || "").trim();
+  if (!name) {
+    return { enabled: true, options: {} };
+  }
+  const prev = config.collector_config[name] || {};
+  const enabled = typeof prev.enabled === "boolean" ? prev.enabled : collectorDefaultEnabled(name);
+  const options = prev.options && typeof prev.options === "object" ? { ...prev.options } : {};
+  const next = { enabled, options };
+  config.collector_config[name] = next;
+  return next;
+}
+
+function knownCollectorNames(config) {
+  const seen = new Set();
+  const names = [];
+  const push = (value) => {
+    const name = String(value || "").trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    names.push(name);
+  };
+
+  Object.keys(DEFAULT_COLLECTOR_ENABLED).forEach(push);
+  (state.meta?.collectors || []).forEach(push);
+  (state.collectors || []).forEach((item) => push(item?.name));
+  if (config?.collector_config && typeof config.collector_config === "object") {
+    Object.keys(config.collector_config).forEach(push);
+  }
+
+  const defaultOrder = Object.keys(DEFAULT_COLLECTOR_ENABLED);
+  const orderScore = new Map(defaultOrder.map((name, index) => [name, index]));
+  names.sort((a, b) => {
+    const sa = orderScore.has(a) ? orderScore.get(a) : 9999;
+    const sb = orderScore.has(b) ? orderScore.get(b) : 9999;
+    if (sa !== sb) return sa - sb;
+    return a.localeCompare(b);
+  });
+  return names;
+}
+
+function collectorOptionValue(config, collectorName, optionKey, fallback = "") {
+  const entry = ensureCollectorConfigEntry(config, collectorName);
+  const value = entry.options?.[optionKey];
+  if (value === null || value === undefined) {
+    return String(fallback ?? "");
+  }
+  return String(value);
+}
+
+function collectorEnabledValue(config, collectorName) {
+  return !!ensureCollectorConfigEntry(config, collectorName).enabled;
+}
+
+function syncLegacyCollectorFields(config) {
+  const cc = ensureCollectorConfigEntry(config, "external.coolercontrol");
+  const lhm = ensureCollectorConfigEntry(config, "external.librehardwaremonitor");
+  const rtss = ensureCollectorConfigEntry(config, "external.rtss");
+  config.coolercontrol_url = String(cc.options.url || "");
+  config.coolercontrol_username = String(cc.options.username || "");
+  config.coolercontrol_password = String(cc.options.password || "");
+  config.libre_hardware_monitor_url = String(lhm.options.url || "");
+  config.enable_rtss_collect = !!rtss.enabled;
+}
+
 function ensureConfig(cfg) {
   const config = cfg || {};
   config.name = String(config.name || "web");
@@ -260,12 +567,35 @@ function ensureConfig(cfg) {
   config.output_types = normalizeOutputTypes(config.output_types);
   config.refresh_interval = Math.max(100, num(config.refresh_interval, 1000));
   config.history_size = Math.max(10, num(config.history_size, 150));
-  config.network_interface = String(config.network_interface || "auto");
+  config.network_interface = String(config.network_interface || "").trim();
+  if (config.network_interface.toLowerCase() === "auto") {
+    config.network_interface = "";
+  }
   config.enable_rtss_collect = !!config.enable_rtss_collect;
   config.libre_hardware_monitor_url = String(config.libre_hardware_monitor_url ?? "");
   config.coolercontrol_url = String(config.coolercontrol_url ?? "");
   config.coolercontrol_username = String(config.coolercontrol_username || "");
   config.coolercontrol_password = String(config.coolercontrol_password || "");
+
+  const allCollectors = knownCollectorNames(config);
+  allCollectors.forEach((name) => {
+    ensureCollectorConfigEntry(config, name);
+  });
+
+  const cc = ensureCollectorConfigEntry(config, "external.coolercontrol");
+  if (!cc.options.url && config.coolercontrol_url) cc.options.url = config.coolercontrol_url;
+  if (!cc.options.username && config.coolercontrol_username) cc.options.username = config.coolercontrol_username;
+  if (!cc.options.password && config.coolercontrol_password) cc.options.password = config.coolercontrol_password;
+
+  const lhm = ensureCollectorConfigEntry(config, "external.librehardwaremonitor");
+  if (!lhm.options.url && config.libre_hardware_monitor_url) lhm.options.url = config.libre_hardware_monitor_url;
+
+  const rtss = ensureCollectorConfigEntry(config, "external.rtss");
+  if (config.enable_rtss_collect) {
+    rtss.enabled = true;
+  }
+
+  syncLegacyCollectorFields(config);
 
   config.custom_monitors = Array.isArray(config.custom_monitors)
     ? config.custom_monitors.map((item) => normalizeCustomMonitor(item))
@@ -290,20 +620,26 @@ function createItemByType(type) {
     unit_color: "",
     x: padding,
     y: padding,
-    width: itemType === "label" ? 140 : 120,
-    height: itemType === "label" ? 34 : 40,
-    text: itemType === "label" ? "Label" : "",
+    width: itemType === "simple_label" ? 140 : 120,
+    height: itemType === "simple_label" ? 34 : 40,
+    text: itemType === "simple_label" ? "Label" : "",
     color: "",
     bg: "",
     border_color: "",
     border_width: 0,
-    radius: itemType === "rect" ? 8 : 0,
-    history: itemType === "line_chart",
-    point_size: itemType === "line_chart" ? defaultPointSize : undefined,
+    radius: itemType === "simple_rect" ? 8 : 0,
+    history: itemType === "simple_line_chart",
+    point_size: itemType === "simple_line_chart" ? defaultPointSize : undefined,
+    render_attrs_map: defaultRenderAttrsForType(itemType),
   };
-  if (itemType === "circle") {
+  if (itemType === "simple_circle") {
     base.width = 60;
     base.height = 60;
+  }
+  if (isFullElementType(itemType)) {
+    base.width = 220;
+    base.height = 120;
+    base.radius = 2;
   }
   return base;
 }
@@ -431,9 +767,6 @@ function connectRuntimeStream() {
       setError("");
       stopPolling();
       void runtimeStreamCall("request_runtime", {}, 4000).catch(() => {});
-      if (state.dirty) {
-        schedulePreviewSync(true);
-      }
     };
 
     ws.onmessage = (event) => {
@@ -604,6 +937,52 @@ function setError(text) {
   }
 }
 
+function normalizeAutoApplyDelay(value) {
+  const parsed = Math.round(num(value, 300));
+  if (AUTO_APPLY_DELAY_OPTIONS.includes(parsed)) {
+    return parsed;
+  }
+  return 300;
+}
+
+function getSaveStateView() {
+  const text = state.saving ? "保存中..." : (state.dirty ? "未保存更改" : "已保存");
+  const cls = state.saving ? "saving" : (state.dirty ? "dirty" : "clean");
+  return { text, cls };
+}
+
+function updateSaveStateDOM() {
+  const badge = document.getElementById("save-state-badge");
+  if (!badge) return;
+  const view = getSaveStateView();
+  badge.textContent = view.text;
+  badge.className = `save-state ${view.cls}`;
+}
+
+function clearAutoApplyTimer() {
+  if (!state.autoApplyTimer) return;
+  window.clearTimeout(state.autoApplyTimer);
+  state.autoApplyTimer = null;
+}
+
+function scheduleAutoApply(delay = null) {
+  if (!state.ui.autoApply) return;
+  clearAutoApplyTimer();
+  const effectiveDelay = delay === null ? normalizeAutoApplyDelay(state.ui.autoApplyDelay) : Math.max(0, delay);
+  state.autoApplyTimer = window.setTimeout(async () => {
+    state.autoApplyTimer = null;
+    if (!state.ui.autoApply || !state.dirty) return;
+    try {
+      await saveAndApplyPreview();
+      setError("");
+    } catch (error) {
+      setError(`自动应用失败: ${error.message}`);
+    } finally {
+      updateSaveStateDOM();
+    }
+  }, effectiveDelay);
+}
+
 function markDirty() {
   if (isEditingProfileReadOnly()) {
     setError("内置只读配置，请先复制");
@@ -611,35 +990,20 @@ function markDirty() {
     return;
   }
   state.dirty = true;
-  schedulePreviewSync();
-  scheduleAutoSave();
+  updateSaveStateDOM();
+  scheduleAutoApply();
 }
 
 function clearDirty() {
   state.dirty = false;
+  updateSaveStateDOM();
 }
 
-function schedulePreviewSync(immediate = false) {
-  if (!state.config) return;
-  if (state.previewSyncTimer) {
-    window.clearTimeout(state.previewSyncTimer);
+function confirmDiscardUnsavedChanges() {
+  if (!state.dirty || state.saving) {
+    return true;
   }
-  state.previewSyncTimer = window.setTimeout(() => {
-    state.previewSyncTimer = null;
-    void syncPreviewConfig();
-  }, immediate ? 0 : 140);
-}
-
-function scheduleAutoSave(immediate = false) {
-  if (isEditingProfileReadOnly()) return;
-  if (!state.config) return;
-  if (state.saveTimer) {
-    window.clearTimeout(state.saveTimer);
-  }
-  state.saveTimer = window.setTimeout(() => {
-    state.saveTimer = null;
-    void saveEditingProfile();
-  }, immediate ? 0 : 300);
+  return window.confirm("当前有未保存更改，继续操作将丢失这些修改。是否继续？");
 }
 
 async function saveEditingProfile() {
@@ -647,6 +1011,9 @@ async function saveEditingProfile() {
   if (!state.config) return;
   const profileName = state.editingProfile || state.meta?.active_profile || "default";
   if (!profileName) return;
+  if (!state.dirty && !state.saving) {
+    return;
+  }
 
   if (state.saving) {
     state.savePending = true;
@@ -654,6 +1021,7 @@ async function saveEditingProfile() {
   }
 
   state.saving = true;
+  updateSaveStateDOM();
   const payloadConfig = ensureConfig(deepClone(state.config));
   state.savePromise = (async () => {
     try {
@@ -675,29 +1043,34 @@ async function saveEditingProfile() {
       setError("");
     } catch (error) {
       state.dirty = true;
-      setError(`自动保存失败: ${error.message}`);
+      setError(`保存失败: ${error.message}`);
+      throw error;
     } finally {
       state.saving = false;
       state.savePromise = null;
-      if (state.savePending) {
-        state.savePending = false;
-        scheduleAutoSave(true);
-      }
+      state.savePending = false;
+      updateSaveStateDOM();
     }
   })();
   return state.savePromise;
 }
 
 async function flushAutoSave() {
-  if (state.saveTimer) {
-    window.clearTimeout(state.saveTimer);
-    state.saveTimer = null;
+  if (state.autoApplyTimer) {
+    clearAutoApplyTimer();
+    if (state.ui.autoApply && state.dirty) {
+      await saveAndApplyPreview();
+      return;
+    }
   }
-  if (state.dirty) {
-    await saveEditingProfile();
-  } else if (state.saving && state.savePromise) {
+  if (state.saving && state.savePromise) {
     await state.savePromise;
   }
+}
+
+async function saveAndApplyPreview() {
+  await saveEditingProfile();
+  await syncPreviewConfig();
 }
 
 async function syncPreviewConfig() {
@@ -712,8 +1085,8 @@ async function syncPreviewConfig() {
     const cfg = ensureConfig(deepClone(state.config));
     if (isRuntimeStreamReady()) {
       await runtimeStreamCall("preview_config", { config: cfg }, 5000);
+      await runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
     } else if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
-      schedulePreviewSync(false);
       return;
     } else {
       await api("/api/preview/config", {
@@ -732,7 +1105,7 @@ async function syncPreviewConfig() {
     state.previewSyncing = false;
     if (state.previewSyncPending) {
       state.previewSyncPending = false;
-      schedulePreviewSync(true);
+      void syncPreviewConfig();
     }
   }
 }
@@ -761,8 +1134,8 @@ function render() {
       <div class="tab-nav">
         <button data-action="switch-tab" data-tab="basic" class="${state.activeTab === "basic" ? "active" : ""}">基础配置</button>
         <button data-action="switch-tab" data-tab="elements" class="${state.activeTab === "elements" ? "active" : ""}">屏幕元素</button>
-        <button data-action="switch-tab" data-tab="custom" class="${state.activeTab === "custom" ? "active" : ""}">自定义监控项</button>
-        <button data-action="switch-tab" data-tab="collection" class="${state.activeTab === "collection" ? "active" : ""}">采集信息</button>
+        <button data-action="switch-tab" data-tab="custom" class="${state.activeTab === "custom" ? "active" : ""}">自定义采集项</button>
+        <button data-action="switch-tab" data-tab="collection" class="${state.activeTab === "collection" ? "active" : ""}">采集运行态</button>
       </div>
       <div class="tab-content">
         ${isEditingProfileReadOnly() ? `<div class="global-error">当前为内置只读配置，不能直接修改。请使用顶部“复制”创建可编辑配置。</div>` : ""}
@@ -828,27 +1201,49 @@ function syncElementSelectionUI(options = {}) {
 function renderTopBar() {
   const editing = state.editingProfile || state.meta?.active_profile || "default";
   const editingInfo = getProfileInfo(editing);
+  const saveStateView = getSaveStateView();
   const options = (state.profiles || [])
     .map((item) => {
       const suffix = item.readonly ? " [内置]" : "";
       return `<option value="${escapeAttr(item.name)}" ${item.name === editing ? "selected" : ""}>${escapeHTML(item.name + suffix)}</option>`;
     })
     .join("");
+  const autoApplyDelay = normalizeAutoApplyDelay(state.ui.autoApplyDelay);
+  state.ui.autoApplyDelay = autoApplyDelay;
+  const delayOptions = AUTO_APPLY_DELAY_OPTIONS
+    .map((ms) => `<option value="${ms}" ${autoApplyDelay === ms ? "selected" : ""}>${ms}ms</option>`)
+    .join("");
 
   return `
     <div class="topbar">
       <div class="topbar-row">
-        <label>配置文件
-          <select id="profile-select">${options}</select>
-        </label>
-        <button data-action="activate-profile">设为激活</button>
-        <button data-action="create-profile">新建</button>
-        <button data-action="rename-profile" ${editingInfo?.readonly ? "disabled" : ""}>重命名</button>
-        <button data-action="save-profile-as">复制</button>
-        <button data-action="delete-profile" ${editingInfo?.readonly ? "disabled" : ""}>删除</button>
-        <button data-action="refresh-profiles">刷新</button>
-        <button data-action="export-json">导出 JSON</button>
-        <button data-action="import-json">导入 JSON</button>
+        <div class="topbar-actions-left">
+          <label>配置文件
+            <select id="profile-select">${options}</select>
+          </label>
+          <button data-action="activate-profile">设为激活</button>
+          <button data-action="create-profile">新建</button>
+          <button data-action="rename-profile" ${editingInfo?.readonly ? "disabled" : ""}>重命名</button>
+          <button data-action="save-profile-as">复制</button>
+          <button data-action="delete-profile" ${editingInfo?.readonly ? "disabled" : ""}>删除</button>
+          <button data-action="refresh-profiles">刷新</button>
+          <button data-action="export-json">导出 JSON</button>
+          <button data-action="import-json">导入 JSON</button>
+        </div>
+        <div class="topbar-actions-right">
+          <label class="topbar-check">
+            <input type="checkbox" data-ui-field="autoApply" ${state.ui.autoApply ? "checked" : ""} />
+            自动应用修改
+          </label>
+          <label class="topbar-delay">
+            延迟
+            <select data-ui-field="autoApplyDelay">
+              ${delayOptions}
+            </select>
+          </label>
+          <button data-action="save-profile" ${editingInfo?.readonly ? "disabled" : ""}>保存</button>
+          <span id="save-state-badge" class="save-state ${saveStateView.cls}">${saveStateView.text}</span>
+        </div>
       </div>
       <input id="import-file-input" type="file" accept=".json,application/json" style="display:none" />
     </div>
@@ -869,13 +1264,125 @@ function renderActiveTab(cfg) {
   }
 }
 
+function collectorDisplayName(name) {
+  return COLLECTOR_NAME_ALIAS[name] || name;
+}
+
+function collectorToggleField(cfg, collectorName) {
+  const enabled = collectorEnabledValue(cfg, collectorName);
+  return `
+    <label class="collector-toggle">
+      <input
+        type="checkbox"
+        data-collector-name="${escapeAttr(collectorName)}"
+        data-collector-kind="enabled"
+        ${enabled ? "checked" : ""}
+      />
+      启用
+    </label>
+  `;
+}
+
+function renderCollectorEnabledSection(cfg) {
+  const collectorNames = knownCollectorNames(cfg);
+  if (collectorNames.length === 0) {
+    return "";
+  }
+  const rows = collectorNames
+    .map((name) => `
+      <div class="collector-enable-row">
+        <div class="collector-enable-meta">
+          <strong>${escapeHTML(collectorDisplayName(name))}</strong>
+          <span class="collector-enable-key">${escapeHTML(name)}</span>
+        </div>
+        ${collectorToggleField(cfg, name)}
+      </div>
+    `)
+    .join("");
+  return `
+    <div class="panel">
+      <h3>采集器启用控制</h3>
+      <div class="collector-enable-list">
+        ${rows}
+      </div>
+    </div>
+  `;
+}
+
+function collectorOptionField(cfg, collectorName, optionKey, label, type = "text") {
+  const value = collectorOptionValue(cfg, collectorName, optionKey, "");
+  return `
+    <div class="field">
+      <label>${label}</label>
+      <input
+        type="${type}"
+        data-collector-name="${escapeAttr(collectorName)}"
+        data-collector-kind="option"
+        data-collector-option="${escapeAttr(optionKey)}"
+        value="${escapeAttr(value)}"
+      />
+    </div>
+  `;
+}
+
+function renderCollectorConfigSection(cfg) {
+  const collectorNames = knownCollectorNames(cfg)
+    .filter((name) => name === "external.coolercontrol" || name === "external.librehardwaremonitor");
+  if (collectorNames.length === 0) {
+    return "";
+  }
+
+  const blocks = collectorNames
+    .map((name) => {
+      let optionsHTML = "";
+      if (name === "external.coolercontrol") {
+        optionsHTML = `
+          <div class="grid">
+            ${collectorOptionField(cfg, name, "url", "CoolerControl URL")}
+            ${collectorOptionField(cfg, name, "username", "CoolerControl 用户名")}
+            ${collectorOptionField(cfg, name, "password", "CoolerControl 密码", "password")}
+          </div>
+        `;
+      } else if (name === "external.librehardwaremonitor") {
+        optionsHTML = `
+          <div class="grid">
+            ${collectorOptionField(cfg, name, "url", "Libre URL")}
+          </div>
+        `;
+      }
+
+      return `
+        <div class="collector-config-card">
+          <div class="collector-config-head">
+            <strong title="${escapeAttr(name)}">${escapeHTML(collectorDisplayName(name))}</strong>
+            <span class="collector-enable-key">${escapeHTML(name)}</span>
+          </div>
+          ${optionsHTML}
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="panel">
+      <h3>采集器配置</h3>
+      <div class="collector-config-cards">
+        ${blocks}
+      </div>
+      <div class="notice">采集器 URL/认证等连接参数在这里维护；启用状态请在“采集器启用控制”中设置。</div>
+    </div>
+  `;
+}
+
 function renderBasicTab(cfg) {
   const outputOptions = (state.meta?.output_types || ["memimg", "ax206usb"])
     .map((value) => `<option value="${escapeAttr(value)}" ${cfg.output_types.includes(value) ? "selected" : ""}>${escapeHTML(value)}</option>`)
     .join("");
-  const networkOptions = (state.meta?.network_interfaces || ["auto"])
-    .map((value) => `<option value="${escapeAttr(value)}" ${cfg.network_interface === value ? "selected" : ""}>${escapeHTML(value)}</option>`)
-    .join("");
+  const networkInterfaceValues = (state.meta?.network_interfaces || []);
+  const networkOptions = [
+    `<option value="" ${cfg.network_interface === "" ? "selected" : ""}>未设置</option>`,
+    ...networkInterfaceValues.map((value) => `<option value="${escapeAttr(value)}" ${cfg.network_interface === value ? "selected" : ""}>${escapeHTML(value)}</option>`),
+  ].join("");
   const fontOptions = collectFontOptions(cfg)
     .map((name) => `<option value="${escapeAttr(name)}" ${cfg.default_font === name ? "selected" : ""}>${escapeHTML(name)}</option>`)
     .join("");
@@ -892,11 +1399,6 @@ function renderBasicTab(cfg) {
           ${fieldNumber("refresh_interval", "刷新间隔(ms)", cfg.refresh_interval)}
           ${fieldNumber("history_size", "折线历史长度", cfg.history_size)}
           ${fieldSelect("network_interface", "网络接口", networkOptions)}
-          ${fieldCheckbox("enable_rtss_collect", "启用 RTSS 采集(Windows)", !!cfg.enable_rtss_collect)}
-          ${fieldText("libre_hardware_monitor_url", "Libre URL", cfg.libre_hardware_monitor_url)}
-          ${fieldText("coolercontrol_url", "CoolerControl URL", cfg.coolercontrol_url)}
-          ${fieldText("coolercontrol_username", "CoolerControl 用户名", cfg.coolercontrol_username)}
-          ${fieldText("coolercontrol_password", "CoolerControl 密码", cfg.coolercontrol_password)}
           ${fieldSelect("default_font", "默认字体", fontOptions)}
           ${fieldNumber("default_font_size", "默认字号", cfg.default_font_size)}
           ${fieldColor("default_color", "默认颜色", cfg.default_color)}
@@ -919,6 +1421,8 @@ function renderBasicTab(cfg) {
           ${levelThresholdField("default-threshold", 3, cfg.default_thresholds[3])}
         </div>
       </div>
+      ${renderCollectorEnabledSection(cfg)}
+      ${renderCollectorConfigSection(cfg)}
     </div>
   `;
 }
@@ -926,7 +1430,7 @@ function renderBasicTab(cfg) {
 function renderElementsTab(cfg) {
   const selected = cfg.items[state.selectedItem];
   const typeOptions = (state.meta?.item_types || ELEMENT_TYPES)
-    .map((itemType) => `<option value="${escapeAttr(itemType)}" ${state.addItemType === itemType ? "selected" : ""}>${escapeHTML(itemType)}</option>`)
+    .map((itemType) => `<option value="${escapeAttr(itemType)}" ${state.addItemType === itemType ? "selected" : ""}>${escapeHTML(itemTypeDisplayName(itemType))}</option>`)
     .join("");
 
   return `
@@ -945,9 +1449,9 @@ function renderElementList(cfg, selected, typeOptions) {
     .join("");
   const addMonitorSelect = MONITOR_ELEMENT_TYPES.has(state.addItemType)
     ? `
-      <label>监控项
+      <label>采集项
         <select data-ui-field="addItemMonitor" ${state.monitorOptions.length === 0 ? "disabled" : ""}>
-          ${addMonitorOptions || '<option value="">(none)</option>'}
+          ${addMonitorOptions || '<option value="">（无）</option>'}
         </select>
       </label>
     `
@@ -983,10 +1487,10 @@ function renderElementEditor(item) {
   }
 
   const typeOptions = (state.meta?.item_types || ELEMENT_TYPES)
-    .map((itemType) => `<option value="${escapeAttr(itemType)}" ${item.type === itemType ? "selected" : ""}>${escapeHTML(itemType)}</option>`)
+    .map((itemType) => `<option value="${escapeAttr(itemType)}" ${item.type === itemType ? "selected" : ""}>${escapeHTML(itemTypeDisplayName(itemType))}</option>`)
     .join("");
 
-  const monitorOptions = ["<option value=\"\">(none)</option>"]
+  const monitorOptions = ["<option value=\"\">（无）</option>"]
     .concat(
       state.monitorOptions.map(
         (name) => `<option value=\"${escapeAttr(name)}\" ${item.monitor === name ? "selected" : ""}>${escapeHTML(monitorDisplayName(name))}</option>`,
@@ -994,135 +1498,184 @@ function renderElementEditor(item) {
     )
     .join("");
 
+  const isMonitorType = MONITOR_ELEMENT_TYPES.has(item.type);
+  const isLabelType = LABEL_ELEMENT_TYPES.has(item.type);
+
   return `
     <h3>元素编辑</h3>
     <div class="editor-block">
-      <h4>基础信息</h4>
-      <div class="grid base-row">
-        ${itemTextField("edit_ui_name", item.edit_ui_name)}
-        <div class="field"><label>type</label><select data-item-field="type">${typeOptions}</select></div>
-        ${MONITOR_ELEMENT_TYPES.has(item.type) ? `<div class="field"><label>monitor</label><select data-item-field="monitor">${monitorOptions}</select></div>` : ""}
-      </div>
-    </div>
-    <div class="editor-block">
-      <h4>布局</h4>
-      <div class="xywh-row">
-        ${itemNumberField("x", item.x)}
-        ${itemNumberField("y", item.y)}
-        ${itemNumberField("width", item.width)}
-        ${itemNumberField("height", item.height)}
-      </div>
-    </div>
-
-    ${LABEL_ELEMENT_TYPES.has(item.type) ? renderLabelEditorBlock(item) : ""}
-    ${MONITOR_ELEMENT_TYPES.has(item.type) ? renderMonitorEditorBlock(item) : ""}
-    ${SHAPE_ELEMENT_TYPES.has(item.type) ? renderShapeEditorBlock(item) : ""}
-
-  `;
-}
-
-function renderLabelEditorBlock(item) {
-  return `
-    <div class="editor-block">
-      <h4>标签属性</h4>
-      <div class="grid monitor-main-row compact-row">
-        ${itemTextField("text", item.text, "compact-lg")}
+      <h4>基础属性</h4>
+      <div class="grid compact-row base-compact-row">
+        ${itemTextField("edit_ui_name", item.edit_ui_name, "compact-grow")}
+        <div class="field compact-md"><label>${itemFieldDisplayName("type")}</label><select data-item-field="type">${typeOptions}</select></div>
+        ${isMonitorType ? `<div class="field compact-grow"><label>${itemFieldDisplayName("monitor")}</label><select data-item-field="monitor">${monitorOptions}</select></div>` : ""}
+        ${isLabelType ? itemTextField("text", item.text, "compact-grow") : ""}
+        ${itemNumberField("x", item.x, "compact-xs")}
+        ${itemNumberField("y", item.y, "compact-xs")}
+        ${itemNumberField("width", item.width, "compact-xs")}
+        ${itemNumberField("height", item.height, "compact-xs")}
         ${itemNumberField("font_size", item.font_size, "compact-sm")}
-      </div>
-      <div class="grid label-appearance-row compact-row">
+        ${isMonitorType ? itemTextField("unit", item.unit || "auto", "compact-md") : ""}
+        ${isMonitorType ? itemNumberField("unit_font_size", item.unit_font_size, "compact-sm") : ""}
         ${itemColorField("color", item.color, "compact-color")}
+        ${isMonitorType ? itemColorField("unit_color", item.unit_color, "compact-color") : ""}
         ${itemColorField("bg", item.bg, "compact-color")}
         ${itemColorField("border_color", item.border_color, "compact-color")}
         ${itemNumberField("border_width", item.border_width, "compact-sm")}
         ${itemNumberField("radius", item.radius, "compact-sm")}
       </div>
     </div>
+    ${renderExtensionEditor(item)}
   `;
 }
 
-function renderMonitorEditorBlock(item) {
+function renderExtensionEditor(item) {
   const thresholdMode = Array.isArray(item.thresholds) && item.thresholds.length === 4 ? "custom" : "default";
   const colorMode = Array.isArray(item.level_colors) && item.level_colors.length === 4 ? "custom" : "default";
-  const isProgressLike = item.type === "progress" || item.type === "line_chart";
-  const isChart = item.type === "line_chart";
-  const isProgress = item.type === "progress";
-  const typeLabel = isChart ? "line_chart" : (isProgress ? "progress" : "value");
+  const isSimpleChart = item.type === "simple_line_chart";
+  const extensionParts = [];
 
-  return `
-    <div class="editor-block">
-      <h4>监控属性</h4>
-      <div class="editor-group-title">通用</div>
-      <div class="grid monitor-main-row compact-row">
-        ${itemNumberField("font_size", item.font_size, "compact-sm")}
-        ${itemTextField("unit", item.unit || "auto", "compact-md")}
-        ${itemNumberField("unit_font_size", item.unit_font_size, "compact-sm")}
-        ${itemColorField("color", item.color, "compact-color")}
-        ${itemColorField("unit_color", item.unit_color, "compact-color")}
+  if (RANGE_ELEMENT_TYPES.has(item.type)) {
+    extensionParts.push(`
+      <div class="grid compact-row ext-compact-row">
+        ${itemNumberField("min_value", item.min_value, "compact-sm")}
+        ${itemNumberField("max_value", item.max_value, "compact-sm")}
+        ${isSimpleChart
+          ? itemNumberField("point_size", item.point_size ?? state.config?.history_size ?? 150, "compact-sm")
+          : itemNumberField("max", item.max, "compact-sm")}
       </div>
+    `);
+  }
 
-      ${isProgressLike ? `
-        <div class="editor-group-title">${escapeHTML(typeLabel)} 专属</div>
-        <div class="grid monitor-range-row compact-row">
-          ${itemNumberField("min_value", item.min_value, "compact-sm")}
-          ${itemNumberField("max_value", item.max_value, "compact-sm")}
-          ${isProgress ? itemNumberField("max", item.max, "compact-sm") : itemNumberField("point_size", item.point_size ?? state.config?.history_size ?? 150, "compact-sm")}
-        </div>
-      ` : ""}
-
-      <div class="editor-group-title">外观</div>
-      <div class="grid appearance-row compact-row">
-        ${itemColorField("bg", item.bg, "compact-color")}
-        ${itemColorField("border_color", item.border_color, "compact-color")}
-        ${itemNumberField("border_width", item.border_width, "compact-sm")}
-        ${itemNumberField("radius", item.radius, "compact-sm")}
-      </div>
-      <div class="editor-group-title">等级</div>
-      <div class="grid mode-row">
-        <div class="field"><label>阈值模式</label>
+  if (MONITOR_ELEMENT_TYPES.has(item.type)) {
+    extensionParts.push(`
+      <div class="grid compact-row ext-compact-row">
+        <div class="field compact-md"><label>阈值配置</label>
           <select data-item-field="threshold_mode">
-            <option value="default" ${thresholdMode === "default" ? "selected" : ""}>使用默认阈值</option>
-            <option value="custom" ${thresholdMode === "custom" ? "selected" : ""}>自定义阈值</option>
+            <option value="default" ${thresholdMode === "default" ? "selected" : ""}>使用默认</option>
+            <option value="custom" ${thresholdMode === "custom" ? "selected" : ""}>自定义</option>
           </select>
         </div>
-        <div class="field"><label>颜色模式</label>
+        <div class="field compact-md"><label>等级色配置</label>
           <select data-item-field="level_color_mode">
-            <option value="default" ${colorMode === "default" ? "selected" : ""}>使用默认等级色</option>
-            <option value="custom" ${colorMode === "custom" ? "selected" : ""}>自定义等级色</option>
+            <option value="default" ${colorMode === "default" ? "selected" : ""}>使用默认</option>
+            <option value="custom" ${colorMode === "custom" ? "selected" : ""}>自定义</option>
           </select>
         </div>
       </div>
-
-      ${thresholdMode === "custom" ? `
-        <div class="grid-4">
+    `);
+    if (thresholdMode === "custom") {
+      extensionParts.push(`
+        <div class="grid compact-row ext-compact-row">
           ${itemThresholdField(0, item.thresholds?.[0])}
           ${itemThresholdField(1, item.thresholds?.[1])}
           ${itemThresholdField(2, item.thresholds?.[2])}
           ${itemThresholdField(3, item.thresholds?.[3])}
         </div>
-      ` : ""}
-
-      ${colorMode === "custom" ? `
-        <div class="grid-4">
+      `);
+    }
+    if (colorMode === "custom") {
+      extensionParts.push(`
+        <div class="grid compact-row ext-compact-row">
           ${itemLevelColorField(0, item.level_colors?.[0])}
           ${itemLevelColorField(1, item.level_colors?.[1])}
           ${itemLevelColorField(2, item.level_colors?.[2])}
           ${itemLevelColorField(3, item.level_colors?.[3])}
         </div>
-      ` : ""}
+      `);
+    }
+  }
+
+  if (isFullElementType(item.type)) {
+    extensionParts.push(renderFullExtensionContent(item));
+  }
+
+  if (extensionParts.length === 0) {
+    return "";
+  }
+
+  return `
+    <div class="editor-block">
+      <h4>扩展属性</h4>
+      ${extensionParts.join("")}
     </div>
   `;
 }
 
-function renderShapeEditorBlock(item) {
+function renderFullExtensionContent(item) {
+  const attrs = ensureItemRenderAttrs(item);
+  const schema = [...FULL_COMMON_ATTR_SCHEMAS, ...(FULL_TYPE_ATTR_SCHEMAS[item.type] || [])];
+  const attrFields = schema.map((spec) => renderFullAttrField(spec, attrs[spec.key])).join("");
+  const titleValue = String(attrs.title ?? "");
+  const titleFontSize = attrs.title_font_size ?? "";
   return `
-    <div class="editor-block">
-      <h4>图形属性</h4>
-      <div class="grid shape-row compact-row">
-        ${itemColorField("bg", item.bg, "compact-color")}
-        ${itemColorField("border_color", item.border_color, "compact-color")}
-        ${itemNumberField("border_width", item.border_width, "compact-sm")}
-        ${itemNumberField("radius", item.radius, "compact-sm")}
+    <div class="grid compact-row full-attrs-grid ext-compact-row">
+      <div class="field compact-grow">
+        <label>标题</label>
+        <input data-item-attr-field="title" data-item-attr-kind="text" value="${escapeAttr(titleValue)}" placeholder="留空则使用采集项名称" />
       </div>
+      <div class="field compact-sm">
+        <label>标题字号</label>
+        <input type="number" data-item-attr-field="title_font_size" data-item-attr-kind="number" value="${escapeAttr(titleFontSize)}" />
+      </div>
+      ${attrFields}
+    </div>
+  `;
+}
+
+function renderFullAttrField(spec, value) {
+  const key = String(spec?.key || "").trim();
+  if (!key) return "";
+  const label = escapeHTML(spec.label || key);
+  const kind = spec.kind || "text";
+  if (kind === "bool") {
+    const boolValue = value === true || String(value).toLowerCase() === "true";
+    return `
+      <div class="field compact-md">
+        <label>${label}</label>
+        <select data-item-attr-field="${escapeAttr(key)}" data-item-attr-kind="bool">
+          <option value="false" ${boolValue ? "" : "selected"}>关闭</option>
+          <option value="true" ${boolValue ? "selected" : ""}>开启</option>
+        </select>
+      </div>
+    `;
+  }
+  if (kind === "select") {
+    const options = Array.isArray(spec.options) ? spec.options : [];
+    const selected = String(value ?? "");
+    const optionHTML = options
+      .map((opt) => `<option value="${escapeAttr(opt)}" ${selected === String(opt) ? "selected" : ""}>${escapeHTML(fullAttrOptionDisplayName(opt))}</option>`)
+      .join("");
+    return `
+      <div class="field compact-md">
+        <label>${label}</label>
+        <select data-item-attr-field="${escapeAttr(key)}" data-item-attr-kind="select">
+          ${optionHTML}
+        </select>
+      </div>
+    `;
+  }
+  if (kind === "number") {
+    return `
+      <div class="field compact-sm">
+        <label>${label}</label>
+        <input type="number" data-item-attr-field="${escapeAttr(key)}" data-item-attr-kind="number" value="${escapeAttr(value ?? "")}" />
+      </div>
+    `;
+  }
+  if (kind === "color") {
+    const colorValue = String(value || "");
+    return `
+      <div class="field compact-color">
+        <label>${label}</label>
+        <input data-item-attr-field="${escapeAttr(key)}" data-item-attr-kind="text" value="${escapeAttr(colorValue)}" placeholder="#1f2937" />
+      </div>
+    `;
+  }
+  return `
+    <div class="field compact-md">
+      <label>${label}</label>
+      <input data-item-attr-field="${escapeAttr(key)}" data-item-attr-kind="text" value="${escapeAttr(value ?? "")}" />
     </div>
   `;
 }
@@ -1219,11 +1772,11 @@ function renderCustomTab(cfg) {
   return `
     <div class="layout-single">
       <div class="panel">
-        <h3>自定义监控项</h3>
+        <h3>自定义采集项</h3>
         <div class="inline-actions">
-          <button data-action="add-custom">添加自定义监控项</button>
+          <button data-action="add-custom">添加自定义采集项</button>
         </div>
-        ${content || '<div class="notice">暂无自定义监控项</div>'}
+        ${content || '<div class="notice">暂无自定义采集项</div>'}
       </div>
     </div>
   `;
@@ -1234,7 +1787,7 @@ function renderLibreCustom(index, monitor) {
     .filter((name) => String(name).startsWith("libre_"))
     .map((name) => ({ name, label: monitorDisplayName(name) }));
   const selected = String(monitor.source || "");
-  const sensorOptions = ["<option value=\"\">(none)</option>"]
+  const sensorOptions = ["<option value=\"\">（无）</option>"]
     .concat(
       options.map((item) => {
         const optionLabel = item.label || item.name || "unnamed";
@@ -1254,7 +1807,7 @@ function renderCoolerControlCustom(index, monitor) {
     .filter((name) => String(name).startsWith("coolercontrol_"))
     .map((name) => ({ name, label: monitorDisplayName(name) }));
   const selected = String(monitor.source || "");
-  const sourceOptions = ["<option value=\"\">(none)</option>"]
+  const sourceOptions = ["<option value=\"\">（无）</option>"]
     .concat(
       options.map((item) => {
         const optionLabel = item.label || item.name || "unnamed";
@@ -1275,21 +1828,73 @@ function renderCollectionTab() {
     <div class="layout-single collection-layout">
       <div class="panel collection-panel">
         <div class="collection-top">
-          <h3>采集信息</h3>
+          <h3>采集运行态</h3>
           <div class="runtime-meta">
             <span>模式: <strong id="runtime-mode">${escapeHTML(getRuntimeModeText())}</strong></span>
             <span>更新时间: <strong id="runtime-updated">${escapeHTML(formatTimestamp(state.snapshot?.updated_at))}</strong></span>
-            <span>监控项: <strong id="runtime-count">${Object.keys(state.snapshot?.values || {}).length}</strong></span>
+            <span>采集项: <strong id="runtime-count">${Object.keys(state.snapshot?.values || {}).length}</strong></span>
           </div>
           <div class="inline-actions">
             <button data-action="refresh-snapshot">立即刷新</button>
           </div>
-          <div class="notice">页面活跃时每 2 秒抓全量监控，30 秒无请求自动回到按配置采集。</div>
+          <div class="notice">页面活跃时每 2 秒抓全量采集项，30 秒无请求自动回到按配置采集。</div>
         </div>
+        <div class="collector-panel" id="collector-panel">${renderCollectorRows()}</div>
         <div class="runtime-monitor-stats" id="runtime-monitor-stats">${renderRuntimeMonitorStats()}</div>
         <div class="collection-list" id="runtime-values">${renderRuntimeValueRows()}</div>
       </div>
     </div>
+  `;
+}
+
+function normalizeCollectors(payload) {
+  const list = Array.isArray(payload?.items) ? payload.items : [];
+  return list
+    .map((item) => ({
+      name: String(item?.name || "").trim(),
+      enabled: !!item?.enabled,
+    }))
+    .filter((item) => item.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function refreshCollectors() {
+  state.collectorsLoading = true;
+  try {
+    const payload = await api("/api/collectors");
+    state.collectors = normalizeCollectors(payload);
+  } catch (_) {
+    state.collectors = [];
+  } finally {
+    state.collectorsLoading = false;
+  }
+}
+
+function renderCollectorRows() {
+  if (state.collectorsLoading && (!state.collectors || state.collectors.length === 0)) {
+    return '<div class="notice">采集器状态加载中...</div>';
+  }
+  const items = Array.isArray(state.collectors) ? state.collectors : [];
+  if (items.length === 0) {
+    return '<div class="notice">暂无采集器信息</div>';
+  }
+  const enabledCount = items.filter((item) => item.enabled).length;
+  const rows = items
+    .map((item) => {
+      const stateText = item.enabled ? "enabled" : "disabled";
+      return `<div class="collector-row">
+        <span class="collector-name" title="${escapeAttr(item.name)}">${escapeHTML(collectorDisplayName(item.name))}</span>
+        <span class="collector-key">${escapeHTML(item.name)}</span>
+        <span class="collector-state ${item.enabled ? "on" : "off"}">${stateText}</span>
+      </div>`;
+    })
+    .join("");
+  return `
+    <div class="collector-header">
+      <strong>采集器状态</strong>
+      <span>${enabledCount}/${items.length} 已启用</span>
+    </div>
+    <div class="collector-list">${rows}</div>
   `;
 }
 
@@ -1417,21 +2022,24 @@ function fieldCheckbox(field, label, checked = false) {
 
 function itemTextField(field, value, className = "") {
   const cls = className ? `field ${className}` : "field";
-  return `<div class="${cls}"><label>${field}</label><input data-item-field="${field}" data-item-kind="text" value="${escapeAttr(value ?? "")}" /></div>`;
+  const label = itemFieldDisplayName(field);
+  return `<div class="${cls}"><label>${label}</label><input data-item-field="${field}" data-item-kind="text" value="${escapeAttr(value ?? "")}" /></div>`;
 }
 
 function itemNumberField(field, value, className = "") {
   const cls = className ? `field ${className}` : "field";
-  return `<div class="${cls}"><label>${field}</label><input type="number" data-item-field="${field}" data-item-kind="nullable-number" value="${escapeAttr(value ?? "")}" /></div>`;
+  const label = itemFieldDisplayName(field);
+  return `<div class="${cls}"><label>${label}</label><input type="number" data-item-field="${field}" data-item-kind="nullable-number" value="${escapeAttr(value ?? "")}" /></div>`;
 }
 
 function itemColorField(field, value, className = "") {
   const cls = className ? `field ${className}` : "field";
+  const label = itemFieldDisplayName(field);
   return `
     <div class="${cls}">
-      <label>${field}</label>
+      <label>${label}</label>
       <div class="color-input-row color-picker-row">
-        <button type="button" class="color-picker-trigger" aria-label="${escapeAttr(field)}"></button>
+        <button type="button" class="color-picker-trigger" aria-label="${escapeAttr(label)}"></button>
         <input type="color" class="native-color-input" data-item-field="${field}" data-item-kind="color" value="${escapeColor(value)}" />
         <input type="number" class="native-alpha-input" min="0" max="1" step="0.01" data-item-alpha-field="${field}" data-item-kind="alpha" value="${escapeAlpha(value)}" />
       </div>
@@ -1560,7 +2168,7 @@ function clampAllItemsToBounds() {
 
 function parseColorValue(value) {
   const raw = String(value || "").trim();
-  if (!raw) return { hex: "#000000", alpha: 0 };
+  if (!raw) return { hex: "#000000", alpha: 1 };
 
   const rgbaMatch = raw.match(/^rgba?\((.+)\)$/i);
   if (rgbaMatch) {
@@ -1604,7 +2212,7 @@ function parseColorValue(value) {
       .toLowerCase();
     return { hex: `#${expanded}`, alpha: 1 };
   }
-  return { hex: "#000000", alpha: 0 };
+  return { hex: "#000000", alpha: 1 };
 }
 
 function colorWithAlpha(hexColor, alphaValue) {
@@ -2326,6 +2934,9 @@ function updateRuntimePanelDOM() {
   const runtimeMonitorEl = document.getElementById("runtime-monitor-stats");
   if (runtimeMonitorEl) runtimeMonitorEl.innerHTML = renderRuntimeMonitorStats();
 
+  const collectorEl = document.getElementById("collector-panel");
+  if (collectorEl) collectorEl.innerHTML = renderCollectorRows();
+
   const list = document.getElementById("runtime-values");
   if (list) list.innerHTML = renderRuntimeValueRows();
 }
@@ -2412,14 +3023,16 @@ function stopPolling() {
 
 async function init() {
   try {
-    const [metaRes, configRes, profilesRes] = await Promise.all([
+    const [metaRes, configRes, profilesRes, collectorsRes] = await Promise.all([
       api("/api/meta"),
       api("/api/config"),
       api("/api/profiles").catch(() => ({ items: [], active: "default" })),
+      api("/api/collectors").catch(() => ({ items: [] })),
     ]);
 
     state.meta = metaRes;
     applyProfilesPayload(profilesRes);
+    state.collectors = normalizeCollectors(collectorsRes);
     state.editingProfile = state.meta?.active_profile || state.profiles?.[0]?.name || "default";
     state.config = ensureConfig(configRes.config);
     refreshSelectedItem();
@@ -2520,6 +3133,18 @@ app.addEventListener("input", (event) => {
         state.drag = null;
         state.ui.centerGuides = null;
       }
+    } else if (field === "autoApply") {
+      state.ui.autoApply = !!target.checked;
+      if (state.ui.autoApply) {
+        scheduleAutoApply(0);
+      } else {
+        clearAutoApplyTimer();
+      }
+    } else if (field === "autoApplyDelay") {
+      state.ui.autoApplyDelay = normalizeAutoApplyDelay(target.value);
+      if (state.ui.autoApply && state.dirty) {
+        scheduleAutoApply();
+      }
     } else if (field === "previewZoomAuto") {
       state.ui.previewZoomAuto = !!target.checked;
       if (!state.ui.previewZoomAuto) {
@@ -2544,6 +3169,25 @@ app.addEventListener("input", (event) => {
   if (isEditingProfileReadOnly()) {
     setError("内置只读配置，请先复制");
     render();
+    return;
+  }
+
+  if (target.dataset.collectorName) {
+    const collectorName = String(target.dataset.collectorName || "").trim();
+    const kind = String(target.dataset.collectorKind || "").trim();
+    if (!collectorName || !kind) return;
+    const entry = ensureCollectorConfigEntry(state.config, collectorName);
+    if (kind === "enabled") {
+      entry.enabled = !!target.checked;
+    } else if (kind === "option") {
+      const optionKey = String(target.dataset.collectorOption || "").trim();
+      if (!optionKey) return;
+      entry.options[optionKey] = String(target.value ?? "");
+    } else {
+      return;
+    }
+    syncLegacyCollectorFields(state.config);
+    markDirty();
     return;
   }
 
@@ -2693,6 +3337,29 @@ app.addEventListener("input", (event) => {
     return;
   }
 
+  if (target.dataset.itemAttrField) {
+    const item = state.config.items[state.selectedItem];
+    if (!item) return;
+    const attrs = ensureItemRenderAttrs(item);
+    const key = String(target.dataset.itemAttrField || "").trim();
+    if (!key) return;
+    const kind = target.dataset.itemAttrKind || "text";
+    if (kind === "number") {
+      if (target.value === "") {
+        delete attrs[key];
+      } else {
+        attrs[key] = Number(target.value);
+      }
+    } else if (kind === "bool") {
+      attrs[key] = target.value === "true";
+    } else {
+      attrs[key] = target.value;
+    }
+    markDirty();
+    updatePreviewDOM();
+    return;
+  }
+
   if (target.dataset.itemField) {
     const item = state.config.items[state.selectedItem];
     if (!item) return;
@@ -2723,9 +3390,23 @@ app.addEventListener("input", (event) => {
     }
 
     if (field === "type") {
+      const nextType = normalizeItemType(target.value);
+      const nextSeed = createItemByType(nextType);
+      if (MONITOR_ELEMENT_TYPES.has(nextType) && item.monitor) {
+        nextSeed.monitor = item.monitor;
+      }
+      if (MONITOR_ELEMENT_TYPES.has(nextType) && item.unit) {
+        nextSeed.unit = item.unit;
+      }
+      if (isFullElementType(nextType) && isFullElementType(item.type)) {
+        nextSeed.render_attrs_map = {
+          ...nextSeed.render_attrs_map,
+          ...normalizeRenderAttrsMap(item.render_attrs_map),
+        };
+      }
       const next = normalizeItem(
         {
-          ...createItemByType(target.value),
+          ...nextSeed,
           x: item.x,
           y: item.y,
           width: item.width,
@@ -2744,7 +3425,7 @@ app.addEventListener("input", (event) => {
 
     if (field === "point_size") {
       item.point_size = Math.max(10, num(target.value, state.config?.history_size || 150));
-      item.history = item.type === "line_chart";
+      item.history = item.type === "simple_line_chart";
       ensureItemName(item, state.selectedItem);
       markDirty();
       updatePreviewDOM();
@@ -2792,6 +3473,10 @@ app.addEventListener("change", async (event) => {
   if (target.id === "profile-select") {
     const name = String(target.value || "").trim();
     if (!name || name === state.editingProfile) return;
+    if (!confirmDiscardUnsavedChanges()) {
+      target.value = state.editingProfile;
+      return;
+    }
 
     try {
       await flushAutoSave();
@@ -2808,7 +3493,7 @@ app.addEventListener("change", async (event) => {
       clearDirty();
       setError("");
       render();
-      schedulePreviewSync(true);
+      void syncPreviewConfig();
     } catch (error) {
       setError(`切换编辑配置失败: ${error.message}`);
       render();
@@ -2870,6 +3555,9 @@ app.addEventListener("click", async (event) => {
     if (["basic", "elements", "custom", "collection"].includes(tab)) {
       state.activeTab = tab;
       render();
+      if (tab === "collection") {
+        void refreshCollectors().then(() => updateRuntimePanelDOM());
+      }
     }
     return;
   }
@@ -2891,6 +3579,22 @@ app.addEventListener("click", async (event) => {
     if (autoToggle) {
       autoToggle.checked = false;
     }
+    return;
+  }
+
+  if (action === "save-profile") {
+    if (isEditingProfileReadOnly()) {
+      setError("内置只读配置，请先复制");
+      render();
+      return;
+    }
+    try {
+      await saveAndApplyPreview();
+      setError("");
+    } catch (error) {
+      setError(`保存失败: ${error.message}`);
+    }
+    render();
     return;
   }
 
@@ -2983,7 +3687,7 @@ app.addEventListener("click", async (event) => {
       state.config.name = profileName;
       clearDirty();
       setError("");
-      schedulePreviewSync(true);
+      void syncPreviewConfig();
     } catch (error) {
       setError(error.message);
     }
@@ -3012,7 +3716,7 @@ app.addEventListener("click", async (event) => {
       state.config.name = profileName;
       clearDirty();
       setError("");
-      schedulePreviewSync(true);
+      void syncPreviewConfig();
     } catch (error) {
       setError(error.message);
     }
@@ -3061,6 +3765,7 @@ app.addEventListener("click", async (event) => {
   if (action === "delete-profile") {
     const name = state.editingProfile || selectedProfileName();
     if (!name) return;
+    if (!confirmDiscardUnsavedChanges()) return;
     if (!window.confirm(`确认删除配置 ${name} ?`)) return;
 
     try {
@@ -3228,10 +3933,7 @@ window.addEventListener("beforeunload", () => {
   destroyColorPickers();
   stopPolling();
   stopRuntimeStream();
-  if (state.previewSyncTimer) {
-    window.clearTimeout(state.previewSyncTimer);
-    state.previewSyncTimer = null;
-  }
+  clearAutoApplyTimer();
   if (state.previewFetchTimer) {
     window.clearTimeout(state.previewFetchTimer);
     state.previewFetchTimer = null;

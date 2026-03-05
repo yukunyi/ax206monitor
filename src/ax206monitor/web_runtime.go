@@ -25,7 +25,7 @@ type WebSnapshotResponse struct {
 	UpdatedAt      string                            `json:"updated_at"`
 	Monitors       []string                          `json:"monitors"`
 	Values         map[string]WebMonitorSnapshotItem `json:"values"`
-	MonitorRuntime *MonitorRegistryStats             `json:"monitor_runtime,omitempty"`
+	MonitorRuntime *CollectorManagerStats            `json:"monitor_runtime,omitempty"`
 }
 
 type WebRuntime struct {
@@ -35,7 +35,7 @@ type WebRuntime struct {
 	fontCache     *FontCache
 	config        *MonitorConfig
 	required      []string
-	registry      *MonitorRegistry
+	registry      *CollectorManager
 	renderManager *RenderManager
 	outputManager *OutputManager
 	outputHasMem  bool
@@ -157,12 +157,12 @@ func (r *WebRuntime) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) e
 	configCopy := cloneMonitorConfig(cfg)
 	normalizeMonitorConfig(configCopy)
 
-	SetGlobalMonitorConfig(configCopy)
-	ResetGlobalMonitorRegistry()
+	SetGlobalCollectorConfig(configCopy)
+	ResetGlobalCollectorManager()
 	initializeCache()
 
 	required := getRequiredMonitors(configCopy)
-	registry := GetMonitorRegistryWithConfig(required, configCopy.GetNetworkInterface())
+	registry := GetCollectorManagerWithConfig(required, configCopy.GetNetworkInterface())
 	renderManager := NewRenderManager(r.fontCache, registry)
 
 	targetOutputTypes := resolveOutputTypes(configCopy, forceMemImg)
@@ -245,7 +245,7 @@ func (r *WebRuntime) maybeProbeDataSources(cfg *MonitorConfig) {
 
 	if shouldProbeCC {
 		username := cfg.GetCoolerControlUsername()
-		password := cfg.CoolerControlPassword
+		password := cfg.GetCoolerControlPassword()
 		go func(url, user, pass string) {
 			options, err := GetCoolerControlClient(url, user, pass).ListMonitorOptions()
 			if err != nil {
@@ -303,10 +303,7 @@ func (r *WebRuntime) loop() {
 			continue
 		}
 
-		refreshInterval := time.Duration(cfg.RefreshInterval) * time.Millisecond
-		if refreshInterval <= 0 {
-			refreshInterval = time.Second
-		}
+		refreshInterval := time.Second
 		if !lastRender.IsZero() && time.Since(lastRender) < refreshInterval {
 			continue
 		}
@@ -358,7 +355,7 @@ func (r *WebRuntime) Snapshot() WebSnapshotResponse {
 		}
 		if monitor.IsAvailable() {
 			if value := monitor.GetValue(); value != nil {
-				item.Text = FormatMonitorValue(value, true, "")
+				item.Text = FormatCollectValue(value, true, "")
 				item.Unit = value.Unit
 			}
 		}
@@ -386,7 +383,7 @@ func (r *WebRuntime) Snapshot() WebSnapshotResponse {
 	}
 }
 
-func (r *WebRuntime) MonitorStats() *MonitorRegistryStats {
+func (r *WebRuntime) MonitorStats() *CollectorManagerStats {
 	_, _, registry, _, _, _ := r.getRuntimeRefs()
 	if registry == nil {
 		return nil
@@ -407,6 +404,30 @@ func (r *WebRuntime) AllMonitorNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (r *WebRuntime) CollectorNames() []string {
+	_, _, registry, _, _, _ := r.getRuntimeRefs()
+	if registry == nil {
+		return []string{}
+	}
+	return registry.CollectorNames()
+}
+
+func (r *WebRuntime) CollectorStates() map[string]bool {
+	_, _, registry, _, _, _ := r.getRuntimeRefs()
+	if registry == nil {
+		return map[string]bool{}
+	}
+	return registry.CollectorStates()
+}
+
+func (r *WebRuntime) SetCollectorEnabled(name string, enabled bool) bool {
+	_, _, registry, _, _, _ := r.getRuntimeRefs()
+	if registry == nil {
+		return false
+	}
+	return registry.SetCollectorEnabled(name, enabled)
 }
 
 func (r *WebRuntime) CurrentConfig() *MonitorConfig {
@@ -441,10 +462,10 @@ func (r *WebRuntime) Close() {
 	if oldRegistry != nil {
 		oldRegistry.Close()
 	}
-	ResetGlobalMonitorRegistry()
+	ResetGlobalCollectorManager()
 }
 
-func (r *WebRuntime) getRuntimeRefs() (*MonitorConfig, []string, *MonitorRegistry, *RenderManager, *OutputManager, bool) {
+func (r *WebRuntime) getRuntimeRefs() (*MonitorConfig, []string, *CollectorManager, *RenderManager, *OutputManager, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	requiredCopy := append([]string(nil), r.required...)
@@ -502,24 +523,24 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 	}
 
 	explicit := map[string]string{
-		"cpu_usage":             "CPU usage",
-		"cpu_temp":              "CPU temperature",
-		"cpu_freq":              "CPU frequency",
-		"cpu_model":             "CPU model",
-		"cpu_cores":             "CPU cores",
-		"memory_usage":          "Memory usage",
-		"memory_used":           "Memory used",
-		"memory_total":          "Memory total",
-		"memory_usage_text":     "Memory usage detail",
-		"memory_usage_progress": "Memory usage progress",
-		"swap_usage":            "Swap usage",
-		"load_avg":              "System load average",
-		"current_time":          "Current time",
-		"rtss_fps":              "RTSS FPS",
-		"rtss_frametime_ms":     "RTSS frame time",
-		"rtss_max_fps":          "RTSS max FPS",
-		"rtss_active_apps":      "RTSS active apps",
-		"rtss_foreground_pid":   "RTSS foreground PID",
+		"go_native.cpu.usage":             "CPU usage",
+		"go_native.cpu.temp":              "CPU temperature",
+		"go_native.cpu.freq":              "CPU frequency",
+		"go_native.cpu.model":             "CPU model",
+		"go_native.cpu.cores":             "CPU cores",
+		"go_native.memory.usage":          "Memory usage",
+		"go_native.memory.used":           "Memory used",
+		"go_native.memory.total":          "Memory total",
+		"go_native.memory.usage_text":     "Memory usage detail",
+		"go_native.memory.usage_progress": "Memory usage progress",
+		"go_native.memory.swap_usage":     "Swap usage",
+		"go_native.system.load_avg":       "System load average",
+		"go_native.system.current_time":   "Current time",
+		"rtss_fps":                        "RTSS FPS",
+		"rtss_frametime_ms":               "RTSS frame time",
+		"rtss_max_fps":                    "RTSS max FPS",
+		"rtss_active_apps":                "RTSS active apps",
+		"rtss_foreground_pid":             "RTSS foreground PID",
 	}
 
 	for name, item := range values {
@@ -535,9 +556,9 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 	}
 
 	for name, item := range values {
-		index, suffix, ok := parseIndexedWebMonitor(name, "net")
+		index, suffix, ok := parseGoNativeIndexedWebMonitor(name, "go_native.net.")
 		if ok {
-			iface := resolveIndexedMonitorAnchor(values, "net", index, "interface")
+			iface := resolveGoNativeIndexedMonitorAnchor(values, "go_native.net.", index, "interface")
 			if iface == "" {
 				iface = "net" + itoa(index)
 			}
@@ -555,9 +576,9 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 			continue
 		}
 
-		index, suffix, ok = parseIndexedWebMonitor(name, "disk")
+		index, suffix, ok = parseGoNativeIndexedWebMonitor(name, "go_native.disk.")
 		if ok {
-			diskName := resolveIndexedMonitorAnchor(values, "disk", index, "name")
+			diskName := resolveGoNativeIndexedMonitorAnchor(values, "go_native.disk.", index, "name")
 			if diskName == "" {
 				diskName = "disk" + itoa(index)
 			}
@@ -574,28 +595,29 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 	}
 }
 
-func parseIndexedWebMonitor(name, prefix string) (int, string, bool) {
-	if !strings.HasPrefix(name, prefix) {
+func parseGoNativeIndexedWebMonitor(name, basePrefix string) (int, string, bool) {
+	if !strings.HasPrefix(name, basePrefix) {
 		return 0, "", false
 	}
-	underscore := strings.IndexByte(name, '_')
-	if underscore <= len(prefix) {
+	rest := strings.TrimPrefix(name, basePrefix)
+	parts := strings.Split(rest, ".")
+	if len(parts) != 2 {
 		return 0, "", false
 	}
-	indexText := name[len(prefix):underscore]
+	indexText := parts[0]
 	index := atoi(indexText)
 	if index <= 0 {
 		return 0, "", false
 	}
-	suffix := name[underscore+1:]
+	suffix := parts[1]
 	if suffix == "" {
 		return 0, "", false
 	}
 	return index, suffix, true
 }
 
-func resolveIndexedMonitorAnchor(values map[string]WebMonitorSnapshotItem, prefix string, index int, anchor string) string {
-	key := prefix + itoa(index) + "_" + anchor
+func resolveGoNativeIndexedMonitorAnchor(values map[string]WebMonitorSnapshotItem, basePrefix string, index int, anchor string) string {
+	key := basePrefix + itoa(index) + "." + anchor
 	item, ok := values[key]
 	if !ok {
 		return ""

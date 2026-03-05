@@ -88,7 +88,7 @@ func loadFontCache() (*FontCache, error) {
 }
 
 func findSystemFont() string {
-	if cfg := GetGlobalMonitorConfig(); cfg != nil {
+	if cfg := GetGlobalCollectorConfig(); cfg != nil {
 		preferred := make([]string, 0, len(cfg.FontFamilies)+1)
 		if strings.TrimSpace(cfg.GetDefaultFontName()) != "" {
 			preferred = append(preferred, cfg.GetDefaultFontName())

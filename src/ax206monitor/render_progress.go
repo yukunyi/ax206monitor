@@ -11,10 +11,10 @@ func NewProgressRenderer() *ProgressRenderer {
 }
 
 func (p *ProgressRenderer) GetType() string {
-	return "progress"
+	return itemTypeSimpleProgress
 }
 
-func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	monitor := registry.Get(item.Monitor)
 	if monitor == nil || !monitor.IsAvailable() {
 		return nil
@@ -70,7 +70,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Mo
 		dc.Fill()
 	}
 
-	valueText, unitText := FormatMonitorValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
 	fontSize := resolveItemFontSize(item, config, 14)
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 	textColor := config.GetDefaultTextColor()

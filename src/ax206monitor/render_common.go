@@ -230,8 +230,11 @@ func resolveItemBackground(item *ItemConfig, config *MonitorConfig) string {
 	if strings.TrimSpace(item.Background) != "" {
 		return strings.TrimSpace(item.Background)
 	}
-	if item != nil && (item.Type == "rect" || item.Type == "circle") {
+	if item != nil && isShapeItemType(item.Type) {
 		return "#33415566"
+	}
+	if item != nil && isFullItemType(item.Type) {
+		return "#111827c8"
 	}
 	_ = config
 	return ""
@@ -258,7 +261,7 @@ func resolveUnitOverride(item *ItemConfig) string {
 	return unit
 }
 
-func resolveMonitorColor(item *ItemConfig, monitor MonitorItem, config *MonitorConfig) string {
+func resolveMonitorColor(item *ItemConfig, monitor *CollectItem, config *MonitorConfig) string {
 	if strings.TrimSpace(item.Color) != "" {
 		return strings.TrimSpace(item.Color)
 	}

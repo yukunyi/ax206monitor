@@ -105,21 +105,14 @@ func main() {
 	configSource := userConfigPath
 
 	// Set global config for monitor system
-	SetGlobalMonitorConfig(config)
+	SetGlobalCollectorConfig(config)
 
 	// Initialize system information cache and print details
 	initializeCache()
 
-	// Initialize network interface manager early (non-blocking)
 	networkInterface := config.GetNetworkInterface()
-	if networkInterface == "" || networkInterface == "auto" {
-		logInfo("Initializing network interface detection (async)...")
-		manager := GetNetworkInterfaceManager()
-		manager.TryRefreshAsync()
-	}
-
 	requiredMonitors := getRequiredMonitors(config)
-	registry := GetMonitorRegistryWithConfig(requiredMonitors, networkInterface)
+	registry := GetCollectorManagerWithConfig(requiredMonitors, networkInterface)
 
 	// New: dump mode - print all monitors and exit
 	if *dumpSecondsFlag > 0 {
@@ -143,7 +136,7 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 			doneCh := make(chan struct{}, len(items))
 			for _, it := range items {
-				go func(m MonitorItem) {
+				go func(m *CollectItem) {
 					defer func() { doneCh <- struct{}{} }()
 					select {
 					case <-ctx.Done():
@@ -172,7 +165,7 @@ func main() {
 				val := "-"
 				if it != nil && it.IsAvailable() {
 					if mv := it.GetValue(); mv != nil {
-						val = FormatMonitorValue(mv, true, "")
+						val = FormatCollectValue(mv, true, "")
 					}
 				}
 				logInfoModule("dump", "%-28s = %s", name, val)
@@ -195,10 +188,7 @@ func main() {
 	renderManager := NewRenderManager(fontCache, registry)
 	outputManager, outputTypes := buildOutputManager(config, false)
 
-	refreshInterval := time.Duration(config.RefreshInterval) * time.Millisecond
-	if refreshInterval == 0 {
-		refreshInterval = RefreshInterval
-	}
+	refreshInterval := time.Second
 
 	logInfo("started, pid is %d", os.Getpid())
 	logInfo("AX206 Monitor v%s", Version)
@@ -231,9 +221,7 @@ func main() {
 		select {
 		case <-ticker.C:
 			cycleStart := time.Now()
-			cache := GetMonitorCache()
 			noteRenderAccess()
-			cache.StartRender()
 
 			// Monitor update timing
 			updateStart := time.Now()
@@ -375,7 +363,7 @@ func listAllMonitors() {
 	// Initialize system cache first
 	initializeCache()
 
-	registry := GetMonitorRegistry()
+	registry := GetCollectorManager()
 
 	// Wait 2 seconds for data to stabilize
 	fmt.Println("Waiting for data to stabilize...")
@@ -421,7 +409,7 @@ func listAllMonitors() {
 		if monitor.IsAvailable() {
 			monitorValue := monitor.GetValue()
 			if monitorValue != nil {
-				value = FormatMonitorValue(monitorValue, true, "")
+				value = FormatCollectValue(monitorValue, true, "")
 			}
 		}
 

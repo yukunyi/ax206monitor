@@ -9,10 +9,10 @@ func NewLabelRenderer() *LabelRenderer {
 }
 
 func (r *LabelRenderer) GetType() string {
-	return "label"
+	return itemTypeSimpleLabel
 }
 
-func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	_ = registry
 	if item.Text == "" {
 		return nil

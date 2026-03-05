@@ -17,10 +17,10 @@ func NewLineChartRenderer() *LineChartRenderer {
 }
 
 func (c *LineChartRenderer) GetType() string {
-	return "line_chart"
+	return itemTypeSimpleChart
 }
 
-func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	monitor := registry.Get(item.Monitor)
 	if monitor == nil || !monitor.IsAvailable() {
 		return nil

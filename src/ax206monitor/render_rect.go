@@ -9,10 +9,10 @@ func NewRectRenderer() *RectRenderer {
 }
 
 func (r *RectRenderer) GetType() string {
-	return "rect"
+	return itemTypeSimpleRect
 }
 
-func (r *RectRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (r *RectRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	_ = registry
 	_ = fontCache
 

@@ -369,7 +369,14 @@ func (c *LibreHardwareMonitorClient) GetMonitorValueByName(name string) (float64
 	if err := c.FetchData(); err != nil {
 		return 0, "", false, err
 	}
+	return c.GetMonitorValueByNameCached(monitorName)
+}
 
+func (c *LibreHardwareMonitorClient) GetMonitorValueByNameCached(name string) (float64, string, bool, error) {
+	monitorName := strings.TrimSpace(name)
+	if monitorName == "" {
+		return 0, "", false, fmt.Errorf("monitor name is required")
+	}
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	sensorID, ok := c.sensorMap[monitorName]
@@ -465,7 +472,7 @@ func libreUniqueName(base string, used map[string]int) string {
 }
 
 func buildLibreMonitorLabel(sensor LibreHardwareMonitorSensorSnapshot) string {
-	parts := []string{"LibreHardwareMonitor"}
+	parts := make([]string, 0, 4)
 	if device := libreDeviceFromSensorID(sensor.SensorID); device != "" {
 		parts = append(parts, device)
 	}
@@ -476,6 +483,9 @@ func buildLibreMonitorLabel(sensor LibreHardwareMonitorSensorSnapshot) string {
 		parts = append(parts, sensor.Name)
 	} else if strings.TrimSpace(sensor.SensorID) != "" {
 		parts = append(parts, sensor.SensorID)
+	}
+	if len(parts) == 0 {
+		return "Monitor"
 	}
 	return strings.Join(parts, " ")
 }

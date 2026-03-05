@@ -114,6 +114,28 @@ func (c *RTSSClient) GetMonitorValueByName(name string) (float64, string, bool, 
 	return value, entry.Unit, available, nil
 }
 
+func (c *RTSSClient) RefreshMetrics(maxAge time.Duration) bool {
+	_, connected := c.getFreshMetrics(maxAge)
+	return connected
+}
+
+func (c *RTSSClient) GetMonitorValueByNameCached(name string) (float64, string, bool, error) {
+	normalized := normalizeRTSSMonitorName(name)
+	entry, ok := findRTSSEntry(normalized)
+	if !ok {
+		return 0, "", false, nil
+	}
+	c.mu.RLock()
+	metrics := c.metrics
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return 0, entry.Unit, false, nil
+	}
+	value, available := entry.read(metrics)
+	return value, entry.Unit, available, nil
+}
+
 func (c *RTSSClient) getFreshMetrics(maxAge time.Duration) (rtss.Metrics, bool) {
 	now := time.Now()
 	c.mu.RLock()

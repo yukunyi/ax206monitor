@@ -21,13 +21,13 @@
   "output_types": ["memimg"],
   "refresh_interval": 1000,
   "history_size": 150,
-  "network_interface": "auto",
+  "network_interface": "",
   "custom_monitors": [],
   "items": [
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "1_cpu_usage",
-      "monitor": "cpu_usage",
+      "monitor": "go_native.cpu.usage",
       "unit": "auto",
       "x": 8,
       "y": 8,
@@ -40,9 +40,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "2_cpu_temp",
-      "monitor": "cpu_temp",
+      "monitor": "go_native.cpu.temp",
       "unit": "auto",
       "x": 124,
       "y": 8,
@@ -55,9 +55,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "3_cpu_freq",
-      "monitor": "cpu_freq",
+      "monitor": "go_native.cpu.freq",
       "unit": "auto",
       "x": 240,
       "y": 8,
@@ -70,9 +70,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "4_memory_usage",
-      "monitor": "memory_usage",
+      "monitor": "go_native.memory.usage",
       "unit": "auto",
       "x": 356,
       "y": 8,
@@ -85,7 +85,7 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "5_gpu_usage",
       "monitor": "gpu_usage",
       "unit": "auto",
@@ -100,7 +100,7 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "6_gpu_temp",
       "monitor": "gpu_temp",
       "unit": "auto",
@@ -115,7 +115,7 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "7_gpu_freq",
       "monitor": "gpu_freq",
       "unit": "auto",
@@ -130,9 +130,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "8_load_avg",
-      "monitor": "load_avg",
+      "monitor": "go_native.system.load_avg",
       "unit": "auto",
       "x": 356,
       "y": 48,
@@ -145,9 +145,9 @@
       "radius": 8
     },
     {
-      "type": "line_chart",
+      "type": "simple_line_chart",
       "edit_ui_name": "9_cpu_chart",
-      "monitor": "cpu_usage",
+      "monitor": "go_native.cpu.usage",
       "unit": "auto",
       "x": 8,
       "y": 88,
@@ -159,7 +159,7 @@
       "radius": 8
     },
     {
-      "type": "line_chart",
+      "type": "simple_line_chart",
       "edit_ui_name": "10_gpu_chart",
       "monitor": "gpu_usage",
       "unit": "auto",
@@ -173,9 +173,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "11_disk1_name",
-      "monitor": "disk1_name",
+      "monitor": "go_native.disk.1.name",
       "unit": "auto",
       "x": 8,
       "y": 178,
@@ -188,9 +188,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "12_disk1_temp",
-      "monitor": "disk1_temp",
+      "monitor": "go_native.disk.1.temp",
       "unit": "auto",
       "x": 242,
       "y": 178,
@@ -203,9 +203,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "13_disk2_name",
-      "monitor": "disk2_name",
+      "monitor": "go_native.disk.2.name",
       "unit": "auto",
       "x": 8,
       "y": 212,
@@ -218,9 +218,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "14_disk2_temp",
-      "monitor": "disk2_temp",
+      "monitor": "go_native.disk.2.temp",
       "unit": "auto",
       "x": 242,
       "y": 212,
@@ -233,9 +233,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "15_net1_interface",
-      "monitor": "net1_interface",
+      "monitor": "go_native.net.1.interface",
       "unit": "auto",
       "x": 8,
       "y": 246,
@@ -248,9 +248,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "16_net1_ip",
-      "monitor": "net1_ip",
+      "monitor": "go_native.net.1.ip",
       "unit": "auto",
       "x": 162,
       "y": 246,
@@ -263,9 +263,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "17_net1_upload",
-      "monitor": "net1_upload",
+      "monitor": "go_native.net.1.upload",
       "unit": "auto",
       "x": 376,
       "y": 246,
@@ -278,9 +278,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "18_net1_download",
-      "monitor": "net1_download",
+      "monitor": "go_native.net.1.download",
       "unit": "auto",
       "x": 8,
       "y": 280,
@@ -293,9 +293,9 @@
       "radius": 8
     },
     {
-      "type": "value",
+      "type": "simple_value",
       "edit_ui_name": "19_current_time",
-      "monitor": "current_time",
+      "monitor": "go_native.system.current_time",
       "unit": "auto",
       "x": 166,
       "y": 280,

@@ -7,17 +7,17 @@ import (
 )
 
 type RenderItem interface {
-	Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error
+	Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error
 	GetType() string
 }
 
 type RenderManager struct {
 	renderers map[string]RenderItem
 	fontCache *FontCache
-	registry  *MonitorRegistry
+	registry  *CollectorManager
 }
 
-func NewRenderManager(fontCache *FontCache, registry *MonitorRegistry) *RenderManager {
+func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderManager {
 	rm := &RenderManager{
 		renderers: make(map[string]RenderItem),
 		fontCache: fontCache,
@@ -30,6 +30,11 @@ func NewRenderManager(fontCache *FontCache, registry *MonitorRegistry) *RenderMa
 	rm.RegisterRenderer(NewLabelRenderer())
 	rm.RegisterRenderer(NewRectRenderer())
 	rm.RegisterRenderer(NewCircleRenderer())
+
+	fullHistory := newFullHistoryStore()
+	for _, itemType := range fullItemTypes {
+		rm.RegisterRenderer(NewFullWidgetRenderer(itemType, fullHistory))
+	}
 
 	return rm
 }

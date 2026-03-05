@@ -9,10 +9,10 @@ func NewCircleRenderer() *CircleRenderer {
 }
 
 func (r *CircleRenderer) GetType() string {
-	return "circle"
+	return itemTypeSimpleCircle
 }
 
-func (r *CircleRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (r *CircleRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	_ = registry
 	_ = fontCache
 

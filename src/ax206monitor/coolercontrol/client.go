@@ -282,6 +282,14 @@ func (c *CoolerControlClient) GetMonitorValueByName(name string) (float64, strin
 	if _, err := c.FetchSnapshot(); err != nil {
 		return 0, "", false, err
 	}
+	return c.GetMonitorValueByNameCached(monitorName)
+}
+
+func (c *CoolerControlClient) GetMonitorValueByNameCached(name string) (float64, string, bool, error) {
+	monitorName := strings.TrimSpace(name)
+	if monitorName == "" {
+		return 0, "", false, fmt.Errorf("monitor name is required")
+	}
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	if entry, ok := c.valueMap[monitorName]; ok {
@@ -1011,7 +1019,7 @@ func coolerControlBuildShortLabel(deviceLabel string, metricText string) string 
 	if kind == "CPU" {
 		model := coolerControlExtractCPUModel(device)
 		tail := coolerControlTrimLeadingToken(metric, "CPU")
-		parts := []string{"[CC]", "CPU"}
+		parts := []string{"CPU"}
 		if model != "" {
 			parts = append(parts, model)
 		}
@@ -1038,7 +1046,7 @@ func coolerControlBuildShortLabel(deviceLabel string, metricText string) string 
 			}
 		}
 		tail := coolerControlTrimLeadingToken(metric, "GPU")
-		parts := []string{"[CC]"}
+		parts := []string{}
 		if prefix != "" {
 			parts = append(parts, prefix)
 		}
@@ -1050,12 +1058,12 @@ func coolerControlBuildShortLabel(deviceLabel string, metricText string) string 
 	}
 
 	if metric != "" {
-		return "[CC] " + metric
+		return metric
 	}
 	if device != "" {
-		return "[CC] " + device
+		return device
 	}
-	return "[CC]"
+	return "CoolerControl"
 }
 
 func BuildShortLabel(deviceLabel string, metricText string) string {

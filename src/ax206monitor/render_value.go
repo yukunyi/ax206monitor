@@ -9,10 +9,10 @@ func NewValueRenderer() *ValueRenderer {
 }
 
 func (v *ValueRenderer) GetType() string {
-	return "value"
+	return itemTypeSimpleValue
 }
 
-func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *MonitorRegistry, fontCache *FontCache, config *MonitorConfig) error {
+func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	monitor := registry.Get(item.Monitor)
 	if monitor == nil || !monitor.IsAvailable() {
 		return nil
@@ -25,7 +25,7 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Monit
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
 	value := monitor.GetValue()
-	valueText, unitText := FormatMonitorValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
 	fontSize := resolveItemFontSize(item, config, 16)
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 
