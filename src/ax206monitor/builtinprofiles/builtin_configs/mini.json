@@ -21,7 +21,6 @@
   "output_types": ["memimg"],
   "refresh_interval": 1000,
   "history_size": 150,
-  "network_interface": "",
   "custom_monitors": [],
   "items": [
     {

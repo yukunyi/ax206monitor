@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"sort"
 	"strings"
 	"sync"
@@ -49,10 +50,20 @@ type WebRuntime struct {
 	modeFull     bool
 	updatedAt    time.Time
 	realtimeConn int32
+	lastEpoch    int64
+
+	outputChan chan webOutputFrame
+	outputWg   sync.WaitGroup
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	stopped  chan struct{}
+}
+
+type webOutputFrame struct {
+	img        image.Image
+	enqueuedAt time.Time
+	modeFull   bool
 }
 
 func NewWebRuntime(cfg *MonitorConfig) (*WebRuntime, error) {
@@ -64,6 +75,7 @@ func NewWebRuntime(cfg *MonitorConfig) (*WebRuntime, error) {
 	runtime := &WebRuntime{
 		fontCache:     fontCache,
 		previewOutput: NewMemImgOutputHandler(),
+		outputChan:    make(chan webOutputFrame, 1),
 		stopCh:        make(chan struct{}),
 		stopped:       make(chan struct{}),
 	}
@@ -72,6 +84,8 @@ func NewWebRuntime(cfg *MonitorConfig) (*WebRuntime, error) {
 		return nil, err
 	}
 
+	runtime.outputWg.Add(1)
+	go runtime.outputLoop()
 	go runtime.loop()
 	return runtime, nil
 }
@@ -86,7 +100,7 @@ func (r *WebRuntime) ApplyConfig(cfg *MonitorConfig) error {
 	if err := r.applyConfigInternal(cfg, false); err != nil {
 		return err
 	}
-	_ = r.renderOnce(true)
+	_, _ = r.renderOnce(true)
 	return nil
 }
 
@@ -95,7 +109,8 @@ func (r *WebRuntime) ApplyPreviewConfig(cfg *MonitorConfig) error {
 	if err := r.applyConfigInternal(cfg, false); err != nil {
 		return err
 	}
-	return r.renderOnce(true)
+	_, err := r.renderOnce(true)
+	return err
 }
 
 func (r *WebRuntime) SetRealtimeConnectionCount(count int) {
@@ -111,39 +126,71 @@ func (r *WebRuntime) SetIdleConfigProvider(provider func() (*MonitorConfig, erro
 	r.mu.Unlock()
 }
 
-func (r *WebRuntime) renderOnce(forceFull bool) error {
+func (r *WebRuntime) outputLoop() {
+	defer r.outputWg.Done()
+	for frame := range r.outputChan {
+		_, _, _, _, outputManager, outputHasMem := r.getRuntimeRefs()
+		if outputManager == nil || frame.img == nil {
+			continue
+		}
+		outputStart := time.Now()
+		if frame.modeFull && !outputHasMem {
+			if err := r.previewOutput.Output(frame.img); err != nil {
+				logDebugModule("web", "preview output failed: %v", err)
+			}
+		}
+		if err := outputManager.Output(frame.img); err != nil {
+			logDebugModule("web", "runtime output failed: %v", err)
+			continue
+		}
+		queueDelay := outputStart.Sub(frame.enqueuedAt)
+		outputDuration := time.Since(outputStart)
+		logDebugModule("web", "output=%v queue=%v", outputDuration, queueDelay)
+	}
+}
+
+func (r *WebRuntime) renderOnce(forceFull bool) (bool, error) {
 	r.renderMu.Lock()
 	defer r.renderMu.Unlock()
 
 	modeFull := forceFull || r.isFullMode()
 	r.setMode(modeFull)
 
-	cfg, required, registry, renderManager, outputManager, outputHasMem := r.getRuntimeRefs()
-	if cfg == nil || registry == nil || renderManager == nil || outputManager == nil {
-		return nil
+	cfg, _, registry, renderManager, _, _ := r.getRuntimeRefs()
+	if cfg == nil || registry == nil || renderManager == nil {
+		return false, nil
 	}
 
-	if modeFull {
-		_ = registry.UpdateAll()
-	} else {
-		_ = registry.Update(required)
+	waitMax := cfg.GetRenderWaitMaxDuration()
+	currentEpoch := registry.CurrentEpoch()
+	if currentEpoch > r.lastEpoch {
+		waitComplete, waitDuration := registry.WaitForEpoch(currentEpoch, waitMax)
+		logDebugModule("web", "epoch=%d wait=%v complete=%v", currentEpoch, waitDuration, waitComplete)
+		r.lastEpoch = currentEpoch
+	} else if !forceFull {
+		return false, nil
 	}
 
+	renderStartedAt := time.Now()
 	img, err := renderManager.Render(cfg)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if modeFull && !outputHasMem {
-		if err := r.previewOutput.Output(img); err != nil {
-			return err
-		}
-	}
-	if err := outputManager.Output(img); err != nil {
-		return err
+	recordRenderDuration(time.Since(renderStartedAt))
+
+	replaced, ok := enqueueLatestWebFrame(r.outputChan, webOutputFrame{
+		img:        img,
+		enqueuedAt: time.Now(),
+		modeFull:   modeFull,
+	})
+	if !ok {
+		logDebugModule("web", "output queue busy, skip frame")
+	} else if replaced {
+		logDebugModule("web", "output queue replaced stale frame")
 	}
 
 	r.setUpdatedAt(time.Now())
-	return nil
+	return true, nil
 }
 
 func (r *WebRuntime) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error {
@@ -204,6 +251,7 @@ func (r *WebRuntime) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) e
 	r.renderManager = renderManager
 	r.outputManager = outputManager
 	r.outputHasMem = outputHasMem
+	r.lastEpoch = 0
 	r.mu.Unlock()
 
 	if !reuseOutputManager && oldOutputManager != nil {
@@ -225,29 +273,55 @@ func sameStringSlice(a []string, b []string) bool {
 	return true
 }
 
+func enqueueLatestWebFrame(ch chan webOutputFrame, frame webOutputFrame) (bool, bool) {
+	select {
+	case ch <- frame:
+		return false, true
+	default:
+	}
+
+	replaced := false
+	select {
+	case <-ch:
+		replaced = true
+	default:
+	}
+
+	select {
+	case ch <- frame:
+		return replaced, true
+	default:
+		return replaced, false
+	}
+}
+
 func (r *WebRuntime) maybeProbeDataSources(cfg *MonitorConfig) {
 	ccURL := cfg.GetCoolerControlURL()
 	lhmURL := cfg.GetLibreHardwareMonitorURL()
+	ccEnabled := cfg.IsCollectorEnabled("external.coolercontrol", false)
+	lhmEnabled := cfg.IsCollectorEnabled("external.librehardwaremonitor", false)
 
 	shouldProbeCC := false
 	shouldProbeLHM := false
 
 	r.mu.Lock()
-	if ccURL != "" && ccURL != r.lastProbeCC {
+	if !ccEnabled {
+		r.lastProbeCC = ""
+	} else if ccURL != "" && ccURL != r.lastProbeCC {
 		r.lastProbeCC = ccURL
 		shouldProbeCC = true
 	}
-	if lhmURL != "" && lhmURL != r.lastProbeLHM {
+	if !lhmEnabled {
+		r.lastProbeLHM = ""
+	} else if lhmURL != "" && lhmURL != r.lastProbeLHM {
 		r.lastProbeLHM = lhmURL
 		shouldProbeLHM = true
 	}
 	r.mu.Unlock()
 
 	if shouldProbeCC {
-		username := cfg.GetCoolerControlUsername()
-		password := cfg.GetCoolerControlPassword()
-		go func(url, user, pass string) {
-			options, err := GetCoolerControlClient(url, user, pass).ListMonitorOptions()
+		go func(url string, cfg *MonitorConfig) {
+			options, err := listConfiguredCoolerControlOptions(cfg)
 			if err != nil {
 				logWarnModule("web", "coolercontrol probe failed (url=%s): %v", url, err)
 				return
@@ -258,18 +332,18 @@ func (r *WebRuntime) maybeProbeDataSources(cfg *MonitorConfig) {
 				url,
 				len(options),
 			)
-		}(ccURL, username, password)
+		}(ccURL, cfg)
 	}
 
 	if shouldProbeLHM {
-		go func(url string) {
-			items, err := GetLibreHardwareMonitorClient(url).ListMonitorOptions()
+		go func(url string, cfg *MonitorConfig) {
+			items, err := listConfiguredLibreHardwareMonitorOptions(cfg)
 			if err != nil {
 				logWarnModule("web", "librehardwaremonitor probe failed (url=%s): %v", url, err)
 				return
 			}
 			logInfoModule("web", "librehardwaremonitor probe success (url=%s, monitors=%d)", url, len(items))
-		}(lhmURL)
+		}(lhmURL, cfg)
 	}
 }
 
@@ -278,7 +352,6 @@ func (r *WebRuntime) loop() {
 	ticker := time.NewTicker(webTickerInterval)
 	defer ticker.Stop()
 
-	lastRender := time.Time{}
 	lastModeFull := false
 
 	for {
@@ -303,17 +376,11 @@ func (r *WebRuntime) loop() {
 			continue
 		}
 
-		refreshInterval := time.Second
-		if !lastRender.IsZero() && time.Since(lastRender) < refreshInterval {
-			continue
-		}
-
-		if err := r.renderOnce(false); err != nil {
+		_, err := r.renderOnce(false)
+		if err != nil {
 			logDebugModule("web", "render runtime image failed: %v", err)
 			continue
 		}
-
-		lastRender = time.Now()
 	}
 }
 
@@ -326,7 +393,7 @@ func (r *WebRuntime) Snapshot() WebSnapshotResponse {
 	if registry == nil {
 		return WebSnapshotResponse{
 			Mode:      "required",
-			UpdatedAt: time.Now().Format(time.RFC3339),
+			UpdatedAt: time.Now().Format(time.RFC3339Nano),
 			Values:    values,
 		}
 	}
@@ -376,7 +443,7 @@ func (r *WebRuntime) Snapshot() WebSnapshotResponse {
 	_ = cfg
 	return WebSnapshotResponse{
 		Mode:           mode,
-		UpdatedAt:      updatedAt.Format(time.RFC3339),
+		UpdatedAt:      updatedAt.Format(time.RFC3339Nano),
 		Monitors:       names,
 		Values:         values,
 		MonitorRuntime: &monitorStats,
@@ -448,6 +515,8 @@ func (r *WebRuntime) Close() {
 	r.mu.Lock()
 	oldOutputManager := r.outputManager
 	oldRegistry := r.registry
+	outputChan := r.outputChan
+	r.outputChan = nil
 	r.outputManager = nil
 	r.registry = nil
 	r.renderManager = nil
@@ -456,6 +525,10 @@ func (r *WebRuntime) Close() {
 	r.outputHasMem = false
 	r.mu.Unlock()
 
+	if outputChan != nil {
+		close(outputChan)
+	}
+	r.outputWg.Wait()
 	if oldOutputManager != nil {
 		oldOutputManager.Close()
 	}
@@ -492,11 +565,12 @@ func (r *WebRuntime) restoreIdleConfig() {
 		logWarnModule("web", "apply active profile for idle mode failed: %v", err)
 		return
 	}
-	_ = r.renderOnce(false)
+	_, _ = r.renderOnce(false)
 }
 
 func (r *WebRuntime) isFullMode() bool {
-	return atomic.LoadInt32(&r.realtimeConn) > 0
+	_ = atomic.LoadInt32(&r.realtimeConn)
+	return true
 }
 
 func (r *WebRuntime) setMode(modeFull bool) {
@@ -523,24 +597,34 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 	}
 
 	explicit := map[string]string{
-		"go_native.cpu.usage":             "CPU usage",
-		"go_native.cpu.temp":              "CPU temperature",
-		"go_native.cpu.freq":              "CPU frequency",
-		"go_native.cpu.model":             "CPU model",
-		"go_native.cpu.cores":             "CPU cores",
-		"go_native.memory.usage":          "Memory usage",
-		"go_native.memory.used":           "Memory used",
-		"go_native.memory.total":          "Memory total",
-		"go_native.memory.usage_text":     "Memory usage detail",
-		"go_native.memory.usage_progress": "Memory usage progress",
-		"go_native.memory.swap_usage":     "Swap usage",
-		"go_native.system.load_avg":       "System load average",
-		"go_native.system.current_time":   "Current time",
-		"rtss_fps":                        "RTSS FPS",
-		"rtss_frametime_ms":               "RTSS frame time",
-		"rtss_max_fps":                    "RTSS max FPS",
-		"rtss_active_apps":                "RTSS active apps",
-		"rtss_foreground_pid":             "RTSS foreground PID",
+		"go_native.cpu.usage":                     "CPU usage",
+		"go_native.cpu.temp":                      "CPU temperature",
+		"go_native.cpu.freq":                      "CPU frequency",
+		"go_native.cpu.model":                     "CPU model",
+		"go_native.cpu.cores":                     "CPU cores",
+		"go_native.memory.usage":                  "Memory usage",
+		"go_native.memory.used":                   "Memory used",
+		"go_native.memory.total":                  "Memory total",
+		"go_native.memory.usage_text":             "Memory usage detail",
+		"go_native.memory.usage_progress":         "Memory usage progress",
+		"go_native.memory.swap_usage":             "Swap usage",
+		"go_native.system.load_avg":               "System load average",
+		"go_native.system.current_time":           "Current time",
+		"go_native.system.collect.max_ms":         "Collect max ms",
+		"go_native.system.collect.avg_ms":         "Collect avg ms",
+		"go_native.system.render.max_ms":          "Render max ms",
+		"go_native.system.render.avg_ms":          "Render avg ms",
+		"go_native.system.output.max_ms":          "Output max ms",
+		"go_native.system.output.avg_ms":          "Output avg ms",
+		"go_native.system.output.memimg.max_ms":   "Output memimg max ms",
+		"go_native.system.output.memimg.avg_ms":   "Output memimg avg ms",
+		"go_native.system.output.ax206usb.max_ms": "Output ax206usb max ms",
+		"go_native.system.output.ax206usb.avg_ms": "Output ax206usb avg ms",
+		"rtss_fps":            "RTSS FPS",
+		"rtss_frametime_ms":   "RTSS frame time",
+		"rtss_max_fps":        "RTSS max FPS",
+		"rtss_active_apps":    "RTSS active apps",
+		"rtss_foreground_pid": "RTSS foreground PID",
 	}
 
 	for name, item := range values {

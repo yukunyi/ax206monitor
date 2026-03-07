@@ -4,6 +4,7 @@ import (
 	"image"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type OutputHandler interface {
@@ -31,7 +32,11 @@ func (om *OutputManager) Output(img image.Image) error {
 		var lastErr error
 		hasSuccess := false
 		for _, handler := range om.handlers {
-			if err := handler.Output(img); err != nil {
+			startedAt := time.Now()
+			err := handler.Output(img)
+			duration := time.Since(startedAt)
+			recordOutputRuntime(handler.GetType(), duration, err)
+			if err != nil {
 				logWarnModule("output", "%s failed: %v", handler.GetType(), err)
 				lastErr = err
 			} else {
@@ -58,7 +63,11 @@ func (om *OutputManager) Output(img image.Image) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := h.Output(img); err != nil {
+			startedAt := time.Now()
+			err := h.Output(img)
+			duration := time.Since(startedAt)
+			recordOutputRuntime(h.GetType(), duration, err)
+			if err != nil {
 				results <- handlerResult{handlerType: h.GetType(), err: err}
 				return
 			}

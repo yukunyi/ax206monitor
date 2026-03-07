@@ -138,17 +138,9 @@ func RunWebServer(options WebServerOptions) error {
 				"error": err,
 			})
 		}
-		url := cfg.GetCoolerControlURL()
-		if url == "" {
-			return c.JSON(http.StatusOK, map[string]interface{}{"items": []CoolerControlMonitorOption{}})
-		}
-		client := GetCoolerControlClient(
-			url,
-			cfg.GetCoolerControlUsername(),
-			cfg.GetCoolerControlPassword(),
-		)
-		options, err := client.ListMonitorOptions()
+		options, err := listConfiguredCoolerControlOptions(cfg)
 		if err != nil {
+			url := cfg.GetCoolerControlURL()
 			logWarnModule("web", "coolercontrol options request failed (url=%s): %v", url, err)
 			return c.JSON(http.StatusOK, map[string]interface{}{
 				"items": []CoolerControlMonitorOption{},
@@ -172,13 +164,9 @@ func RunWebServer(options WebServerOptions) error {
 				"error": err,
 			})
 		}
-		url := cfg.GetLibreHardwareMonitorURL()
-		if url == "" {
-			return c.JSON(http.StatusOK, map[string]interface{}{"items": []LibreHardwareMonitorMonitorOption{}})
-		}
-		client := GetLibreHardwareMonitorClient(url)
-		items, err := client.ListMonitorOptions()
+		items, err := listConfiguredLibreHardwareMonitorOptions(cfg)
 		if err != nil {
+			url := cfg.GetLibreHardwareMonitorURL()
 			logWarnModule("web", "librehardwaremonitor options request failed (url=%s): %v", url, err)
 			return c.JSON(http.StatusOK, map[string]interface{}{
 				"items": []LibreHardwareMonitorMonitorOption{},
@@ -550,7 +538,7 @@ func collectMonitorNames(config *MonitorConfig, runtimeState *WebRuntime) []stri
 	for _, monitor := range registryConfig.Items {
 		monitorSet[monitor.Name] = struct{}{}
 	}
-	if goruntime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" && config != nil && config.IsCollectorEnabled("external.rtss", false) {
 		for _, option := range rtsssource.GetRTSSClient().ListMonitorOptions() {
 			if strings.TrimSpace(option.Name) == "" {
 				continue
@@ -646,21 +634,25 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 	}
 
 	cfg := &MonitorConfig{
-		Name:              "web",
-		Width:             480,
-		Height:            320,
-		DefaultFont:       "DejaVu Sans Mono",
-		DefaultFontSize:   16,
-		DefaultColor:      "#f8fafc",
-		DefaultBackground: "#0b1220",
-		LevelColors:       []string{"#22c55e", "#eab308", "#f97316", "#ef4444"},
-		DefaultThresholds: []float64{25, 50, 75, 100},
-		FontFamilies:      getDefaultFontFamilies(),
-		OutputTypes:       []string{outputTypeMemImg},
-		RefreshInterval:   1000,
-		HistorySize:       150,
-		NetworkInterface:  "",
-		CustomMonitors:    []CustomMonitorConfig{},
+		Name:                    "web",
+		Width:                   480,
+		Height:                  320,
+		DefaultFont:             "DejaVu Sans Mono",
+		DefaultFontSize:         16,
+		DefaultColor:            "#f8fafc",
+		DefaultBackground:       "#0b1220",
+		LevelColors:             []string{"#22c55e", "#eab308", "#f97316", "#ef4444"},
+		DefaultThresholds:       []float64{25, 50, 75, 100},
+		FontFamilies:            getDefaultFontFamilies(),
+		OutputTypes:             []string{outputTypeMemImg},
+		RefreshInterval:         1000,
+		CollectWarnMS:           100,
+		RenderWaitMaxMS:         300,
+		HistorySize:             150,
+		NetworkInterface:        "",
+		LibreHardwareMonitorURL: defaultLibreHardwareMonitorURL,
+		CoolerControlURL:        defaultCoolerControlURL,
+		CustomMonitors:          []CustomMonitorConfig{},
 		CollectorConfig: map[string]CollectorConfig{
 			"go_native.cpu":                 {Enabled: boolPtr(true), Options: map[string]interface{}{}},
 			"go_native.memory":              {Enabled: boolPtr(true), Options: map[string]interface{}{}},
@@ -668,8 +660,8 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 			"go_native.disk":                {Enabled: boolPtr(true), Options: map[string]interface{}{}},
 			"go_native.network":             {Enabled: boolPtr(true), Options: map[string]interface{}{}},
 			"custom.all":                    {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"external.coolercontrol":        {Enabled: boolPtr(false), Options: map[string]interface{}{}},
-			"external.librehardwaremonitor": {Enabled: boolPtr(false), Options: map[string]interface{}{}},
+			"external.coolercontrol":        {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultCoolerControlURL}},
+			"external.librehardwaremonitor": {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultLibreHardwareMonitorURL}},
 			"external.rtss":                 {Enabled: boolPtr(false), Options: map[string]interface{}{}},
 		},
 		Items: []ItemConfig{
@@ -752,6 +744,30 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.RefreshInterval <= 0 {
 		cfg.RefreshInterval = 1000
 	}
+	if cfg.RefreshInterval < 100 {
+		cfg.RefreshInterval = 100
+	}
+	if cfg.RefreshInterval > 10000 {
+		cfg.RefreshInterval = 10000
+	}
+	if cfg.CollectWarnMS <= 0 {
+		cfg.CollectWarnMS = 100
+	}
+	if cfg.CollectWarnMS < 10 {
+		cfg.CollectWarnMS = 10
+	}
+	if cfg.CollectWarnMS > 10000 {
+		cfg.CollectWarnMS = 10000
+	}
+	if cfg.RenderWaitMaxMS <= 0 {
+		cfg.RenderWaitMaxMS = 300
+	}
+	if cfg.RenderWaitMaxMS < 0 {
+		cfg.RenderWaitMaxMS = 0
+	}
+	if cfg.RenderWaitMaxMS > cfg.RefreshInterval {
+		cfg.RenderWaitMaxMS = cfg.RefreshInterval
+	}
 	if cfg.MonitorUpdateWorkers < 0 {
 		cfg.MonitorUpdateWorkers = 0
 	}
@@ -792,6 +808,14 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if strings.EqualFold(cfg.NetworkInterface, "auto") {
 		cfg.NetworkInterface = ""
 	}
+	if strings.TrimSpace(cfg.CoolerControlURL) == "" {
+		cfg.CoolerControlURL = defaultCoolerControlURL
+	}
+	if strings.TrimSpace(cfg.LibreHardwareMonitorURL) == "" {
+		cfg.LibreHardwareMonitorURL = defaultLibreHardwareMonitorURL
+	}
+	setCollectorOptionDefault(cfg, "external.coolercontrol", "url", defaultCoolerControlURL)
+	setCollectorOptionDefault(cfg, "external.librehardwaremonitor", "url", defaultLibreHardwareMonitorURL)
 
 	for idx := range cfg.Items {
 		item := &cfg.Items[idx]
@@ -884,6 +908,28 @@ func ensureCollectorConfigDefault(cfg *MonitorConfig, name string, defaultEnable
 		current.Options = map[string]interface{}{}
 	}
 	cfg.CollectorConfig[name] = current
+}
+
+func setCollectorOptionDefault(cfg *MonitorConfig, collectorName, optionKey, value string) {
+	if cfg == nil || strings.TrimSpace(value) == "" {
+		return
+	}
+	entry, exists := cfg.CollectorConfig[collectorName]
+	if !exists {
+		enabled := false
+		entry = CollectorConfig{
+			Enabled: &enabled,
+			Options: map[string]interface{}{},
+		}
+	}
+	if entry.Options == nil {
+		entry.Options = map[string]interface{}{}
+	}
+	current := strings.TrimSpace(fmt.Sprintf("%v", entry.Options[optionKey]))
+	if current == "" {
+		entry.Options[optionKey] = value
+	}
+	cfg.CollectorConfig[collectorName] = entry
 }
 
 func defaultEditUIName(current string, idx int, item *ItemConfig) string {
@@ -990,7 +1036,7 @@ func (s *ConfigStore) snapshot() WebSnapshotResponse {
 	if s.runtime == nil {
 		return WebSnapshotResponse{
 			Mode:      "required",
-			UpdatedAt: time.Now().Format(time.RFC3339),
+			UpdatedAt: time.Now().Format(time.RFC3339Nano),
 			Monitors:  []string{},
 			Values:    map[string]WebMonitorSnapshotItem{},
 		}

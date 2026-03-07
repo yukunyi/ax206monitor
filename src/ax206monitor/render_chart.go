@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/fogleman/gg"
 )
@@ -56,12 +57,11 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	}
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	if len(history) < 2 {
+	minVal, maxVal, ok := c.getMinMax(history)
+	if !ok {
 		drawItemBorder(dc, item)
 		return nil
 	}
-
-	minVal, maxVal := c.getMinMax(history)
 	if item.MinValue != nil {
 		minVal = *item.MinValue
 	} else if value.Min < minVal {
@@ -92,17 +92,26 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
+	drawnPoints := 0
 	for idx, histValue := range history {
+		if !isFiniteHistoryValue(histValue) {
+			continue
+		}
 		x := chartX
 		if len(history) > 1 {
 			x = chartX + float64(idx)*chartWidth/float64(len(history)-1)
 		}
 		y := chartY + chartHeight - (histValue-minVal)/(maxVal-minVal)*chartHeight
-		if idx == 0 {
+		if drawnPoints == 0 {
 			dc.MoveTo(x, y)
 		} else {
 			dc.LineTo(x, y)
 		}
+		drawnPoints++
+	}
+	if drawnPoints < 2 {
+		drawItemBorder(dc, item)
+		return nil
 	}
 	dc.Stroke()
 
@@ -117,23 +126,60 @@ func (c *LineChartRenderer) getHistoryKey(item *ItemConfig) string {
 
 func (c *LineChartRenderer) updateHistory(key string, value float64, historySize int) {
 	history := c.history[key]
+	if len(history) != historySize {
+		history = resizeChartHistory(history, historySize)
+	}
 	if len(history) == 0 {
-		history = make([]float64, 0, historySize)
+		history = make([]float64, historySize)
+		for idx := range history {
+			history[idx] = math.NaN()
+		}
 	}
-	history = append(history, value)
-	if len(history) > historySize {
-		history = history[len(history)-historySize:]
-	}
+	copy(history, history[1:])
+	history[len(history)-1] = value
 	c.history[key] = history
 }
 
-func (c *LineChartRenderer) getMinMax(values []float64) (float64, float64) {
-	if len(values) == 0 {
-		return 0, 1
+func resizeChartHistory(old []float64, historySize int) []float64 {
+	if historySize < 1 {
+		return []float64{}
 	}
-	minValue := values[0]
-	maxValue := values[0]
-	for _, value := range values[1:] {
+	resized := make([]float64, historySize)
+	for idx := range resized {
+		resized[idx] = math.NaN()
+	}
+	if len(old) == 0 {
+		return resized
+	}
+	copyLen := len(old)
+	if copyLen > historySize {
+		copyLen = historySize
+	}
+	copy(resized[historySize-copyLen:], old[len(old)-copyLen:])
+	return resized
+}
+
+func isFiniteHistoryValue(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func (c *LineChartRenderer) getMinMax(values []float64) (float64, float64, bool) {
+	if len(values) == 0 {
+		return 0, 1, false
+	}
+	minValue := 0.0
+	maxValue := 0.0
+	valid := false
+	for _, value := range values {
+		if !isFiniteHistoryValue(value) {
+			continue
+		}
+		if !valid {
+			minValue = value
+			maxValue = value
+			valid = true
+			continue
+		}
 		if value < minValue {
 			minValue = value
 		}
@@ -141,5 +187,5 @@ func (c *LineChartRenderer) getMinMax(values []float64) (float64, float64) {
 			maxValue = value
 		}
 	}
-	return minValue, maxValue
+	return minValue, maxValue, valid
 }

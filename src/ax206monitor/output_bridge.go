@@ -6,6 +6,8 @@ type OutputHandler = output.OutputHandler
 type OutputManager = output.OutputManager
 type MemImgOutputHandler = output.MemImgOutputHandler
 type AX206USBOutputHandler = output.AX206USBOutputHandler
+type OutputRuntimeStats = output.OutputRuntimeStats
+type OutputHandlerRuntimeStats = output.OutputHandlerRuntimeStats
 
 func NewOutputManager() *OutputManager {
 	return output.NewOutputManager()
@@ -25,4 +27,8 @@ func SetMemImgPNG(data []byte) {
 
 func GetMemImgPNG() ([]byte, bool) {
 	return output.GetMemImgPNG()
+}
+
+func GetOutputRuntimeStats() OutputRuntimeStats {
+	return output.GetRuntimeStats()
 }

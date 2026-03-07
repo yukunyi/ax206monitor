@@ -34,14 +34,6 @@ var simpleItemTypes = []string{
 var fullItemTypes = []string{
 	itemTypeFullChart,
 	itemTypeFullProgress,
-	itemTypeFullGauge,
-	itemTypeFullRing,
-	itemTypeFullMinMax,
-	itemTypeFullDelta,
-	itemTypeFullStatus,
-	itemTypeFullMeterH,
-	itemTypeFullMeterV,
-	itemTypeFullHeatStrip,
 }
 
 var allItemTypes = append(append([]string{}, simpleItemTypes...), fullItemTypes...)
@@ -70,21 +62,11 @@ var rangeItemTypeSet = toItemTypeSet([]string{
 	itemTypeSimpleChart,
 	itemTypeFullChart,
 	itemTypeFullProgress,
-	itemTypeFullGauge,
-	itemTypeFullRing,
-	itemTypeFullMinMax,
-	itemTypeFullDelta,
-	itemTypeFullStatus,
-	itemTypeFullMeterH,
-	itemTypeFullMeterV,
-	itemTypeFullHeatStrip,
 })
 
 var historyItemTypeSet = toItemTypeSet([]string{
 	itemTypeSimpleChart,
 	itemTypeFullChart,
-	itemTypeFullMinMax,
-	itemTypeFullDelta,
 })
 
 var shapeItemTypeSet = toItemTypeSet([]string{

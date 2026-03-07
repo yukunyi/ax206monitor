@@ -29,10 +29,17 @@ func (s *fullHistoryStore) append(key string, value float64, maxLen int) []float
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current := append([]float64{}, s.history[key]...)
-	current = append(current, value)
-	if len(current) > maxLen {
-		current = current[len(current)-maxLen:]
+	if len(current) != maxLen {
+		current = resizeChartHistory(current, maxLen)
 	}
+	if len(current) == 0 {
+		current = make([]float64, maxLen)
+		for idx := range current {
+			current[idx] = math.NaN()
+		}
+	}
+	copy(current, current[1:])
+	current[len(current)-1] = value
 	s.history[key] = current
 	return append([]float64{}, current...)
 }
@@ -302,23 +309,35 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 		lineWidth = 1
 	}
 
+	firstX := 0.0
+	lastX := 0.0
+	validPoints := 0
 	for idx, histValue := range history {
+		if !isFiniteHistoryValue(histValue) {
+			continue
+		}
 		x := body.x
 		if len(history) > 1 {
 			x = body.x + body.w*float64(idx)/float64(len(history)-1)
 		}
 		y := body.y + body.h - ((histValue-minValue)/(maxValue-minValue))*body.h
 		y = clampFloat64(y, body.y, body.y+body.h)
-		if idx == 0 {
+		if validPoints == 0 {
+			firstX = x
 			dc.MoveTo(x, y)
 		} else {
 			dc.LineTo(x, y)
 		}
+		lastX = x
+		validPoints++
+	}
+	if validPoints < 2 {
+		return
 	}
 
 	if fillArea {
-		dc.LineTo(body.x+body.w, body.y+body.h)
-		dc.LineTo(body.x, body.y+body.h)
+		dc.LineTo(lastX, body.y+body.h)
+		dc.LineTo(firstX, body.y+body.h)
 		dc.ClosePath()
 		fill := gg.NewLinearGradient(body.x, body.y, body.x, body.y+body.h)
 		fill.AddColorStop(0, parseColor(applyAlpha(lineColor, 0.34)))
@@ -524,28 +543,33 @@ func (r *FullWidgetRenderer) drawFullMinMax(dc *gg.Context, item *ItemConfig, fo
 
 	dc.SetColor(parseColor(lineColor))
 	dc.SetLineWidth(1.6)
+	validPoints := 0
 	for idx, histValue := range history {
+		if !isFiniteHistoryValue(histValue) {
+			continue
+		}
 		x := chart.x
 		if len(history) > 1 {
 			x = chart.x + chart.w*float64(idx)/float64(len(history)-1)
 		}
 		y := chart.y + chart.h - ((histValue-minVal)/(maxVal-minVal))*chart.h
 		y = clampFloat64(y, chart.y, chart.y+chart.h)
-		if idx == 0 {
+		if validPoints == 0 {
 			dc.MoveTo(x, y)
 		} else {
 			dc.LineTo(x, y)
 		}
+		validPoints++
+	}
+	if validPoints < 2 {
+		return
 	}
 	dc.Stroke()
 }
 
 func (r *FullWidgetRenderer) drawFullDelta(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	history := r.appendHistory(item, numberValue, getItemAttrInt(item, "history_points", 60))
-	previous := numberValue
-	if len(history) > 1 {
-		previous = history[len(history)-2]
-	}
+	previous := findPreviousValidHistoryValue(history, numberValue)
 	delta := numberValue - previous
 
 	minValue, maxValue := resolveRangeValue(item, value, previous-1, previous+1)
@@ -776,11 +800,23 @@ func historyMin(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
-	result := values[0]
-	for _, value := range values[1:] {
+	result := 0.0
+	valid := false
+	for _, value := range values {
+		if !isFiniteHistoryValue(value) {
+			continue
+		}
+		if !valid {
+			result = value
+			valid = true
+			continue
+		}
 		if value < result {
 			result = value
 		}
+	}
+	if !valid {
+		return 0
 	}
 	return result
 }
@@ -789,11 +825,23 @@ func historyMax(values []float64) float64 {
 	if len(values) == 0 {
 		return 1
 	}
-	result := values[0]
-	for _, value := range values[1:] {
+	result := 0.0
+	valid := false
+	for _, value := range values {
+		if !isFiniteHistoryValue(value) {
+			continue
+		}
+		if !valid {
+			result = value
+			valid = true
+			continue
+		}
 		if value > result {
 			result = value
 		}
+	}
+	if !valid {
+		return 1
 	}
 	return result
 }
@@ -803,10 +851,27 @@ func historyAverage(values []float64) float64 {
 		return 0
 	}
 	sum := 0.0
+	count := 0
 	for _, value := range values {
+		if !isFiniteHistoryValue(value) {
+			continue
+		}
 		sum += value
+		count++
 	}
-	return sum / float64(len(values))
+	if count == 0 {
+		return 0
+	}
+	return sum / float64(count)
+}
+
+func findPreviousValidHistoryValue(values []float64, fallback float64) float64 {
+	for idx := len(values) - 2; idx >= 0; idx-- {
+		if isFiniteHistoryValue(values[idx]) {
+			return values[idx]
+		}
+	}
+	return fallback
 }
 
 func applyAlpha(colorText string, alpha float64) string {

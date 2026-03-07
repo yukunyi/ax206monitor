@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	defaultCoolerControlURL        = "http://127.0.0.1:11987"
+	defaultLibreHardwareMonitorURL = "http://127.0.0.1:8085"
+)
+
 type CustomMonitorConfig struct {
 	Name      string   `json:"name"`
 	Label     string   `json:"label,omitempty"`
@@ -62,6 +67,8 @@ type MonitorConfig struct {
 	FontFamilies            []string                   `json:"font_families"`
 	OutputTypes             []string                   `json:"output_types"`
 	RefreshInterval         int                        `json:"refresh_interval"`
+	CollectWarnMS           int                        `json:"collect_warn_ms,omitempty"`
+	RenderWaitMaxMS         int                        `json:"render_wait_max_ms,omitempty"`
 	HistorySize             int                        `json:"history_size,omitempty"`
 	NetworkInterface        string                     `json:"network_interface,omitempty"`
 	EnableRTSSCollect       bool                       `json:"enable_rtss_collect,omitempty"`
@@ -342,6 +349,50 @@ func (config *MonitorConfig) IsRTSSCollectEnabled() bool {
 	return config.EnableRTSSCollect
 }
 
+func (config *MonitorConfig) GetCollectTickDuration() time.Duration {
+	intervalMS := config.RefreshInterval
+	if intervalMS <= 0 {
+		intervalMS = 1000
+	}
+	if intervalMS < 100 {
+		intervalMS = 100
+	}
+	if intervalMS > 10_000 {
+		intervalMS = 10_000
+	}
+	return time.Duration(intervalMS) * time.Millisecond
+}
+
+func (config *MonitorConfig) GetCollectWarnDuration() time.Duration {
+	warnMS := config.CollectWarnMS
+	if warnMS <= 0 {
+		warnMS = 100
+	}
+	if warnMS < 10 {
+		warnMS = 10
+	}
+	if warnMS > 10_000 {
+		warnMS = 10_000
+	}
+	return time.Duration(warnMS) * time.Millisecond
+}
+
+func (config *MonitorConfig) GetRenderWaitMaxDuration() time.Duration {
+	waitMS := config.RenderWaitMaxMS
+	if waitMS <= 0 {
+		waitMS = 300
+	}
+	if waitMS < 0 {
+		waitMS = 0
+	}
+	tick := config.GetCollectTickDuration()
+	maxByTick := int(tick / time.Millisecond)
+	if waitMS > maxByTick {
+		waitMS = maxByTick
+	}
+	return time.Duration(waitMS) * time.Millisecond
+}
+
 func (config *MonitorConfig) GetMonitorUpdateWorkers() int {
 	workers := config.MonitorUpdateWorkers
 	if workers <= 0 {
@@ -428,7 +479,10 @@ func (config *MonitorConfig) GetCoolerControlURL() string {
 	if url := config.GetCollectorStringOption("external.coolercontrol", "url", ""); url != "" {
 		return normalizeEndpointURL(url)
 	}
-	return normalizeEndpointURL(config.CoolerControlURL)
+	if url := normalizeEndpointURL(config.CoolerControlURL); url != "" {
+		return url
+	}
+	return normalizeEndpointURL(defaultCoolerControlURL)
 }
 
 func (config *MonitorConfig) GetCoolerControlUsername() string {
@@ -455,7 +509,10 @@ func (config *MonitorConfig) GetLibreHardwareMonitorURL() string {
 	if url := config.GetCollectorStringOption("external.librehardwaremonitor", "url", ""); url != "" {
 		return normalizeEndpointURL(url)
 	}
-	return normalizeEndpointURL(config.LibreHardwareMonitorURL)
+	if url := normalizeEndpointURL(config.LibreHardwareMonitorURL); url != "" {
+		return url
+	}
+	return normalizeEndpointURL(defaultLibreHardwareMonitorURL)
 }
 
 func (config *MonitorConfig) GetCollectorConfig(name string) CollectorConfig {

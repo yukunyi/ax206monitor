@@ -20,20 +20,28 @@ type CollectValue struct {
 }
 
 type BaseCollectItem struct {
-	name      string
-	label     string
-	value     *CollectValue
-	available bool
-	enabled   bool
-	mutex     sync.RWMutex
+	name        string
+	label       string
+	value       *CollectValue
+	available   bool
+	enabled     bool
+	rateWindow  time.Duration
+	rateSamples []rateSample
+	mutex       sync.RWMutex
+}
+
+type rateSample struct {
+	at    time.Time
+	value float64
 }
 
 func NewBaseCollectItem(name, label string, min, max float64, unit string, precision int) *BaseCollectItem {
 	return &BaseCollectItem{
-		name:      name,
-		label:     label,
-		available: true,
-		enabled:   true,
+		name:       name,
+		label:      label,
+		available:  true,
+		enabled:    true,
+		rateWindow: builtinRateWindow(name, unit),
 		value: &CollectValue{
 			Value:     0.0,
 			Unit:      unit,
@@ -78,13 +86,48 @@ func (b *BaseCollectItem) SetEnabled(enabled bool) {
 func (b *BaseCollectItem) SetValue(value interface{}) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	if b.value == nil {
+		return
+	}
+	if b.rateWindow > 0 {
+		if numeric, ok := toRateFloat64(value); ok {
+			now := time.Now()
+			b.rateSamples = append(b.rateSamples, rateSample{at: now, value: numeric})
+			cutoff := now.Add(-b.rateWindow)
+			total := 0.0
+			validCount := 0
+			writeIndex := 0
+			for _, sample := range b.rateSamples {
+				if sample.at.Before(cutoff) {
+					continue
+				}
+				b.rateSamples[writeIndex] = sample
+				writeIndex++
+				total += sample.value
+				validCount++
+			}
+			b.rateSamples = b.rateSamples[:writeIndex]
+			if validCount > 0 {
+				value = total / float64(validCount)
+			}
+		} else {
+			b.rateSamples = b.rateSamples[:0]
+		}
+	}
 	b.value.Value = value
 }
 
 func (b *BaseCollectItem) SetUnit(unit string) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	if b.value == nil {
+		return
+	}
 	b.value.Unit = unit
+	b.rateWindow = builtinRateWindow(b.name, unit)
+	if b.rateWindow <= 0 {
+		b.rateSamples = nil
+	}
 }
 
 func (b *BaseCollectItem) SetAvailable(available bool) {
@@ -232,6 +275,49 @@ func getFloat64Value(value interface{}) float64 {
 	}
 }
 
+func builtinRateWindow(name, unit string) time.Duration {
+	trimmedName := strings.ToLower(strings.TrimSpace(name))
+	trimmedUnit := strings.ToLower(strings.TrimSpace(unit))
+	if !strings.HasPrefix(trimmedName, "go_native.") {
+		return 0
+	}
+	if strings.Contains(trimmedUnit, "/s") {
+		return 3 * time.Second
+	}
+	return 0
+}
+
+func toRateFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
+
 func defaultMonitorWorkerCount() int {
 	workers := runtime.NumCPU()
 	if workers < 2 {
@@ -280,6 +366,26 @@ type CollectorManagerStats struct {
 	EnabledCollectorCount int `json:"enabled_collector_count"`
 	ItemCount             int `json:"item_count"`
 	EnabledItemCount      int `json:"enabled_item_count"`
+
+	CurrentEpoch          int64 `json:"current_epoch"`
+	LastRenderEpoch       int64 `json:"last_render_epoch"`
+	LastRenderWaitMS      int64 `json:"last_render_wait_ms"`
+	LastRenderComplete    bool  `json:"last_render_complete"`
+	CollectorTimeoutTotal int64 `json:"collector_timeout_total"`
+
+	LastCollectMaxMS int64 `json:"last_collect_max_ms"`
+	LastCollectAvgMS int64 `json:"last_collect_avg_ms"`
+	CollectMaxMS     int64 `json:"collect_max_ms"`
+	CollectAvgMS     int64 `json:"collect_avg_ms"`
+
+	RenderLastMS int64 `json:"render_last_ms"`
+	RenderMaxMS  int64 `json:"render_max_ms"`
+	RenderAvgMS  int64 `json:"render_avg_ms"`
+
+	OutputLastMS int64                                `json:"output_last_ms"`
+	OutputMaxMS  int64                                `json:"output_max_ms"`
+	OutputAvgMS  int64                                `json:"output_avg_ms"`
+	OutputStats  map[string]OutputHandlerRuntimeStats `json:"output_stats,omitempty"`
 }
 
 type CollectorManager struct {
@@ -304,20 +410,61 @@ type CollectorManager struct {
 	totalDropped        int64
 	totalSlow           int64
 	totalCompleted      int64
+	lastCollectMax      time.Duration
+	lastCollectAvg      time.Duration
+	totalCollectNS      int64
+	totalCollectCount   int64
+	collectMax          time.Duration
 
 	closed int32
 	mutex  sync.RWMutex
-	update sync.Mutex
+
+	tickDuration    time.Duration
+	collectWarn     time.Duration
+	renderWaitMax   time.Duration
+	currentEpoch    int64
+	lastRenderEpoch int64
+	lastRenderWait  time.Duration
+	lastRenderFull  bool
+	timeoutTotal    int64
+
+	epochCond   *sync.Cond
+	epochStates map[int64]*collectorEpochState
+	workerChans map[string]chan int64
+	stopCh      chan struct{}
+	stopOnce    sync.Once
+	wg          sync.WaitGroup
+	started     bool
+}
+
+type collectorEpochState struct {
+	doneCh     chan struct{}
+	expected   int
+	completed  int
+	success    int
+	dropped    int
+	slow       int
+	durationNS int64
+	maxNS      int64
+	collectors map[string]struct{}
 }
 
 func NewCollectorManager() *CollectorManager {
-	return &CollectorManager{
+	manager := &CollectorManager{
 		collectors:       make(map[string]Collector),
 		collectorEnabled: make(map[string]bool),
 		items:            make(map[string]*CollectItem),
 		itemToCollector:  make(map[string]string),
 		requiredSet:      make(map[string]struct{}),
+		epochStates:      make(map[int64]*collectorEpochState),
+		workerChans:      make(map[string]chan int64),
+		stopCh:           make(chan struct{}),
+		tickDuration:     time.Second,
+		collectWarn:      100 * time.Millisecond,
+		renderWaitMax:    300 * time.Millisecond,
 	}
+	manager.epochCond = sync.NewCond(&manager.mutex)
+	return manager
 }
 
 func (m *CollectorManager) RegisterCollector(c Collector) {
@@ -524,62 +671,394 @@ func (m *CollectorManager) maybeRetryDiscover(now time.Time) {
 	m.missingRetryNextAt = now.Add(time.Minute)
 }
 
-func (m *CollectorManager) updateOnce() error {
-	if atomic.LoadInt32(&m.closed) == 1 {
-		return nil
+func alignedNextTick(now time.Time, tick time.Duration) time.Time {
+	if tick <= 0 {
+		tick = time.Second
 	}
-	m.update.Lock()
-	defer m.update.Unlock()
+	base := now.Truncate(tick)
+	if !base.After(now) {
+		base = base.Add(tick)
+	}
+	return base
+}
 
-	var firstErr error
-	cycleScheduled := int64(0)
-	cycleDropped := int64(0)
-	cycleSlow := int64(0)
-	cycleCompleted := int64(0)
+func (m *CollectorManager) configureRuntimeFromConfig(cfg *MonitorConfig) {
+	tick := time.Second
+	collectWarn := 100 * time.Millisecond
+	renderWait := 300 * time.Millisecond
+	if cfg != nil {
+		tick = cfg.GetCollectTickDuration()
+		collectWarn = cfg.GetCollectWarnDuration()
+		renderWait = cfg.GetRenderWaitMaxDuration()
+	}
+	if tick <= 0 {
+		tick = time.Second
+	}
+	if collectWarn < 0 {
+		collectWarn = 0
+	}
+	if renderWait < 0 {
+		renderWait = 0
+	}
 
 	m.mutex.Lock()
-	m.setItemEnabledStatesLocked()
-	order := append([]string(nil), m.collectorOrder...)
+	m.tickDuration = tick
+	m.collectWarn = collectWarn
+	m.renderWaitMax = renderWait
 	m.mutex.Unlock()
+}
 
-	for _, collectorName := range order {
-		m.mutex.RLock()
-		enabled := m.collectorEnabled[collectorName]
-		hasEnabled := m.hasEnabledItemsLocked(collectorName)
-		collector := m.collectors[collectorName]
-		m.mutex.RUnlock()
-		if !enabled || !hasEnabled || collector == nil {
-			continue
-		}
-		cycleScheduled++
-		started := time.Now()
-		err := collector.UpdateItems()
-		if time.Since(started) > 500*time.Millisecond {
-			cycleSlow++
-		}
-		if err != nil {
-			cycleDropped++
-			if firstErr == nil {
-				firstErr = err
+func (m *CollectorManager) startCollectorWorkers() {
+	collectors := m.snapshotCollectors()
+	for _, entry := range collectors {
+		entry := entry
+		ch := make(chan int64, 1)
+
+		m.mutex.Lock()
+		m.workerChans[entry.name] = ch
+		m.mutex.Unlock()
+
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			for {
+				select {
+				case <-m.stopCh:
+					return
+				case epochID := <-ch:
+					m.runCollectorEpoch(entry.name, entry.collector, epochID)
+				}
 			}
-			continue
-		}
-		cycleCompleted++
+		}()
+	}
+}
+
+func (m *CollectorManager) runCollectorEpoch(name string, collector Collector, epochID int64) {
+	if collector == nil || epochID <= 0 {
+		return
+	}
+
+	startedAt := time.Now()
+	err := func() (retErr error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				retErr = fmt.Errorf("panic: %v", recovered)
+			}
+		}()
+		return collector.UpdateItems()
+	}()
+	duration := time.Since(startedAt)
+
+	m.mutex.RLock()
+	warnThreshold := m.collectWarn
+	m.mutex.RUnlock()
+
+	slow := duration > warnThreshold && warnThreshold > 0
+	if slow {
+		atomic.AddInt64(&m.timeoutTotal, 1)
+		logWarnModule(
+			"collect",
+			"%s update slow: %v (threshold=%v, epoch=%d)",
+			name,
+			duration,
+			warnThreshold,
+			epochID,
+		)
 	}
 
 	m.mutex.Lock()
-	m.lastWindowScheduled = cycleScheduled
-	m.lastWindowDropped = cycleDropped
-	m.lastWindowSlow = cycleSlow
-	m.lastWindowCompleted = cycleCompleted
-	m.totalScheduled += cycleScheduled
-	m.totalDropped += cycleDropped
-	m.totalSlow += cycleSlow
-	m.totalCompleted += cycleCompleted
+	state := m.epochStates[epochID]
+	if state == nil {
+		m.mutex.Unlock()
+		return
+	}
+	if _, expected := state.collectors[name]; !expected {
+		m.mutex.Unlock()
+		return
+	}
+	delete(state.collectors, name)
+	state.completed++
+	state.durationNS += duration.Nanoseconds()
+	if duration.Nanoseconds() > state.maxNS {
+		state.maxNS = duration.Nanoseconds()
+	}
+	m.totalCollectNS += duration.Nanoseconds()
+	m.totalCollectCount++
+	if duration > m.collectMax {
+		m.collectMax = duration
+	}
+	if slow {
+		state.slow++
+		m.totalSlow++
+	}
+	if err != nil {
+		state.dropped++
+		m.totalDropped++
+		logDebugModule("collect", "%s update failed in epoch %d: %v", name, epochID, err)
+	} else {
+		state.success++
+		m.totalCompleted++
+	}
+	if state.completed >= state.expected {
+		m.lastWindowScheduled = int64(state.expected)
+		m.lastWindowDropped = int64(state.dropped)
+		m.lastWindowSlow = int64(state.slow)
+		m.lastWindowCompleted = int64(state.success)
+		if state.completed > 0 {
+			m.lastCollectMax = time.Duration(state.maxNS)
+			m.lastCollectAvg = time.Duration(state.durationNS / int64(state.completed))
+		}
+		select {
+		case <-state.doneCh:
+		default:
+			close(state.doneCh)
+		}
+	}
 	m.mutex.Unlock()
-	m.maybeRetryDiscover(time.Now())
+}
 
-	return firstErr
+func (m *CollectorManager) snapshotActiveCollectorsLocked() []namedCollector {
+	m.setItemEnabledStatesLocked()
+	result := make([]namedCollector, 0, len(m.collectorOrder))
+	for _, collectorName := range m.collectorOrder {
+		collector := m.collectors[collectorName]
+		if collector == nil {
+			continue
+		}
+		if !m.collectorEnabled[collectorName] {
+			continue
+		}
+		if !m.hasEnabledItemsLocked(collectorName) {
+			continue
+		}
+		result = append(result, namedCollector{name: collectorName, collector: collector})
+	}
+	return result
+}
+
+func trySendLatestEpoch(ch chan int64, epochID int64) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- epochID:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	select {
+	case ch <- epochID:
+	default:
+	}
+}
+
+func (m *CollectorManager) dispatchEpoch(epochID int64, active []namedCollector) {
+	for _, entry := range active {
+		m.mutex.RLock()
+		ch := m.workerChans[entry.name]
+		m.mutex.RUnlock()
+		trySendLatestEpoch(ch, epochID)
+	}
+}
+
+func (m *CollectorManager) pruneEpochStatesLocked(currentEpoch int64) {
+	keepFrom := currentEpoch - 8
+	for epochID := range m.epochStates {
+		if epochID < keepFrom {
+			delete(m.epochStates, epochID)
+		}
+	}
+}
+
+func (m *CollectorManager) runEpochScheduler() {
+	defer m.wg.Done()
+
+	m.mutex.RLock()
+	tick := m.tickDuration
+	m.mutex.RUnlock()
+	nextTick := alignedNextTick(time.Now(), tick)
+	timer := time.NewTimer(time.Until(nextTick))
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-timer.C:
+		}
+
+		now := time.Now()
+		m.mutex.RLock()
+		tick = m.tickDuration
+		m.mutex.RUnlock()
+		if tick <= 0 {
+			tick = time.Second
+		}
+
+		epochID := atomic.AddInt64(&m.currentEpoch, 1)
+		active := func() []namedCollector {
+			m.mutex.Lock()
+			defer m.mutex.Unlock()
+			activeCollectors := m.snapshotActiveCollectorsLocked()
+			state := &collectorEpochState{
+				doneCh:     make(chan struct{}),
+				expected:   len(activeCollectors),
+				collectors: make(map[string]struct{}, len(activeCollectors)),
+			}
+			for _, entry := range activeCollectors {
+				state.collectors[entry.name] = struct{}{}
+			}
+			if state.expected == 0 {
+				close(state.doneCh)
+			}
+			m.epochStates[epochID] = state
+			m.totalScheduled += int64(state.expected)
+			m.pruneEpochStatesLocked(epochID)
+			m.epochCond.Broadcast()
+			return activeCollectors
+		}()
+
+		m.dispatchEpoch(epochID, active)
+		m.maybeRetryDiscover(now)
+
+		nextTick = nextTick.Add(tick)
+		now = time.Now()
+		for !nextTick.After(now) {
+			nextTick = nextTick.Add(tick)
+		}
+		timer.Reset(time.Until(nextTick))
+	}
+}
+
+func (m *CollectorManager) startAsyncIfNeeded() {
+	if atomic.LoadInt32(&m.closed) == 1 {
+		return
+	}
+	m.mutex.Lock()
+	if m.started {
+		m.mutex.Unlock()
+		return
+	}
+	m.started = true
+	m.mutex.Unlock()
+	m.startCollectorWorkers()
+	m.wg.Add(1)
+	go m.runEpochScheduler()
+}
+
+func (m *CollectorManager) WaitForNextEpoch(lastEpoch int64, maxWait time.Duration) (int64, bool, time.Duration) {
+	m.mutex.Lock()
+	for atomic.LoadInt32(&m.closed) == 0 && m.currentEpoch <= lastEpoch {
+		m.epochCond.Wait()
+	}
+	if atomic.LoadInt32(&m.closed) == 1 {
+		m.mutex.Unlock()
+		return lastEpoch, false, 0
+	}
+	epochID := m.currentEpoch
+	state := m.epochStates[epochID]
+	waitDefault := m.renderWaitMax
+	m.mutex.Unlock()
+
+	if maxWait <= 0 {
+		maxWait = waitDefault
+	}
+	if maxWait < 0 {
+		maxWait = 0
+	}
+	if state == nil {
+		return epochID, false, 0
+	}
+
+	waitStart := time.Now()
+	completed := false
+	if maxWait == 0 {
+		select {
+		case <-state.doneCh:
+			completed = true
+		default:
+		}
+	} else {
+		timer := time.NewTimer(maxWait)
+		select {
+		case <-state.doneCh:
+			completed = true
+		case <-timer.C:
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+	waited := time.Since(waitStart)
+
+	m.mutex.Lock()
+	m.lastRenderEpoch = epochID
+	m.lastRenderWait = waited
+	m.lastRenderFull = completed
+	m.mutex.Unlock()
+
+	return epochID, completed, waited
+}
+
+func (m *CollectorManager) CurrentEpoch() int64 {
+	return atomic.LoadInt64(&m.currentEpoch)
+}
+
+func (m *CollectorManager) WaitForEpoch(epochID int64, maxWait time.Duration) (bool, time.Duration) {
+	if epochID <= 0 {
+		return false, 0
+	}
+	m.mutex.RLock()
+	state := m.epochStates[epochID]
+	waitDefault := m.renderWaitMax
+	m.mutex.RUnlock()
+	if state == nil {
+		return false, 0
+	}
+	if maxWait <= 0 {
+		maxWait = waitDefault
+	}
+	if maxWait < 0 {
+		maxWait = 0
+	}
+
+	waitStart := time.Now()
+	completed := false
+	if maxWait == 0 {
+		select {
+		case <-state.doneCh:
+			completed = true
+		default:
+		}
+	} else {
+		timer := time.NewTimer(maxWait)
+		select {
+		case <-state.doneCh:
+			completed = true
+		case <-timer.C:
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+	waited := time.Since(waitStart)
+
+	m.mutex.Lock()
+	m.lastRenderEpoch = epochID
+	m.lastRenderWait = waited
+	m.lastRenderFull = completed
+	m.mutex.Unlock()
+
+	return completed, waited
 }
 
 func (m *CollectorManager) Get(name string) *CollectItem {
@@ -599,14 +1078,18 @@ func (m *CollectorManager) GetAll() map[string]*CollectItem {
 }
 
 func (m *CollectorManager) Update(requiredItems []string) error {
+	m.mutex.Lock()
 	m.modeFull = false
+	m.mutex.Unlock()
 	m.setRequiredItems(requiredItems)
-	return m.updateOnce()
+	return nil
 }
 
 func (m *CollectorManager) UpdateAll() error {
+	m.mutex.Lock()
 	m.modeFull = true
-	return m.updateOnce()
+	m.mutex.Unlock()
+	return nil
 }
 
 func (m *CollectorManager) SetCollectorEnabled(name string, enabled bool) bool {
@@ -656,10 +1139,21 @@ func (m *CollectorManager) Stats() CollectorManagerStats {
 			enabledItemCount++
 		}
 	}
+	queueLen := 0
+	for _, ch := range m.workerChans {
+		queueLen += len(ch)
+	}
+	queueSize := len(m.workerChans)
+	collectAvg := time.Duration(0)
+	if m.totalCollectCount > 0 && m.totalCollectNS > 0 {
+		collectAvg = time.Duration(m.totalCollectNS / m.totalCollectCount)
+	}
+	renderStats := renderRuntimeSnapshot()
+	outputStats := GetOutputRuntimeStats()
 	return CollectorManagerStats{
-		WorkerCount: int(enabledCollectorCount),
-		QueueSize:   0,
-		QueueLen:    0,
+		WorkerCount: len(m.workerChans),
+		QueueSize:   queueSize,
+		QueueLen:    queueLen,
 
 		AutoTune:          false,
 		AutoTuneIntervalS: 0,
@@ -682,11 +1176,40 @@ func (m *CollectorManager) Stats() CollectorManagerStats {
 		EnabledCollectorCount: enabledCollectorCount,
 		ItemCount:             len(m.items),
 		EnabledItemCount:      enabledItemCount,
+
+		CurrentEpoch:          atomic.LoadInt64(&m.currentEpoch),
+		LastRenderEpoch:       m.lastRenderEpoch,
+		LastRenderWaitMS:      m.lastRenderWait.Milliseconds(),
+		LastRenderComplete:    m.lastRenderFull,
+		CollectorTimeoutTotal: atomic.LoadInt64(&m.timeoutTotal),
+
+		LastCollectMaxMS: m.lastCollectMax.Milliseconds(),
+		LastCollectAvgMS: m.lastCollectAvg.Milliseconds(),
+		CollectMaxMS:     m.collectMax.Milliseconds(),
+		CollectAvgMS:     collectAvg.Milliseconds(),
+
+		RenderLastMS: renderStats.LastMS,
+		RenderMaxMS:  renderStats.MaxMS,
+		RenderAvgMS:  renderStats.AvgMS,
+
+		OutputLastMS: outputStats.LastMS,
+		OutputMaxMS:  outputStats.MaxMS,
+		OutputAvgMS:  outputStats.AvgMS,
+		OutputStats:  outputStats.Handlers,
 	}
 }
 
 func (m *CollectorManager) Close() {
-	atomic.StoreInt32(&m.closed, 1)
+	if atomic.SwapInt32(&m.closed, 1) == 1 {
+		return
+	}
+	m.stopOnce.Do(func() {
+		close(m.stopCh)
+	})
+	m.mutex.Lock()
+	m.epochCond.Broadcast()
+	m.mutex.Unlock()
+	m.wg.Wait()
 }
 
 type CollectItemConfig struct {
@@ -713,6 +1236,16 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.memory.swap_usage",
 		"go_native.system.load_avg",
 		"go_native.system.current_time",
+		"go_native.system.collect.max_ms",
+		"go_native.system.collect.avg_ms",
+		"go_native.system.render.max_ms",
+		"go_native.system.render.avg_ms",
+		"go_native.system.output.max_ms",
+		"go_native.system.output.avg_ms",
+		"go_native.system.output.memimg.max_ms",
+		"go_native.system.output.memimg.avg_ms",
+		"go_native.system.output.ax206usb.max_ms",
+		"go_native.system.output.ax206usb.avg_ms",
 	}
 	items := make([]CollectItemConfig, 0, len(names))
 	for _, name := range names {
@@ -760,9 +1293,11 @@ func registerCollectorWithConfig(manager *CollectorManager, cfg *MonitorConfig, 
 
 func newCollectorManagerFromConfig(cfg *MonitorConfig, requiredItems []string) *CollectorManager {
 	manager := NewCollectorManager()
+	manager.modeFull = true
 	manager.setRequiredItems(requiredItems)
+	manager.configureRuntimeFromConfig(cfg)
 	initializeCollectors(manager, cfg)
-	_ = manager.UpdateAll()
+	manager.startAsyncIfNeeded()
 	return manager
 }
 

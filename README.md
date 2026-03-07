@@ -96,10 +96,10 @@ AX206 Monitor now supports a web configuration backend (Echo) and Vite frontend 
 
 ```bash
 # Release mode: serve embedded frontend resources
-./dist/ax206monitor-linux-amd64 --web --port 18086
+AX206_MONITOR_WEB=1 ./dist/ax206monitor-linux-amd64 --port 18086
 
 # Development mode: proxy frontend requests to Vite dev server
-./dist/ax206monitor-linux-amd64 --web --port 18086 --web-dev --vite-url http://127.0.0.1:18087
+AX206_MONITOR_DEV_URL=http://127.0.0.1:18087 ./dist/ax206monitor-linux-amd64 --port 18086
 ```
 
 Open: `http://127.0.0.1:18086`

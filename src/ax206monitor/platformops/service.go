@@ -6,14 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 const serviceName = "ax206monitor"
 
 type ServiceInstallOptions struct {
-	WebMode bool
-	Port    int
 }
 
 type ServiceInstallResult struct {
@@ -21,12 +18,9 @@ type ServiceInstallResult struct {
 	UserMode    bool
 }
 
-func InstallService(options ServiceInstallOptions) (ServiceInstallResult, error) {
+func InstallService(_ ServiceInstallOptions) (ServiceInstallResult, error) {
 	if runtime.GOOS != "linux" {
 		return ServiceInstallResult{}, fmt.Errorf("--install only supports Linux systemd")
-	}
-	if options.Port < 1 || options.Port > 65535 {
-		return ServiceInstallResult{}, fmt.Errorf("invalid --port value: %d", options.Port)
 	}
 
 	execPath, err := os.Executable()
@@ -60,7 +54,7 @@ func InstallService(options ServiceInstallOptions) (ServiceInstallResult, error)
 		return ServiceInstallResult{}, fmt.Errorf("failed to create service directory: %w", err)
 	}
 
-	serviceContent := buildServiceContent(targetBin, homeDir, wantedBy, options)
+	serviceContent := buildServiceContent(targetBin, homeDir, wantedBy)
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0o644); err != nil {
 		return ServiceInstallResult{}, fmt.Errorf("failed to write service file: %w", err)
 	}
@@ -127,12 +121,7 @@ func resolveServicePaths(rootMode bool, homeDir string) (binPath, servicePath, w
 		"default.target"
 }
 
-func buildServiceContent(binaryPath, homeDir, wantedBy string, options ServiceInstallOptions) string {
-	args := []string{binaryPath}
-	if options.WebMode {
-		args = append(args, "--web", "--port", fmt.Sprintf("%d", options.Port))
-	}
-
+func buildServiceContent(binaryPath, homeDir, wantedBy string) string {
 	return fmt.Sprintf(`[Unit]
 Description=AX206 Monitor
 After=network.target
@@ -146,7 +135,7 @@ Environment=HOME=%s
 
 [Install]
 WantedBy=%s
-`, strings.Join(args, " "), homeDir, wantedBy)
+`, binaryPath, homeDir, wantedBy)
 }
 
 func copyExecutable(sourcePath, targetPath string) error {

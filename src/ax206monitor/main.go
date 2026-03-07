@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"image"
@@ -30,10 +29,7 @@ func main() {
 	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
 
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
-	webModeFlag := flag.Bool("web", false, "Start web configuration UI")
-	portFlag := flag.Int("port", 18086, "Web UI listen port")
-	webDevFlag := flag.Bool("web-dev", false, "Enable web frontend development proxy mode")
-	viteURLFlag := flag.String("vite-url", "http://127.0.0.1:18087", "Vite dev server URL for web-dev mode")
+	portFlag := flag.Int("port", 18086, "Web UI listen port (tray/env web mode)")
 	installFlag := flag.Bool("install", false, "Install as systemd service")
 	uninstallFlag := flag.Bool("uninstall", false, "Uninstall systemd service")
 	addUdevRuleFlag := flag.Bool("add-udev-rule", false, "Install AX206 USB udev rule for current user and reload udev")
@@ -49,15 +45,14 @@ func main() {
 	if *installFlag && *uninstallFlag {
 		logFatal("--install and --uninstall cannot be used together")
 	}
-	if *addUdevRuleFlag && (*installFlag || *uninstallFlag || *webModeFlag || *listMonitorsFlag || *dumpSecondsFlag > 0) {
+	if *addUdevRuleFlag && (*installFlag || *uninstallFlag || *listMonitorsFlag || *dumpSecondsFlag > 0) {
 		logFatal("--add-udev-rule cannot be used with other execution flags")
 	}
 
+	webModeEnabled, webDevEnabled, devViteURL := resolveWebModeFromEnv()
+
 	if *installFlag {
-		if err := InstallService(ServiceInstallOptions{
-			WebMode: *webModeFlag,
-			Port:    *portFlag,
-		}); err != nil {
+		if err := InstallService(ServiceInstallOptions{}); err != nil {
 			logFatal("Service install failed: %v", err)
 		}
 		return
@@ -82,12 +77,12 @@ func main() {
 		return
 	}
 
-	if *webModeFlag {
+	if webModeEnabled {
 		logInfoModule("web", "Web mode enabled on port %d", *portFlag)
 		if err := RunWebServer(WebServerOptions{
 			Addr:    fmt.Sprintf("127.0.0.1:%d", *portFlag),
-			DevMode: *webDevFlag,
-			ViteURL: *viteURLFlag,
+			DevMode: webDevEnabled,
+			ViteURL: devViteURL,
 		}); err != nil {
 			logFatal("Web server failed: %v", err)
 		}
@@ -116,7 +111,8 @@ func main() {
 
 	// New: dump mode - print all monitors and exit
 	if *dumpSecondsFlag > 0 {
-		interval := time.Second
+		interval := config.GetCollectTickDuration()
+		waitMax := config.GetRenderWaitMaxDuration()
 		end := time.Now().Add(time.Duration(*dumpSecondsFlag) * time.Second)
 		logInfo("Dumping all monitor values for %d seconds...", *dumpSecondsFlag)
 
@@ -127,39 +123,29 @@ func main() {
 		}
 		sort.Strings(names)
 
+		lastEpoch := int64(0)
 		for frame := 0; time.Now().Before(end); frame++ {
 			noteRenderAccess()
 			start := time.Now()
+			epochID, completed, waitDuration := registry.WaitForNextEpoch(lastEpoch, waitMax)
+			if epochID <= lastEpoch {
+				time.Sleep(10 * time.Millisecond)
+				frame--
+				continue
+			}
+			lastEpoch = epochID
 			items := registry.GetAll()
 
-			// concurrent updates with context timeout per frame
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-			doneCh := make(chan struct{}, len(items))
-			for _, it := range items {
-				go func(m *CollectItem) {
-					defer func() { doneCh <- struct{}{} }()
-					select {
-					case <-ctx.Done():
-						return
-					default:
-						_ = m.Update()
-					}
-				}(it)
-			}
-			// wait for either all or timeout
-			waitCount := 0
-			for waitCount < len(items) {
-				select {
-				case <-doneCh:
-					waitCount++
-				case <-ctx.Done():
-					waitCount = len(items)
-				}
-			}
-			cancel()
-
 			// print
-			logInfoModule("dump", "frame=%d time=%s", frame, time.Now().Format("15:04:05"))
+			logInfoModule(
+				"dump",
+				"frame=%d epoch=%d complete=%v wait=%v time=%s",
+				frame,
+				epochID,
+				completed,
+				waitDuration,
+				time.Now().Format("15:04:05"),
+			)
 			for _, name := range names {
 				it := items[name]
 				val := "-"
@@ -187,20 +173,40 @@ func main() {
 
 	renderManager := NewRenderManager(fontCache, registry)
 	outputManager, outputTypes := buildOutputManager(config, false)
+	webProcessController := NewWebServerProcess(*portFlag, webDevEnabled, devViteURL)
+	if webDevEnabled {
+		if err := webProcessController.Start(); err != nil {
+			logFatal("Web server auto-start failed in dev mode: %v", err)
+		}
+	}
+	trayHandle, trayErr := StartTray(webProcessController)
+	if trayErr != nil || trayHandle == nil {
+		logFatal("Tray startup failed: %v", trayErr)
+	}
+	defer trayHandle.Close()
+	defer func() {
+		if err := webProcessController.Stop(); err != nil {
+			logWarnModule("tray", "Web server stop failed on shutdown: %v", err)
+		}
+	}()
 
-	refreshInterval := time.Second
+	refreshInterval := config.GetCollectTickDuration()
+	renderWaitMax := config.GetRenderWaitMaxDuration()
 
 	logInfo("started, pid is %d", os.Getpid())
 	logInfo("AX206 Monitor v%s", Version)
-	logInfo("Config: %s | Output: %s | Refresh: %v", configSource, strings.Join(outputTypes, ","), refreshInterval)
+	logInfo(
+		"Config: %s | Output: %s | Tick: %v | RenderWaitMax: %v",
+		configSource,
+		strings.Join(outputTypes, ","),
+		refreshInterval,
+		renderWaitMax,
+	)
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
 	logInfo("Monitoring %d items", len(requiredMonitors))
-
-	ticker := time.NewTicker(refreshInterval)
-	defer ticker.Stop()
 
 	// Keep at most one pending frame and always prefer the newest frame.
 	outputChan := make(chan outputFrame, 1)
@@ -217,49 +223,73 @@ func main() {
 		}
 	}()
 
+	lastEpoch := int64(0)
 	for {
 		select {
-		case <-ticker.C:
-			cycleStart := time.Now()
-			noteRenderAccess()
-
-			// Monitor update timing
-			updateStart := time.Now()
-			if err := registry.Update(requiredMonitors); err != nil {
-				logWarn("Monitor update failed: %v", err)
-				continue
-			}
-			updateDuration := time.Since(updateStart)
-
-			// Render timing
-			renderStart := time.Now()
-			img, err := renderManager.Render(config)
-			if err != nil {
-				logError("Render failed: %v", err)
-				continue
-			}
-			renderDuration := time.Since(renderStart)
-
-			// Async output (non-blocking), drop stale pending frame first.
-			replaced, ok := enqueueLatestFrame(outputChan, outputFrame{
-				img:        img,
-				enqueuedAt: time.Now(),
-			})
-			if !ok {
-				logWarn("Output queue busy, skipping frame")
-			} else if replaced {
-				logDebug("Output queue replaced stale frame")
-			}
-
-			cycleDuration := time.Since(cycleStart)
-			logDebug("Cycle: %v | Update: %v | Render: %v", cycleDuration, updateDuration, renderDuration)
-
 		case <-signalChan:
 			logInfo("Shutdown initiated")
 			close(outputChan)
 			outputManager.Close()
 			return
+		default:
 		}
+
+		cycleStart := time.Now()
+		noteRenderAccess()
+
+		epochID, waitComplete, waitDuration := registry.WaitForNextEpoch(lastEpoch, renderWaitMax)
+		if epochID <= lastEpoch {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		lastEpoch = epochID
+
+		// Render timing
+		renderStart := time.Now()
+		img, err := renderManager.Render(config)
+		if err != nil {
+			logError("Render failed: %v", err)
+			continue
+		}
+		renderDuration := time.Since(renderStart)
+		recordRenderDuration(renderDuration)
+
+		// Async output (non-blocking), drop stale pending frame first.
+		replaced, ok := enqueueLatestFrame(outputChan, outputFrame{
+			img:        img,
+			enqueuedAt: time.Now(),
+		})
+		if !ok {
+			logWarn("Output queue busy, skipping frame")
+		} else if replaced {
+			logDebug("Output queue replaced stale frame")
+		}
+
+		cycleDuration := time.Since(cycleStart)
+		logDebug(
+			"Cycle: %v | Epoch: %d | CollectWait: %v (complete=%v) | Render: %v",
+			cycleDuration,
+			epochID,
+			waitDuration,
+			waitComplete,
+			renderDuration,
+		)
+	}
+}
+
+func resolveWebModeFromEnv() (bool, bool, string) {
+	devURL := strings.TrimSpace(os.Getenv("AX206_MONITOR_DEV_URL"))
+	webEnabled := parseEnvBool(os.Getenv("AX206_MONITOR_WEB"))
+	webDevEnabled := devURL != ""
+	return webEnabled, webDevEnabled, devURL
+}
+
+func parseEnvBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -371,7 +401,7 @@ func listAllMonitors() {
 
 	// Update all monitors to get current values
 	fmt.Println("Updating monitor values...")
-	registry.UpdateAll()
+	_, _, _ = registry.WaitForNextEpoch(0, 500*time.Millisecond)
 
 	registry.mutex.RLock()
 	defer registry.mutex.RUnlock()

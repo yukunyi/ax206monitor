@@ -150,7 +150,7 @@ echo ""
 echo "Windows:"
 echo "1. Extract: dist/$WINDOWS_PACKAGE.zip (or .tar.gz)"
 echo "2. Double-click start.bat or ax206monitor.exe"
-echo "3. Use Web UI if needed: ax206monitor.exe --web --port 18086"
+echo "3. Use Web UI if needed: set AX206_MONITOR_WEB=1 && ax206monitor.exe --port 18086"
 
 echo ""
 echo "Note: Ensure AX206 device is connected with proper USB permissions before running"

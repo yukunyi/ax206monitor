@@ -88,7 +88,7 @@ func (c *GoNativeNetworkCollector) ensureSlots() {
 
 func (c *GoNativeNetworkCollector) GetAllItems() map[string]*CollectItem {
 	c.ensureSlots()
-	interfaces := getActiveNetworkInterfaces()
+	interfaces, ipv4ByName := getActiveNetworkInterfacesAndIPv4()
 	for index, slot := range c.slots {
 		iface := resolveInterfaceByIndex(interfaces, index)
 		if strings.TrimSpace(iface) == "" {
@@ -100,7 +100,7 @@ func (c *GoNativeNetworkCollector) GetAllItems() map[string]*CollectItem {
 		}
 		slot.nameItem.SetValue(iface)
 		slot.nameItem.SetAvailable(true)
-		ip := getInterfaceIPv4(iface)
+		ip := strings.TrimSpace(ipv4ByName[iface])
 		if ip == "" {
 			slot.ipItem.SetValue("-")
 			slot.ipItem.SetAvailable(false)
@@ -117,7 +117,8 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 		return nil
 	}
 	c.ensureSlots()
-	interfaces := getActiveNetworkInterfaces()
+	interfaces, ipv4ByName := getActiveNetworkInterfacesAndIPv4()
+	speedByName := getNetworkSpeedSnapshots(interfaces)
 
 	for index, slot := range c.slots {
 		iface := resolveInterfaceByIndex(interfaces, index)
@@ -131,7 +132,7 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 			}
 		}
 		if slot.ipItem.IsEnabled() {
-			ip := getInterfaceIPv4(iface)
+			ip := strings.TrimSpace(ipv4ByName[iface])
 			if ip == "" {
 				slot.ipItem.SetValue("-")
 				slot.ipItem.SetAvailable(false)
@@ -152,18 +153,16 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 		}
 
 		if slot.uploadItem.IsEnabled() {
-			upload, _, ok := getNetworkSpeedByInterface(iface)
-			if ok {
-				slot.uploadItem.SetValue(upload)
+			if speed, ok := speedByName[iface]; ok && speed.OK {
+				slot.uploadItem.SetValue(speed.Upload)
 				slot.uploadItem.SetAvailable(true)
 			} else {
 				slot.uploadItem.SetAvailable(false)
 			}
 		}
 		if slot.downloadItem.IsEnabled() {
-			_, download, ok := getNetworkSpeedByInterface(iface)
-			if ok {
-				slot.downloadItem.SetValue(download)
+			if speed, ok := speedByName[iface]; ok && speed.OK {
+				slot.downloadItem.SetValue(speed.Download)
 				slot.downloadItem.SetAvailable(true)
 			} else {
 				slot.downloadItem.SetAvailable(false)
@@ -181,11 +180,17 @@ func resolveInterfaceByIndex(names []string, index int) string {
 }
 
 func getActiveNetworkInterfaces() []string {
+	names, _ := getActiveNetworkInterfacesAndIPv4()
+	return names
+}
+
+func getActiveNetworkInterfacesAndIPv4() ([]string, map[string]string) {
 	interfaces, err := gopsutilNet.Interfaces()
 	if err != nil {
-		return []string{}
+		return []string{}, map[string]string{}
 	}
 	active := make([]string, 0, len(interfaces))
+	ipv4ByName := make(map[string]string, len(interfaces))
 	seen := make(map[string]struct{}, len(interfaces))
 	for _, iface := range interfaces {
 		name := strings.TrimSpace(iface.Name)
@@ -216,9 +221,10 @@ func getActiveNetworkInterfaces() []string {
 		}
 		seen[name] = struct{}{}
 		active = append(active, name)
+		ipv4ByName[name] = extractInterfaceIPv4(iface)
 	}
 	sort.Strings(active)
-	return active
+	return active, ipv4ByName
 }
 
 func isVirtualInterface(name string) bool {
@@ -263,17 +269,22 @@ func getInterfaceIPv4(interfaceName string) string {
 		if iface.Name != interfaceName {
 			continue
 		}
-		for _, addr := range iface.Addrs {
-			if strings.TrimSpace(addr.Addr) == "" {
-				continue
-			}
-			ip := net.ParseIP(strings.Split(addr.Addr, "/")[0])
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			if ipv4 := ip.To4(); ipv4 != nil {
-				return ipv4.String()
-			}
+		return extractInterfaceIPv4(iface)
+	}
+	return ""
+}
+
+func extractInterfaceIPv4(iface gopsutilNet.InterfaceStat) string {
+	for _, addr := range iface.Addrs {
+		if strings.TrimSpace(addr.Addr) == "" {
+			continue
+		}
+		ip := net.ParseIP(strings.Split(addr.Addr, "/")[0])
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return ipv4.String()
 		}
 	}
 	return ""

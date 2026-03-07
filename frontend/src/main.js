@@ -87,6 +87,19 @@ const RANGE_ELEMENT_TYPES = new Set([
   ...FULL_ELEMENT_TYPES,
 ]);
 const LABEL_ELEMENT_TYPES = new Set(["simple_label"]);
+const OPTIONAL_CUSTOM_NUM_FIELDS = new Set(["precision", "min", "max", "scale", "offset"]);
+const READONLY_BLOCKED_ACTIONS = new Set([
+  "import-json",
+  "add-custom",
+  "remove-custom",
+  "add-item",
+  "clone-item",
+  "remove-item",
+  "move-item-up",
+  "move-item-down",
+  "rename-profile",
+  "delete-profile",
+]);
 const state = {
   config: null,
   meta: null,
@@ -101,17 +114,19 @@ const state = {
   error: "",
   dirty: false,
   drag: null,
+  dragMoveRaf: null,
+  dragMovePoint: null,
   previewScale: 1,
   previewImageBitmap: null,
   previewRefreshPending: false,
   previewError: "",
+  previewRenderRaf: null,
+  previewNeedsRefresh: false,
   previewSyncing: false,
   previewSyncPending: false,
   saving: false,
   savePending: false,
   savePromise: null,
-  polling: false,
-  pollTimer: null,
   runtimeStream: null,
   runtimeStreamReady: false,
   runtimeStreamReqSeq: 1,
@@ -135,7 +150,7 @@ const state = {
     colorPickers: [],
   },
   autoApplyTimer: null,
-  previewFetchTimer: null,
+  previewTickTimer: null,
   previewResizeObserver: null,
   previewWrapperSize: { width: 0, height: 0 },
 };
@@ -151,6 +166,8 @@ const DEFAULT_COLLECTOR_ENABLED = {
   "external.librehardwaremonitor": false,
   "external.rtss": false,
 };
+const DEFAULT_COOLERCONTROL_URL = "http://127.0.0.1:11987";
+const DEFAULT_LIBRE_HARDWARE_MONITOR_URL = "http://127.0.0.1:8085";
 
 const COLLECTOR_NAME_ALIAS = {
   "go_native.cpu": "CPU 原生采集器",
@@ -567,13 +584,10 @@ function ensureConfig(cfg) {
   config.output_types = normalizeOutputTypes(config.output_types);
   config.refresh_interval = Math.max(100, num(config.refresh_interval, 1000));
   config.history_size = Math.max(10, num(config.history_size, 150));
-  config.network_interface = String(config.network_interface || "").trim();
-  if (config.network_interface.toLowerCase() === "auto") {
-    config.network_interface = "";
-  }
+  config.network_interface = "";
   config.enable_rtss_collect = !!config.enable_rtss_collect;
-  config.libre_hardware_monitor_url = String(config.libre_hardware_monitor_url ?? "");
-  config.coolercontrol_url = String(config.coolercontrol_url ?? "");
+  config.libre_hardware_monitor_url = String(config.libre_hardware_monitor_url ?? "").trim() || DEFAULT_LIBRE_HARDWARE_MONITOR_URL;
+  config.coolercontrol_url = String(config.coolercontrol_url ?? "").trim() || DEFAULT_COOLERCONTROL_URL;
   config.coolercontrol_username = String(config.coolercontrol_username || "");
   config.coolercontrol_password = String(config.coolercontrol_password || "");
 
@@ -583,12 +597,12 @@ function ensureConfig(cfg) {
   });
 
   const cc = ensureCollectorConfigEntry(config, "external.coolercontrol");
-  if (!cc.options.url && config.coolercontrol_url) cc.options.url = config.coolercontrol_url;
+  if (!String(cc.options.url ?? "").trim() && config.coolercontrol_url) cc.options.url = config.coolercontrol_url;
   if (!cc.options.username && config.coolercontrol_username) cc.options.username = config.coolercontrol_username;
   if (!cc.options.password && config.coolercontrol_password) cc.options.password = config.coolercontrol_password;
 
   const lhm = ensureCollectorConfigEntry(config, "external.librehardwaremonitor");
-  if (!lhm.options.url && config.libre_hardware_monitor_url) lhm.options.url = config.libre_hardware_monitor_url;
+  if (!String(lhm.options.url ?? "").trim() && config.libre_hardware_monitor_url) lhm.options.url = config.libre_hardware_monitor_url;
 
   const rtss = ensureCollectorConfigEntry(config, "external.rtss");
   if (config.enable_rtss_collect) {
@@ -680,6 +694,25 @@ function isRuntimeStreamReady() {
   return !!state.runtimeStream && state.runtimeStreamReady && state.runtimeStream.readyState === WebSocket.OPEN;
 }
 
+function shouldRunPreviewTicker() {
+  return false;
+}
+
+function syncPreviewTicker() {
+  if (!shouldRunPreviewTicker()) {
+    if (state.previewTickTimer) {
+      window.clearInterval(state.previewTickTimer);
+      state.previewTickTimer = null;
+    }
+    return;
+  }
+  if (state.previewTickTimer) return;
+  state.previewTickTimer = window.setInterval(() => {
+    void refreshPreviewImage();
+  }, 1000);
+  void refreshPreviewImage();
+}
+
 function clearRuntimeStreamPending(errorMessage = "实时连接已断开") {
   const entries = Object.entries(state.runtimeStreamPending || {});
   state.runtimeStreamPending = {};
@@ -696,6 +729,10 @@ function clearRuntimeStreamPending(errorMessage = "实时连接已断开") {
 async function applyPreviewImageBase64(base64Text) {
   const raw = String(base64Text || "").trim();
   if (!raw) return;
+  if (!isPreviewVisible()) {
+    state.previewNeedsRefresh = true;
+    return;
+  }
   const binary = window.atob(raw);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
@@ -708,6 +745,7 @@ async function applyPreviewImageBase64(base64Text) {
   }
   state.previewImageBitmap = bitmap;
   state.previewError = "";
+  state.previewNeedsRefresh = false;
   updatePreviewDOM();
   const errorEl = document.getElementById("preview-render-error");
   if (errorEl) {
@@ -765,7 +803,7 @@ function connectRuntimeStream() {
     ws.onopen = () => {
       state.runtimeStreamReady = true;
       setError("");
-      stopPolling();
+      syncPreviewTicker();
       void runtimeStreamCall("request_runtime", {}, 4000).catch(() => {});
     };
 
@@ -789,14 +827,21 @@ function connectRuntimeStream() {
         state.runtimeStream = null;
       }
       clearRuntimeStreamPending("实时连接已关闭");
-      startPolling();
+      syncPreviewTicker();
       state.runtimeStreamReconnectTimer = window.setTimeout(() => {
         state.runtimeStreamReconnectTimer = null;
         connectRuntimeStream();
       }, 1000);
     };
   } catch (_) {
-    startPolling();
+    state.runtimeStreamReady = false;
+    if (state.runtimeStreamReconnectTimer) {
+      window.clearTimeout(state.runtimeStreamReconnectTimer);
+    }
+    state.runtimeStreamReconnectTimer = window.setTimeout(() => {
+      state.runtimeStreamReconnectTimer = null;
+      connectRuntimeStream();
+    }, 1000);
   }
 }
 
@@ -809,6 +854,7 @@ function closeRuntimeStream() {
   state.runtimeStream = null;
   state.runtimeStreamReady = false;
   clearRuntimeStreamPending("实时连接已关闭");
+  syncPreviewTicker();
   if (ws) {
     try {
       ws.close();
@@ -1089,11 +1135,7 @@ async function syncPreviewConfig() {
     } else if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
       return;
     } else {
-      await api("/api/preview/config", {
-        method: "POST",
-        body: JSON.stringify({ config: cfg }),
-      });
-      await refreshPreviewImage();
+      throw new Error("实时连接未就绪，无法同步预览");
     }
   } catch (error) {
     state.previewError = `预览同步失败: ${error.message}`;
@@ -1147,6 +1189,7 @@ function render() {
   ensurePreviewResizeObserver();
   attachPreviewDragHandlers();
   updateRuntimePanelDOM();
+  syncPreviewTicker();
   initColorPickers();
 
   const nextList = document.getElementById("elements-list");
@@ -1171,6 +1214,24 @@ function updatePreviewSelectedNoticeDOM() {
   const indexEl = document.getElementById("preview-selected-index");
   if (indexEl) {
     indexEl.textContent = selected ? String(state.selectedItem + 1) : "无";
+  }
+}
+
+function syncSelectedItemRectEditorFieldsDOM() {
+  if (state.activeTab !== "elements") return;
+  const item = state.config?.items?.[state.selectedItem];
+  if (!item) return;
+  const active = document.activeElement;
+  for (const field of ["x", "y", "width", "height"]) {
+    const input = document.querySelector(`[data-item-field="${field}"]`);
+    if (!input || input === active) continue;
+    const nextValue =
+      field === "width" || field === "height"
+        ? String(Math.max(10, Math.round(num(item[field], 10))))
+        : String(Math.round(num(item[field], 0)));
+    if (String(input.value) !== nextValue) {
+      input.value = nextValue;
+    }
   }
 }
 
@@ -1378,11 +1439,6 @@ function renderBasicTab(cfg) {
   const outputOptions = (state.meta?.output_types || ["memimg", "ax206usb"])
     .map((value) => `<option value="${escapeAttr(value)}" ${cfg.output_types.includes(value) ? "selected" : ""}>${escapeHTML(value)}</option>`)
     .join("");
-  const networkInterfaceValues = (state.meta?.network_interfaces || []);
-  const networkOptions = [
-    `<option value="" ${cfg.network_interface === "" ? "selected" : ""}>未设置</option>`,
-    ...networkInterfaceValues.map((value) => `<option value="${escapeAttr(value)}" ${cfg.network_interface === value ? "selected" : ""}>${escapeHTML(value)}</option>`),
-  ].join("");
   const fontOptions = collectFontOptions(cfg)
     .map((name) => `<option value="${escapeAttr(name)}" ${cfg.default_font === name ? "selected" : ""}>${escapeHTML(name)}</option>`)
     .join("");
@@ -1398,7 +1454,6 @@ function renderBasicTab(cfg) {
           ${fieldSelectMultiple("output_types", "输出类型(多选)", outputOptions, 2)}
           ${fieldNumber("refresh_interval", "刷新间隔(ms)", cfg.refresh_interval)}
           ${fieldNumber("history_size", "折线历史长度", cfg.history_size)}
-          ${fieldSelect("network_interface", "网络接口", networkOptions)}
           ${fieldSelect("default_font", "默认字体", fontOptions)}
           ${fieldNumber("default_font_size", "默认字号", cfg.default_font_size)}
           ${fieldColor("default_color", "默认颜色", cfg.default_color)}
@@ -1827,21 +1882,28 @@ function renderCollectionTab() {
   return `
     <div class="layout-single collection-layout">
       <div class="panel collection-panel">
-        <div class="collection-top">
-          <h3>采集运行态</h3>
-          <div class="runtime-meta">
-            <span>模式: <strong id="runtime-mode">${escapeHTML(getRuntimeModeText())}</strong></span>
-            <span>更新时间: <strong id="runtime-updated">${escapeHTML(formatTimestamp(state.snapshot?.updated_at))}</strong></span>
-            <span>采集项: <strong id="runtime-count">${Object.keys(state.snapshot?.values || {}).length}</strong></span>
+        <div class="collection-split">
+          <div class="collection-side">
+            <div class="collection-side-head">
+              <h3>采集运行态</h3>
+              <div class="inline-actions">
+                <button data-action="refresh-runtime">刷新</button>
+              </div>
+            </div>
+            <div class="runtime-meta-list">
+              <div class="runtime-meta-row"><span>模式</span><strong id="runtime-mode">${escapeHTML(getRuntimeModeText())}</strong></div>
+              <div class="runtime-meta-row"><span>更新时间</span><strong id="runtime-updated">${escapeHTML(formatTimestamp(state.snapshot?.updated_at))}</strong></div>
+              <div class="runtime-meta-row"><span>采集项</span><strong id="runtime-count">${Object.keys(state.snapshot?.values || {}).length}</strong></div>
+            </div>
+            <div class="runtime-monitor-stats" id="runtime-monitor-stats">${renderRuntimeMonitorStats()}</div>
           </div>
-          <div class="inline-actions">
-            <button data-action="refresh-snapshot">立即刷新</button>
+          <div class="collection-main">
+            <div class="collection-main-head">
+              <h3>监控项明细</h3>
+            </div>
+            <div class="collection-list" id="runtime-values">${renderRuntimeValueTable()}</div>
           </div>
-          <div class="notice">页面活跃时每 2 秒抓全量采集项，30 秒无请求自动回到按配置采集。</div>
         </div>
-        <div class="collector-panel" id="collector-panel">${renderCollectorRows()}</div>
-        <div class="runtime-monitor-stats" id="runtime-monitor-stats">${renderRuntimeMonitorStats()}</div>
-        <div class="collection-list" id="runtime-values">${renderRuntimeValueRows()}</div>
       </div>
     </div>
   `;
@@ -1858,97 +1920,96 @@ function normalizeCollectors(payload) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function refreshCollectors() {
-  state.collectorsLoading = true;
-  try {
-    const payload = await api("/api/collectors");
-    state.collectors = normalizeCollectors(payload);
-  } catch (_) {
-    state.collectors = [];
-  } finally {
-    state.collectorsLoading = false;
-  }
-}
-
-function renderCollectorRows() {
-  if (state.collectorsLoading && (!state.collectors || state.collectors.length === 0)) {
-    return '<div class="notice">采集器状态加载中...</div>';
-  }
-  const items = Array.isArray(state.collectors) ? state.collectors : [];
-  if (items.length === 0) {
-    return '<div class="notice">暂无采集器信息</div>';
-  }
-  const enabledCount = items.filter((item) => item.enabled).length;
-  const rows = items
-    .map((item) => {
-      const stateText = item.enabled ? "enabled" : "disabled";
-      return `<div class="collector-row">
-        <span class="collector-name" title="${escapeAttr(item.name)}">${escapeHTML(collectorDisplayName(item.name))}</span>
-        <span class="collector-key">${escapeHTML(item.name)}</span>
-        <span class="collector-state ${item.enabled ? "on" : "off"}">${stateText}</span>
-      </div>`;
-    })
-    .join("");
-  return `
-    <div class="collector-header">
-      <strong>采集器状态</strong>
-      <span>${enabledCount}/${items.length} 已启用</span>
-    </div>
-    <div class="collector-list">${rows}</div>
-  `;
-}
-
 function monitorRuntimeStats() {
   return state.snapshot?.monitor_runtime || null;
-}
-
-function formatRatio(numerator, denominator) {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
-    return "0.0%";
-  }
-  return `${((numerator / denominator) * 100).toFixed(1)}%`;
 }
 
 function renderRuntimeMonitorStats() {
   const stats = monitorRuntimeStats();
   if (!stats) {
-    return '<div class="notice">调度器运行态数据暂不可用</div>';
+    return '<div class="notice">系统运行态数据暂不可用</div>';
   }
 
-  const windowDropRatio = formatRatio(stats.last_window_dropped || 0, stats.last_window_scheduled || 0);
-  const windowSlowRatio = formatRatio(stats.last_window_slow || 0, stats.last_window_completed || 0);
-  const totalDropRatio = formatRatio(stats.dropped_total || 0, stats.scheduled_total || 0);
-  const totalSlowRatio = formatRatio(stats.slow_total || 0, stats.completed_total || 0);
-  return `
-    <div class="runtime-stat-grid">
-      <div class="runtime-stat-row"><span>workers</span><strong>${escapeHTML(String(stats.worker_count || 0))}</strong></div>
-      <div class="runtime-stat-row"><span>queue</span><strong>${escapeHTML(`${stats.queue_len || 0}/${stats.queue_size || 0}`)}</strong></div>
-      <div class="runtime-stat-row"><span>scale</span><strong>x${escapeHTML(String(stats.interval_scale || 1))}</strong></div>
-      <div class="runtime-stat-row"><span>auto tune</span><strong>${stats.auto_tune ? "on" : "off"}</strong></div>
-      <div class="runtime-stat-row"><span>window dropped</span><strong>${escapeHTML(`${stats.last_window_dropped || 0}/${stats.last_window_scheduled || 0} (${windowDropRatio})`)}</strong></div>
-      <div class="runtime-stat-row"><span>window slow</span><strong>${escapeHTML(`${stats.last_window_slow || 0}/${stats.last_window_completed || 0} (${windowSlowRatio})`)}</strong></div>
-      <div class="runtime-stat-row"><span>total dropped</span><strong>${escapeHTML(`${stats.dropped_total || 0}/${stats.scheduled_total || 0} (${totalDropRatio})`)}</strong></div>
-      <div class="runtime-stat-row"><span>total slow</span><strong>${escapeHTML(`${stats.slow_total || 0}/${stats.completed_total || 0} (${totalSlowRatio})`)}</strong></div>
-    </div>
-  `;
+  const rows = [
+    ["collect.last.max", `${stats.last_collect_max_ms || 0}ms`],
+    ["collect.last.avg", `${stats.last_collect_avg_ms || 0}ms`],
+    ["collect.global.max", `${stats.collect_max_ms || 0}ms`],
+    ["collect.global.avg", `${stats.collect_avg_ms || 0}ms`],
+    ["render.last", `${stats.render_last_ms || 0}ms`],
+    ["render.max", `${stats.render_max_ms || 0}ms`],
+    ["render.avg", `${stats.render_avg_ms || 0}ms`],
+    ["output.last", `${stats.output_last_ms || 0}ms`],
+    ["output.max", `${stats.output_max_ms || 0}ms`],
+    ["output.avg", `${stats.output_avg_ms || 0}ms`],
+    ["epoch.current", `${stats.current_epoch || 0}`],
+    ["epoch.last_render", `${stats.last_render_epoch || 0}`],
+    ["render.wait", `${stats.last_render_wait_ms || 0}ms`],
+    ["render.complete", stats.last_render_complete ? "yes" : "no"],
+    ["collector.timeout", `${stats.collector_timeout_total || 0}`],
+    ["collector.slow_total", `${stats.slow_total || 0}`],
+    ["items.enabled", `${stats.enabled_item_count || 0}/${stats.item_count || 0}`],
+  ];
+
+  const outputRows = Object.entries(stats.output_stats || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([name, item]) => [
+      [`output.${name}.last`, `${item.last_ms || 0}ms`],
+      [`output.${name}.max`, `${item.max_ms || 0}ms`],
+      [`output.${name}.avg`, `${item.avg_ms || 0}ms`],
+      [`output.${name}.calls`, `${item.calls || 0}`],
+      [`output.${name}.errors`, `${item.errors || 0}`],
+    ]);
+
+  const allRows = rows.concat(outputRows);
+  return `<div class="runtime-stat-list">${allRows
+    .map(
+      ([key, value]) =>
+        `<div class="runtime-stat-row"><span>${escapeHTML(String(key))}</span><strong>${escapeHTML(String(value))}</strong></div>`,
+    )
+    .join("")}</div>`;
 }
 
-function renderRuntimeValueRows() {
+function renderRuntimeValueTable() {
   const values = state.snapshot?.values || {};
   const names = Object.keys(values).sort();
   if (names.length === 0) {
     return '<div class="notice">暂无采集数据</div>';
   }
 
-  return names
+  const rows = names
     .map((name) => {
       const item = values[name] || {};
-      const cls = item.available ? "" : " unavailable";
       const label = String(item.label || "").trim();
       const display = label || name;
-      return `<div class="runtime-row${cls}"><span title="${escapeAttr(name)}">${escapeHTML(display)}</span><span>${escapeHTML(item.text || "-")}</span></div>`;
+      const valueText = String(item.text || "-");
+      const unitText = String(item.unit || "");
+      const available = !!item.available;
+      return `
+        <tr class="${available ? "" : "unavailable"}">
+          <td title="${escapeAttr(display)}">${escapeHTML(display)}</td>
+          <td title="${escapeAttr(name)}">${escapeHTML(name)}</td>
+          <td><span class="runtime-available ${available ? "on" : "off"}">${available ? "yes" : "no"}</span></td>
+          <td class="runtime-value-cell">${escapeHTML(valueText)}</td>
+          <td>${escapeHTML(unitText || "-")}</td>
+        </tr>
+      `;
     })
     .join("");
+
+  return `
+    <table class="runtime-table">
+      <thead>
+        <tr>
+          <th>monitor</th>
+          <th>key</th>
+          <th>available</th>
+          <th>value</th>
+          <th>unit</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function getRuntimeModeText() {
@@ -2408,7 +2469,7 @@ function ensurePreviewResizeObserver() {
   updatePreviewFitScaleFromDOM(false);
 }
 
-function updatePreviewDOM() {
+function drawPreviewDOM() {
   const canvas = document.getElementById("preview-canvas");
   const wrapper = document.getElementById("preview-wrapper");
   if (!canvas || !wrapper || !state.config) return;
@@ -2581,6 +2642,34 @@ function updatePreviewDOM() {
   ctx.restore();
 }
 
+function updatePreviewDOM(options = {}) {
+  const immediate = !!options.immediate;
+  if (!isPreviewVisible()) {
+    if (state.previewRenderRaf) {
+      window.cancelAnimationFrame(state.previewRenderRaf);
+      state.previewRenderRaf = null;
+    }
+    return;
+  }
+  if (immediate) {
+    if (state.previewRenderRaf) {
+      window.cancelAnimationFrame(state.previewRenderRaf);
+      state.previewRenderRaf = null;
+    }
+    drawPreviewDOM();
+    return;
+  }
+  if (state.previewRenderRaf) return;
+  state.previewRenderRaf = window.requestAnimationFrame(() => {
+    state.previewRenderRaf = null;
+    drawPreviewDOM();
+  });
+}
+
+function isPreviewVisible() {
+  return state.activeTab === "elements" && !!document.getElementById("preview-canvas");
+}
+
 function colorToCanvas(value, fallback = "rgba(0, 0, 0, 1)") {
   const parsed = parseColorValue(value);
   const hex = parsed.hex.replace("#", "");
@@ -2707,7 +2796,7 @@ function updateCenterGuides(rect) {
 }
 
 function attachPreviewDragHandlers() {
-  updatePreviewDOM();
+  updatePreviewDOM({ immediate: true });
   const canvas = document.getElementById("preview-canvas");
   if (!canvas) return;
 
@@ -2746,6 +2835,12 @@ function attachPreviewDragHandlers() {
         width: Math.max(10, num(rect.width)),
         height: Math.max(10, num(rect.height)),
       },
+      lastRenderedRect: {
+        x: num(rect.x),
+        y: num(rect.y),
+        width: Math.max(10, num(rect.width)),
+        height: Math.max(10, num(rect.height)),
+      },
       changed: false,
     };
     if (state.drag.mode === "move") {
@@ -2754,24 +2849,14 @@ function attachPreviewDragHandlers() {
       state.ui.centerGuides = null;
     }
     updatePreviewDOM();
-    renderSelectedItemValues(state.drag.draft);
   });
 }
 
-window.addEventListener("pointermove", (event) => {
-  if (state.ui.purePreview || isEditingProfileReadOnly()) {
-    state.drag = null;
-    state.ui.centerGuides = null;
-    return;
-  }
-  if (!state.drag || !state.config) return;
+function processDragMove(clientX, clientY) {
+  if (!state.drag || !state.config || !state.drag.draft) return;
 
-  const dx = (event.clientX - state.drag.startX) / Math.max(state.previewScale, 0.01);
-  const dy = (event.clientY - state.drag.startY) / Math.max(state.previewScale, 0.01);
-
-  if (!state.drag.draft) {
-    return;
-  }
+  const dx = (clientX - state.drag.startX) / Math.max(state.previewScale, 0.01);
+  const dy = (clientY - state.drag.startY) / Math.max(state.previewScale, 0.01);
 
   if (state.drag.mode === "resize") {
     const bounds = getLayoutBounds(state.config);
@@ -2797,6 +2882,23 @@ window.addEventListener("pointermove", (event) => {
     updateCenterGuides(state.drag.draft);
   }
 
+  const prevRect = state.drag.lastRenderedRect;
+  if (
+    prevRect &&
+    prevRect.x === state.drag.draft.x &&
+    prevRect.y === state.drag.draft.y &&
+    prevRect.width === state.drag.draft.width &&
+    prevRect.height === state.drag.draft.height
+  ) {
+    return;
+  }
+  state.drag.lastRenderedRect = {
+    x: state.drag.draft.x,
+    y: state.drag.draft.y,
+    width: state.drag.draft.width,
+    height: state.drag.draft.height,
+  };
+
   state.drag.changed =
     state.drag.draft.x !== state.drag.originX ||
     state.drag.draft.y !== state.drag.originY ||
@@ -2804,10 +2906,45 @@ window.addEventListener("pointermove", (event) => {
     state.drag.draft.height !== state.drag.originH;
 
   updatePreviewDOM();
-  renderSelectedItemValues(state.drag.draft);
+}
+
+window.addEventListener("pointermove", (event) => {
+  if (state.ui.purePreview || isEditingProfileReadOnly()) {
+    state.drag = null;
+    state.ui.centerGuides = null;
+    state.dragMovePoint = null;
+    if (state.dragMoveRaf) {
+      window.cancelAnimationFrame(state.dragMoveRaf);
+      state.dragMoveRaf = null;
+    }
+    return;
+  }
+  if (!state.drag || !state.config) return;
+
+  state.dragMovePoint = { x: event.clientX, y: event.clientY };
+  if (state.dragMoveRaf) return;
+  state.dragMoveRaf = window.requestAnimationFrame(() => {
+    state.dragMoveRaf = null;
+    const point = state.dragMovePoint;
+    state.dragMovePoint = null;
+    if (!point) return;
+    processDragMove(point.x, point.y);
+  });
 });
 
 window.addEventListener("pointerup", () => {
+  if (state.dragMoveRaf) {
+    window.cancelAnimationFrame(state.dragMoveRaf);
+    state.dragMoveRaf = null;
+    const point = state.dragMovePoint;
+    state.dragMovePoint = null;
+    if (point) {
+      processDragMove(point.x, point.y);
+    }
+  } else {
+    state.dragMovePoint = null;
+  }
+
   const drag = state.drag;
   state.drag = null;
   state.ui.centerGuides = null;
@@ -2824,8 +2961,8 @@ window.addEventListener("pointerup", () => {
     item.width = clamped.width;
     item.height = clamped.height;
     markDirty();
+    syncSelectedItemRectEditorFieldsDOM();
   }
-  renderSelectedItemValues();
   updatePreviewDOM();
   if (state.previewRefreshPending) {
     state.previewRefreshPending = false;
@@ -2836,19 +2973,6 @@ window.addEventListener("pointerup", () => {
     }
   }
 });
-
-function renderSelectedItemValues(overrideRect = null) {
-  const item = overrideRect || state.config?.items?.[state.selectedItem];
-  if (!item) return;
-  const xInput = document.querySelector("[data-item-field='x']");
-  const yInput = document.querySelector("[data-item-field='y']");
-  const wInput = document.querySelector("[data-item-field='width']");
-  const hInput = document.querySelector("[data-item-field='height']");
-  if (xInput) xInput.value = item.x;
-  if (yInput) yInput.value = item.y;
-  if (wInput) wInput.value = item.width;
-  if (hInput) hInput.value = item.height;
-}
 
 async function decodePreviewBitmap(blob) {
   if (typeof createImageBitmap === "function") {
@@ -2874,82 +2998,44 @@ async function refreshPreviewImage() {
     state.previewRefreshPending = true;
     return;
   }
+  if (!isPreviewVisible()) {
+    state.previewNeedsRefresh = true;
+    return;
+  }
   if (state.runtimeStream && state.runtimeStream.readyState === WebSocket.CONNECTING) {
     return;
   }
   if (isRuntimeStreamReady()) {
-    try {
-      await runtimeStreamCall("request_runtime", {}, 3000);
-      return;
-    } catch (_) {
-      // fallback to HTTP preview fetch below
-    }
+    await runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
+    return;
   }
-  try {
-    const res = await fetch(`/api/preview?t=${Date.now()}`, { cache: "no-store" });
-    if (res.status === 204) {
-      return;
-    }
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${res.status} ${text || res.statusText}`);
-    }
-
-    const blob = await res.blob();
-    const bitmap = await decodePreviewBitmap(blob);
-    if (state.previewImageBitmap && typeof state.previewImageBitmap.close === "function") {
-      state.previewImageBitmap.close();
-    }
-    state.previewImageBitmap = bitmap;
-    state.previewError = "";
-
-    updatePreviewDOM();
-    const errorEl = document.getElementById("preview-render-error");
-    if (errorEl) {
-      errorEl.textContent = "";
-    }
-  } catch (error) {
-    state.previewError = `预览获取失败: ${error.message}`;
-    const errorEl = document.getElementById("preview-render-error");
-    if (errorEl) {
-      errorEl.textContent = state.previewError;
-    }
+  connectRuntimeStream();
+  state.previewNeedsRefresh = true;
+  state.previewError = "实时连接未就绪，预览暂停";
+  const errorEl = document.getElementById("preview-render-error");
+  if (errorEl) {
+    errorEl.textContent = state.previewError;
   }
 }
 
 function updateRuntimePanelDOM() {
-  const mode = getRuntimeModeText();
-  const updated = formatTimestamp(state.snapshot?.updated_at);
-  const count = Object.keys(state.snapshot?.values || {}).length;
-
-  const modeEl = document.getElementById("runtime-mode");
-  if (modeEl) modeEl.textContent = mode;
-
-  const updatedEl = document.getElementById("runtime-updated");
-  if (updatedEl) updatedEl.textContent = updated;
-
-  const countEl = document.getElementById("runtime-count");
-  if (countEl) countEl.textContent = String(count);
-
-  const runtimeMonitorEl = document.getElementById("runtime-monitor-stats");
-  if (runtimeMonitorEl) runtimeMonitorEl.innerHTML = renderRuntimeMonitorStats();
-
-  const collectorEl = document.getElementById("collector-panel");
-  if (collectorEl) collectorEl.innerHTML = renderCollectorRows();
-
-  const list = document.getElementById("runtime-values");
-  if (list) list.innerHTML = renderRuntimeValueRows();
-}
-
-function schedulePreviewFetch(delay = 0) {
-  if (state.previewFetchTimer) {
-    window.clearTimeout(state.previewFetchTimer);
-    state.previewFetchTimer = null;
+  if (state.activeTab !== "collection") {
+    return;
   }
-  state.previewFetchTimer = window.setTimeout(() => {
-    state.previewFetchTimer = null;
-    void refreshPreviewImage();
-  }, Math.max(0, delay));
+  const modeEl = document.getElementById("runtime-mode");
+  const updatedEl = document.getElementById("runtime-updated");
+  const countEl = document.getElementById("runtime-count");
+  const runtimeMonitorEl = document.getElementById("runtime-monitor-stats");
+  const list = document.getElementById("runtime-values");
+  if (!modeEl && !updatedEl && !countEl && !runtimeMonitorEl && !list) {
+    return;
+  }
+
+  if (modeEl) modeEl.textContent = getRuntimeModeText();
+  if (updatedEl) updatedEl.textContent = formatTimestamp(state.snapshot?.updated_at);
+  if (countEl) countEl.textContent = String(Object.keys(state.snapshot?.values || {}).length);
+  if (runtimeMonitorEl) runtimeMonitorEl.innerHTML = renderRuntimeMonitorStats();
+  if (list) list.innerHTML = renderRuntimeValueTable();
 }
 
 function applySnapshotUpdate(snapshotRes, options = {}) {
@@ -2964,33 +3050,25 @@ function applySnapshotUpdate(snapshotRes, options = {}) {
   state.monitorLabels = labels;
 
   const changed = updateMonitorOptions();
-  if (changed || labelChanged) {
-    render();
+  const optionDataChanged = changed || labelChanged;
+  if (optionDataChanged) {
+    if (state.activeTab === "elements" || state.activeTab === "custom") {
+      render();
+    } else {
+      updateRuntimePanelDOM();
+      if (isPreviewVisible()) {
+        updatePreviewDOM();
+      }
+    }
   } else {
     updateRuntimePanelDOM();
-    updatePreviewDOM();
-  }
-
-  if (!fromWS && !state.runtimeStream) {
-    if (state.drag) {
-      state.previewRefreshPending = true;
-    } else {
-      schedulePreviewFetch(0);
+    if (isPreviewVisible()) {
+      updatePreviewDOM();
     }
   }
-}
 
-async function pollRuntime() {
-  if (state.polling) return;
-  state.polling = true;
-
-  try {
-    const snapshotRes = await api("/api/snapshot");
-    applySnapshotUpdate(snapshotRes);
-  } catch (error) {
-    setError(`轮询失败: ${error.message}`);
-  } finally {
-    state.polling = false;
+  if (!fromWS && !isRuntimeStreamReady()) {
+    state.previewNeedsRefresh = true;
   }
 }
 
@@ -3002,23 +3080,12 @@ function stopRuntimeStream() {
   closeRuntimeStream();
 }
 
-function startPolling() {
+async function requestRuntimeData() {
   if (isRuntimeStreamReady()) {
+    await runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
     return;
   }
-  if (state.pollTimer) {
-    window.clearInterval(state.pollTimer);
-  }
-  state.pollTimer = window.setInterval(() => {
-    void pollRuntime();
-  }, 2000);
-}
-
-function stopPolling() {
-  if (state.pollTimer) {
-    window.clearInterval(state.pollTimer);
-    state.pollTimer = null;
-  }
+  connectRuntimeStream();
 }
 
 async function init() {
@@ -3044,12 +3111,8 @@ async function init() {
   }
 
   render();
+  syncPreviewTicker();
   startRuntimeStream();
-  window.setTimeout(() => {
-    if (!isRuntimeStreamReady()) {
-      void pollRuntime();
-    }
-  }, 1200);
 }
 
 function updateDefaultLevelArray(kind, index, value) {
@@ -3284,7 +3347,6 @@ app.addEventListener("input", (event) => {
     }
     if (field === "width" || field === "height" || field === "layout_padding") {
       clampAllItemsToBounds();
-      renderSelectedItemValues();
     }
     markDirty();
     updatePreviewDOM();
@@ -3297,10 +3359,9 @@ app.addEventListener("input", (event) => {
     const item = state.config.custom_monitors[index];
     if (!item) return;
 
-    const optionalNumFields = new Set(["precision", "min", "max", "scale", "offset"]);
     if (field === "sources" && target.tagName === "SELECT") {
       item.sources = Array.from(target.selectedOptions).map((option) => option.value);
-    } else if (optionalNumFields.has(field)) {
+    } else if (OPTIONAL_CUSTOM_NUM_FIELDS.has(field)) {
       item[field] = maybeNumber(target.value);
     } else {
       item[field] = target.value;
@@ -3458,7 +3519,6 @@ app.addEventListener("input", (event) => {
       item.y = rect.y;
       item.width = rect.width;
       item.height = rect.height;
-      renderSelectedItemValues(item);
     }
 
     ensureItemName(item, state.selectedItem);
@@ -3555,19 +3615,23 @@ app.addEventListener("click", async (event) => {
     if (["basic", "elements", "custom", "collection"].includes(tab)) {
       state.activeTab = tab;
       render();
+      syncPreviewTicker();
       if (tab === "collection") {
-        void refreshCollectors().then(() => updateRuntimePanelDOM());
+        void requestRuntimeData().then(() => updateRuntimePanelDOM());
+      }
+      if (tab === "elements" && state.previewNeedsRefresh) {
+        if (isRuntimeStreamReady()) {
+          void runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
+        } else {
+          connectRuntimeStream();
+        }
       }
     }
     return;
   }
 
-  if (action === "refresh-snapshot") {
-    if (isRuntimeStreamReady()) {
-      await runtimeStreamCall("request_runtime", {}, 3000).catch(() => {});
-    } else {
-      await pollRuntime();
-    }
+  if (action === "refresh-runtime") {
+    await requestRuntimeData();
     return;
   }
 
@@ -3598,19 +3662,7 @@ app.addEventListener("click", async (event) => {
     return;
   }
 
-  const readOnlyBlockedActions = new Set([
-    "import-json",
-    "add-custom",
-    "remove-custom",
-    "add-item",
-    "clone-item",
-    "remove-item",
-    "move-item-up",
-    "move-item-down",
-    "rename-profile",
-    "delete-profile",
-  ]);
-  if (isEditingProfileReadOnly() && readOnlyBlockedActions.has(action)) {
+  if (isEditingProfileReadOnly() && READONLY_BLOCKED_ACTIONS.has(action)) {
     setError("内置只读配置，请先复制");
     return;
   }
@@ -3925,18 +3977,28 @@ window.addEventListener("keydown", (event) => {
   item.y = clamp(Math.round(num(item.y, bounds.top)), bounds.top, maxY);
 
   markDirty();
+  syncSelectedItemRectEditorFieldsDOM();
   updatePreviewDOM();
-  renderSelectedItemValues();
+});
+
+document.addEventListener("visibilitychange", () => {
+  syncPreviewTicker();
+  if (document.visibilityState === "visible" && state.previewNeedsRefresh) {
+    void refreshPreviewImage();
+  }
 });
 
 window.addEventListener("beforeunload", () => {
   destroyColorPickers();
-  stopPolling();
   stopRuntimeStream();
   clearAutoApplyTimer();
-  if (state.previewFetchTimer) {
-    window.clearTimeout(state.previewFetchTimer);
-    state.previewFetchTimer = null;
+  if (state.previewTickTimer) {
+    window.clearInterval(state.previewTickTimer);
+    state.previewTickTimer = null;
+  }
+  if (state.previewRenderRaf) {
+    window.cancelAnimationFrame(state.previewRenderRaf);
+    state.previewRenderRaf = null;
   }
   if (state.previewImageBitmap && typeof state.previewImageBitmap.close === "function") {
     state.previewImageBitmap.close();

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ const (
 	wsPushInterval   = 250 * time.Millisecond
 	wsSendBufferSize = 16
 )
+
+var errWSSendQueueFull = errors.New("send queue full")
 
 var webSocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
@@ -140,6 +143,8 @@ func (c *webSocketClient) pushLoop() {
 	ticker := time.NewTicker(wsPushInterval)
 	defer ticker.Stop()
 	lastUpdatedAt := ""
+	lastPreviewLen := 0
+	var lastPreviewCRC uint32
 
 	for {
 		select {
@@ -147,13 +152,25 @@ func (c *webSocketClient) pushLoop() {
 			return
 		case <-ticker.C:
 			snapshot := c.store.snapshot()
-			if snapshot.UpdatedAt == lastUpdatedAt {
+			pngData, _ := GetMemImgPNG()
+			previewLen := len(pngData)
+			var previewCRC uint32
+			if previewLen > 0 {
+				previewCRC = crc32.ChecksumIEEE(pngData)
+			}
+			if snapshot.UpdatedAt == lastUpdatedAt && previewLen == lastPreviewLen && previewCRC == lastPreviewCRC {
 				continue
 			}
-			lastUpdatedAt = snapshot.UpdatedAt
-			if err := c.sendRuntime(&snapshot); err != nil {
+			if err := c.sendRuntimeWithPreview(&snapshot, pngData); err != nil {
+				if errors.Is(err, errWSSendQueueFull) {
+					// Keep connection alive; skip this push and wait for next update.
+					continue
+				}
 				return
 			}
+			lastUpdatedAt = snapshot.UpdatedAt
+			lastPreviewLen = previewLen
+			lastPreviewCRC = previewCRC
 		}
 	}
 }
@@ -203,16 +220,21 @@ func (c *webSocketClient) sendJSON(data interface{}) error {
 	case c.sendCh <- payload:
 		return nil
 	default:
-		return errors.New("send queue full")
+		return errWSSendQueueFull
 	}
 }
 
 func (c *webSocketClient) sendRuntime(snapshot *WebSnapshotResponse) error {
+	pngData, _ := GetMemImgPNG()
+	return c.sendRuntimeWithPreview(snapshot, pngData)
+}
+
+func (c *webSocketClient) sendRuntimeWithPreview(snapshot *WebSnapshotResponse, pngData []byte) error {
 	msg := wsRuntimeMessage{
 		Type:     "runtime",
 		Snapshot: snapshot,
 	}
-	if pngData, ok := GetMemImgPNG(); ok && len(pngData) > 0 {
+	if len(pngData) > 0 {
 		msg.PreviewPNG = base64.StdEncoding.EncodeToString(pngData)
 	}
 	return c.sendJSON(msg)
