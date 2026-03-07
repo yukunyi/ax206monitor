@@ -7,6 +7,7 @@ import (
 
 	"github.com/fogleman/gg"
 	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
 )
 
 func parseColor(hexColor string) color.Color {
@@ -146,10 +147,7 @@ func drawCenteredText(dc *gg.Context, text string, x, y, width, height int, font
 		return
 	}
 
-	font, err := fontCache.GetFont(fontSize)
-	if err != nil {
-		font = fontCache.contentFont
-	}
+	font := resolveFontFace(fontCache, fontSize)
 	dc.SetFontFace(font)
 	dc.SetColor(parseColor(textColor))
 
@@ -160,9 +158,24 @@ func drawCenteredText(dc *gg.Context, text string, x, y, width, height int, font
 }
 
 func resolveFontFace(fontCache *FontCache, fontSize int) font.Face {
+	if fontCache == nil {
+		return basicfont.Face7x13
+	}
 	font, err := fontCache.GetFont(fontSize)
 	if err != nil {
-		return fontCache.contentFont
+		if !isNilFontFace(font) {
+			return font
+		}
+		if !isNilFontFace(fontCache.contentFont) {
+			return fontCache.contentFont
+		}
+		return basicfont.Face7x13
+	}
+	if isNilFontFace(font) {
+		if !isNilFontFace(fontCache.contentFont) {
+			return fontCache.contentFont
+		}
+		return basicfont.Face7x13
 	}
 	return font
 }

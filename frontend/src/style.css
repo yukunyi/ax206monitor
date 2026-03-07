@@ -386,6 +386,10 @@ button[data-action="remove-custom"]:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.elements-layout.readonly-preview {
+  grid-template-columns: minmax(280px, 340px) minmax(560px, 1fr);
+}
+
 .elements-layout .panel {
   border-radius: 10px;
   padding: 0.85rem;

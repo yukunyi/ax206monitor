@@ -82,9 +82,19 @@ compile_linux() {
 # Compile for Windows
 compile_windows() {
     echo "Compiling Windows version..."
+    if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
+        echo "Error: x86_64-w64-mingw32-gcc not found, cannot cross-compile windows with cgo"
+        exit 1
+    fi
+    if ! command -v x86_64-w64-mingw32-g++ &> /dev/null; then
+        echo "Error: x86_64-w64-mingw32-g++ not found, cannot cross-compile windows with cgo"
+        exit 1
+    fi
     cd src/ax206monitor
-    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
-        -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    CC=x86_64-w64-mingw32-gcc \
+    CXX=x86_64-w64-mingw32-g++ \
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
+        -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
         -o ../../dist/ax206monitor-windows-amd64.exe .
     cd ../..

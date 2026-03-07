@@ -11,6 +11,8 @@ const SIMPLE_ELEMENT_TYPES = [
   "simple_label",
   "simple_rect",
   "simple_circle",
+  "label_text1",
+  "label_text2",
 ];
 const FULL_ELEMENT_TYPES = [
   "full_chart",
@@ -32,6 +34,8 @@ const LEGACY_TYPE_MAP = {
   label: "simple_label",
   rect: "simple_rect",
   circle: "simple_circle",
+  labeltext1: "label_text1",
+  labeltext2: "label_text2",
 };
 const ITEM_TYPE_DISPLAY_NAMES = {
   simple_value: "简单数值",
@@ -40,6 +44,8 @@ const ITEM_TYPE_DISPLAY_NAMES = {
   simple_label: "简单文本",
   simple_rect: "简单矩形",
   simple_circle: "简单圆形",
+  label_text1: "标签数值-左右",
+  label_text2: "标签数值-聚焦",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
   full_gauge: "复杂仪表盘",
@@ -79,6 +85,8 @@ const MONITOR_ELEMENT_TYPES = new Set([
   "simple_value",
   "simple_progress",
   "simple_line_chart",
+  "label_text1",
+  "label_text2",
   ...FULL_ELEMENT_TYPES,
 ]);
 const RANGE_ELEMENT_TYPES = new Set([
@@ -86,7 +94,7 @@ const RANGE_ELEMENT_TYPES = new Set([
   "simple_line_chart",
   ...FULL_ELEMENT_TYPES,
 ]);
-const LABEL_ELEMENT_TYPES = new Set(["simple_label"]);
+const LABEL_ELEMENT_TYPES = new Set(["simple_label", "label_text1", "label_text2"]);
 const OPTIONAL_CUSTOM_NUM_FIELDS = new Set(["precision", "min", "max", "scale", "offset"]);
 const READONLY_BLOCKED_ACTIONS = new Set([
   "import-json",
@@ -395,7 +403,7 @@ function normalizeItem(item, index = 0, defaultPointSize = 150) {
     y: num(item?.y, 10),
     width: Math.max(10, num(item?.width, 120)),
     height: Math.max(10, num(item?.height, 40)),
-    text: String(item?.text || (itemType === "simple_label" ? "Label" : "")),
+    text: String(item?.text || (LABEL_ELEMENT_TYPES.has(itemType) ? "Label" : "")),
     color: String(item?.color || ""),
     bg: String(item?.bg || ""),
     border_color: String(item?.border_color || ""),
@@ -626,6 +634,7 @@ function createItemByType(type) {
   const monitor = state.addItemMonitor || state.monitorOptions[0] || "";
   const defaultPointSize = Math.max(10, num(state.config?.history_size, 150));
   const padding = getLayoutPadding(state.config);
+  const isLabelType = LABEL_ELEMENT_TYPES.has(itemType);
   const base = {
     type: itemType,
     edit_ui_name: "",
@@ -634,9 +643,9 @@ function createItemByType(type) {
     unit_color: "",
     x: padding,
     y: padding,
-    width: itemType === "simple_label" ? 140 : 120,
-    height: itemType === "simple_label" ? 34 : 40,
-    text: itemType === "simple_label" ? "Label" : "",
+    width: itemType === "label_text2" ? 160 : isLabelType ? 180 : 120,
+    height: itemType === "label_text2" ? 64 : isLabelType ? 40 : 40,
+    text: isLabelType ? "Label" : "",
     color: "",
     bg: "",
     border_color: "",
@@ -913,6 +922,10 @@ function isEditingProfileReadOnly() {
   return !!info?.readonly;
 }
 
+function isBuiltinPreviewMode() {
+  return isEditingProfileReadOnly();
+}
+
 function refreshSelectedItem() {
   if (!state.config || state.config.items.length === 0) {
     state.selectedItem = -1;
@@ -1032,7 +1045,6 @@ function scheduleAutoApply(delay = null) {
 function markDirty() {
   if (isEditingProfileReadOnly()) {
     setError("内置只读配置，请先复制");
-    render();
     return;
   }
   state.dirty = true;
@@ -1168,19 +1180,31 @@ function render() {
   if (state.editingProfile) {
     cfg.name = state.editingProfile;
   }
+  const previewOnly = isBuiltinPreviewMode();
+  if (previewOnly && (state.activeTab === "basic" || state.activeTab === "custom")) {
+    state.activeTab = "elements";
+  }
+  const tabButtons = previewOnly
+    ? `
+        <button data-action="switch-tab" data-tab="elements" class="${state.activeTab === "elements" ? "active" : ""}">屏幕元素</button>
+        <button data-action="switch-tab" data-tab="collection" class="${state.activeTab === "collection" ? "active" : ""}">采集运行态</button>
+      `
+    : `
+        <button data-action="switch-tab" data-tab="basic" class="${state.activeTab === "basic" ? "active" : ""}">基础配置</button>
+        <button data-action="switch-tab" data-tab="elements" class="${state.activeTab === "elements" ? "active" : ""}">屏幕元素</button>
+        <button data-action="switch-tab" data-tab="custom" class="${state.activeTab === "custom" ? "active" : ""}">自定义采集项</button>
+        <button data-action="switch-tab" data-tab="collection" class="${state.activeTab === "collection" ? "active" : ""}">采集运行态</button>
+      `;
 
   app.innerHTML = `
     ${renderTopBar()}
     <div id="global-error" class="global-error">${escapeHTML(state.error || "")}</div>
     <main class="main-content">
       <div class="tab-nav">
-        <button data-action="switch-tab" data-tab="basic" class="${state.activeTab === "basic" ? "active" : ""}">基础配置</button>
-        <button data-action="switch-tab" data-tab="elements" class="${state.activeTab === "elements" ? "active" : ""}">屏幕元素</button>
-        <button data-action="switch-tab" data-tab="custom" class="${state.activeTab === "custom" ? "active" : ""}">自定义采集项</button>
-        <button data-action="switch-tab" data-tab="collection" class="${state.activeTab === "collection" ? "active" : ""}">采集运行态</button>
+        ${tabButtons}
       </div>
       <div class="tab-content">
-        ${isEditingProfileReadOnly() ? `<div class="global-error">当前为内置只读配置，不能直接修改。请使用顶部“复制”创建可编辑配置。</div>` : ""}
+        ${previewOnly ? `<div class="notice">当前为内置配置，只提供预览与运行态查看。切换到自建配置后可编辑。</div>` : ""}
         ${renderActiveTab(cfg)}
       </div>
     </main>
@@ -1251,7 +1275,7 @@ function syncElementSelectionUI(options = {}) {
   if (state.activeTab !== "elements") return;
   refreshSelectedItem();
   updateElementListSelectionDOM();
-  if (rerenderEditor && !rerenderEditorPanelDOM()) {
+  if (!isBuiltinPreviewMode() && rerenderEditor && !rerenderEditorPanelDOM()) {
     render();
     return;
   }
@@ -1262,6 +1286,7 @@ function syncElementSelectionUI(options = {}) {
 function renderTopBar() {
   const editing = state.editingProfile || state.meta?.active_profile || "default";
   const editingInfo = getProfileInfo(editing);
+  const previewOnly = !!editingInfo?.readonly;
   const saveStateView = getSaveStateView();
   const options = (state.profiles || [])
     .map((item) => {
@@ -1274,6 +1299,22 @@ function renderTopBar() {
   const delayOptions = AUTO_APPLY_DELAY_OPTIONS
     .map((ms) => `<option value="${ms}" ${autoApplyDelay === ms ? "selected" : ""}>${ms}ms</option>`)
     .join("");
+
+  if (previewOnly) {
+    return `
+      <div class="topbar">
+        <div class="topbar-row">
+          <div class="topbar-actions-left">
+            <label>配置文件
+              <select id="profile-select">${options}</select>
+            </label>
+            <button data-action="activate-profile">设为激活</button>
+            <button data-action="refresh-profiles">刷新</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="topbar">
@@ -1312,6 +1353,9 @@ function renderTopBar() {
 }
 
 function renderActiveTab(cfg) {
+  if (isBuiltinPreviewMode() && (state.activeTab === "basic" || state.activeTab === "custom")) {
+    return renderElementsTab(cfg);
+  }
   switch (state.activeTab) {
     case "elements":
       return renderElementsTab(cfg);
@@ -1484,9 +1528,19 @@ function renderBasicTab(cfg) {
 
 function renderElementsTab(cfg) {
   const selected = cfg.items[state.selectedItem];
+  const previewOnly = isBuiltinPreviewMode();
   const typeOptions = (state.meta?.item_types || ELEMENT_TYPES)
     .map((itemType) => `<option value="${escapeAttr(itemType)}" ${state.addItemType === itemType ? "selected" : ""}>${escapeHTML(itemTypeDisplayName(itemType))}</option>`)
     .join("");
+
+  if (previewOnly) {
+    return `
+      <div class="elements-layout readonly-preview">
+        <div class="panel list-panel">${renderElementList(cfg, selected, typeOptions)}</div>
+        <div class="panel preview-panel">${renderPreview(cfg)}</div>
+      </div>
+    `;
+  }
 
   return `
     <div class="elements-layout">
@@ -1498,6 +1552,7 @@ function renderElementsTab(cfg) {
 }
 
 function renderElementList(cfg, selected, typeOptions) {
+  const previewOnly = isBuiltinPreviewMode();
   const monitorForAdd = resolveAddItemMonitor();
   const addMonitorOptions = state.monitorOptions
     .map((name) => `<option value="${escapeAttr(name)}" ${monitorForAdd === name ? "selected" : ""}>${escapeHTML(monitorDisplayName(name))}</option>`)
@@ -1518,6 +1573,13 @@ function renderElementList(cfg, selected, typeOptions) {
       return `<button class="${active}" data-action="select-item" data-index="${index}">${escapeHTML(item.edit_ui_name || defaultEditUIName(index, item))}</button>`;
     })
     .join("");
+
+  if (previewOnly) {
+    return `
+      <h3>屏幕元素列表</h3>
+      <div id="elements-list" class="list">${list || '<button disabled>暂无屏幕元素</button>'}</div>
+    `;
+  }
 
   return `
     <h3>屏幕元素列表</h3>
@@ -3140,7 +3202,6 @@ function applyColorFromPicker(colorInput, alphaInput) {
   if (!state.config || !colorInput || !alphaInput) return;
   if (isEditingProfileReadOnly()) {
     setError("内置只读配置，请先复制");
-    render();
     return;
   }
 
@@ -3230,8 +3291,10 @@ app.addEventListener("input", (event) => {
   }
 
   if (isEditingProfileReadOnly()) {
+    if (target.id === "profile-select") {
+      return;
+    }
     setError("内置只读配置，请先复制");
-    render();
     return;
   }
 
@@ -3562,8 +3625,10 @@ app.addEventListener("change", async (event) => {
   }
 
   if (isEditingProfileReadOnly()) {
+    if (target.id === "profile-select") {
+      return;
+    }
     setError("内置只读配置，请先复制");
-    render();
     return;
   }
 
@@ -3612,7 +3677,10 @@ app.addEventListener("click", async (event) => {
 
   if (action === "switch-tab") {
     const tab = target.dataset.tab;
-    if (["basic", "elements", "custom", "collection"].includes(tab)) {
+    const allowedTabs = isBuiltinPreviewMode()
+      ? ["elements", "collection"]
+      : ["basic", "elements", "custom", "collection"];
+    if (allowedTabs.includes(tab)) {
       state.activeTab = tab;
       render();
       syncPreviewTicker();
@@ -3649,7 +3717,6 @@ app.addEventListener("click", async (event) => {
   if (action === "save-profile") {
     if (isEditingProfileReadOnly()) {
       setError("内置只读配置，请先复制");
-      render();
       return;
     }
     try {

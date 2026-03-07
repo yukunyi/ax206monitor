@@ -44,3 +44,15 @@ func resolveUdevRuleTargetUser() (string, error) {
 func buildAX206UdevRuleContent(targetUser string) string {
 	return platformops.BuildAX206UdevRuleContent(targetUser)
 }
+
+func IsAutoStartEnabled() (bool, error) {
+	return platformops.IsAutoStartEnabled()
+}
+
+func EnableAutoStart() error {
+	return platformops.EnableAutoStart()
+}
+
+func DisableAutoStart() error {
+	return platformops.DisableAutoStart()
+}

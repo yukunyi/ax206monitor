@@ -205,16 +205,47 @@ func (cm *ConfigManager) ListConfigs() ([]string, error) {
 }
 
 func getDefaultFontFamilies() []string {
-	return []string{
-		"DejaVu Sans Mono",
-		"Liberation Mono",
-		"Consolas",
-		"Monaco",
-		"Menlo",
-		"Ubuntu Mono",
-		"Courier New",
-		"monospace",
+	switch runtime.GOOS {
+	case "windows":
+		return []string{
+			"Microsoft YaHei UI",
+			"Microsoft YaHei",
+			"Segoe UI",
+			"Consolas",
+			"Arial",
+			"SimSun",
+			"Courier New",
+			"monospace",
+		}
+	case "darwin":
+		return []string{
+			"SF Mono",
+			"PingFang SC",
+			"Menlo",
+			"Monaco",
+			"Helvetica",
+			"Courier New",
+			"monospace",
+		}
+	default:
+		return []string{
+			"Noto Sans CJK SC",
+			"WenQuanYi Micro Hei",
+			"DejaVu Sans Mono",
+			"Liberation Mono",
+			"Ubuntu Mono",
+			"Courier New",
+			"monospace",
+		}
 	}
+}
+
+func getDefaultFontName() string {
+	families := getDefaultFontFamilies()
+	if len(families) == 0 {
+		return ""
+	}
+	return families[0]
 }
 
 func defaultLevelColors() []string {
@@ -228,7 +259,7 @@ func (config *MonitorConfig) GetDefaultFontName() string {
 	if len(config.FontFamilies) > 0 && strings.TrimSpace(config.FontFamilies[0]) != "" {
 		return strings.TrimSpace(config.FontFamilies[0])
 	}
-	return getDefaultFontFamilies()[0]
+	return getDefaultFontName()
 }
 
 func (config *MonitorConfig) GetDefaultFontSize() int {

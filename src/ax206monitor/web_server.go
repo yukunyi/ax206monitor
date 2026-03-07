@@ -637,7 +637,7 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		Name:                    "web",
 		Width:                   480,
 		Height:                  320,
-		DefaultFont:             "DejaVu Sans Mono",
+		DefaultFont:             getDefaultFontName(),
 		DefaultFontSize:         16,
 		DefaultColor:            "#f8fafc",
 		DefaultBackground:       "#0b1220",
@@ -787,8 +787,9 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.MonitorAutoTuneMaxScale = 0
 	}
 	if strings.TrimSpace(cfg.DefaultFont) == "" {
-		cfg.DefaultFont = "DejaVu Sans Mono"
+		cfg.DefaultFont = getDefaultFontName()
 	}
+	sanitizeFontConfig(cfg)
 	if cfg.DefaultFontSize <= 0 {
 		cfg.DefaultFontSize = 16
 	}

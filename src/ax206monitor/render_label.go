@@ -25,10 +25,7 @@ func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Colle
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
 	fontSize := resolveItemFontSize(item, config, 16)
-	font, err := fontCache.GetFont(fontSize)
-	if err != nil {
-		font = fontCache.contentFont
-	}
+	font := resolveFontFace(fontCache, fontSize)
 	dc.SetFontFace(font)
 	dc.SetColor(parseColor(resolveItemStaticColor(item, config)))
 

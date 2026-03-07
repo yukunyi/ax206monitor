@@ -1,4 +1,4 @@
-//go:build linux && cgo
+//go:build windows && cgo
 
 package main
 
@@ -12,10 +12,10 @@ import (
 	"github.com/getlantern/systray"
 )
 
-//go:embed assets/tray.png
-var trayIconPNG []byte
+//go:embed assets/tray.ico
+var trayIconICO []byte
 
-type linuxTray struct {
+type windowsTray struct {
 	web     *WebServerProcess
 	readyCh chan struct{}
 	stopCh  chan struct{}
@@ -32,7 +32,7 @@ func StartTray(webController *WebServerProcess) (TrayHandle, error) {
 		return nil, fmt.Errorf("web controller is nil")
 	}
 
-	tray := &linuxTray{
+	tray := &windowsTray{
 		web:     webController,
 		readyCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
@@ -47,8 +47,8 @@ func StartTray(webController *WebServerProcess) (TrayHandle, error) {
 	}
 }
 
-func (t *linuxTray) onReady() {
-	systray.SetIcon(trayIconPNG)
+func (t *windowsTray) onReady() {
+	systray.SetIcon(trayIconICO)
 	systray.SetTitle("AX206 Monitor")
 	systray.SetTooltip("AX206 Monitor")
 
@@ -67,7 +67,7 @@ func (t *linuxTray) onReady() {
 	go t.watchWebState()
 }
 
-func (t *linuxTray) onExit() {
+func (t *windowsTray) onExit() {
 	select {
 	case <-t.readyCh:
 	default:
@@ -75,7 +75,7 @@ func (t *linuxTray) onExit() {
 	}
 }
 
-func (t *linuxTray) handleMenuEvents() {
+func (t *windowsTray) handleMenuEvents() {
 	for {
 		select {
 		case <-t.stopCh:
@@ -123,7 +123,7 @@ func (t *linuxTray) handleMenuEvents() {
 	}
 }
 
-func (t *linuxTray) watchWebState() {
+func (t *windowsTray) watchWebState() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -136,7 +136,7 @@ func (t *linuxTray) watchWebState() {
 	}
 }
 
-func (t *linuxTray) syncMenuState() {
+func (t *windowsTray) syncMenuState() {
 	running := t.web.IsRunning()
 	if running {
 		t.openWeb.SetTitle("Close Web Server")
@@ -160,7 +160,7 @@ func (t *linuxTray) syncMenuState() {
 	t.autoRun.SetTitle("Enable Auto Start")
 }
 
-func (t *linuxTray) Close() {
+func (t *windowsTray) Close() {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()

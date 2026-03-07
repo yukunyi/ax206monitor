@@ -164,17 +164,8 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 		textColor = config.GetDefaultTextColor()
 	}
 
-	dc.Push()
-	if cardRadius > 0 {
-		dc.DrawRoundedRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height), cardRadius)
-	} else {
-		dc.DrawRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height))
-	}
-	dc.Clip()
-
 	r.drawHeader(dc, headerRect, headerBaselineY, labelFace, valueFace, labelText, displayValue, textColor, lineColor, item)
 	r.drawByType(dc, item, fontCache, value, numberValue, lineColor, textColor, bodyRect, config)
-	dc.Pop()
 
 	drawItemBorder(dc, item)
 	return nil
@@ -407,7 +398,6 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 			}
 		case "stripes":
 			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, lineColor)
-			dc.Push()
 			dc.DrawRoundedRectangle(body.x, barY, fillWidth, barHeight, barRadius)
 			dc.Clip()
 			dc.SetColor(parseColor(applyAlpha("#ffffff", 0.2)))
@@ -416,7 +406,7 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 				dc.SetLineWidth(2)
 				dc.Stroke()
 			}
-			dc.Pop()
+			dc.ResetClip()
 		case "glow":
 			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, lineColor)
 			dc.SetColor(parseColor(applyAlpha(lineColor, 0.4)))

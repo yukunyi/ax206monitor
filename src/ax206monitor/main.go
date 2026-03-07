@@ -30,8 +30,6 @@ func main() {
 
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
 	portFlag := flag.Int("port", 18086, "Web UI listen port (tray/env web mode)")
-	installFlag := flag.Bool("install", false, "Install as systemd service")
-	uninstallFlag := flag.Bool("uninstall", false, "Uninstall systemd service")
 	addUdevRuleFlag := flag.Bool("add-udev-rule", false, "Install AX206 USB udev rule for current user and reload udev")
 	// New: dump all monitor values for N seconds and exit
 	dumpSecondsFlag := flag.Int("dump", 0, "Dump all monitor values for N seconds and exit (0 to disable)")
@@ -42,28 +40,11 @@ func main() {
 		logFatal("Invalid --port value: %d", *portFlag)
 	}
 
-	if *installFlag && *uninstallFlag {
-		logFatal("--install and --uninstall cannot be used together")
-	}
-	if *addUdevRuleFlag && (*installFlag || *uninstallFlag || *listMonitorsFlag || *dumpSecondsFlag > 0) {
+	if *addUdevRuleFlag && (*listMonitorsFlag || *dumpSecondsFlag > 0) {
 		logFatal("--add-udev-rule cannot be used with other execution flags")
 	}
 
 	webModeEnabled, webDevEnabled, devViteURL := resolveWebModeFromEnv()
-
-	if *installFlag {
-		if err := InstallService(ServiceInstallOptions{}); err != nil {
-			logFatal("Service install failed: %v", err)
-		}
-		return
-	}
-
-	if *uninstallFlag {
-		if err := UninstallService(); err != nil {
-			logFatal("Service uninstall failed: %v", err)
-		}
-		return
-	}
 
 	if *addUdevRuleFlag {
 		if err := InstallAX206UdevRule(); err != nil {

@@ -7,7 +7,8 @@ A lightweight system monitoring tool for AX206 USB displays and memimg output.
 - Real-time system monitoring (CPU, Memory, GPU, Network, Temperature)
 - Multiple display layouts optimized for different screen sizes
 - Support for AX206 USB displays and memimg output
-- Systemd service integration for automatic startup
+- Desktop tray integration (Linux / Windows)
+- User auto-start toggle from tray menu
 
 ## Quick Installation
 
@@ -16,26 +17,23 @@ A lightweight system monitoring tool for AX206 USB displays and memimg output.
 tar -xzf ax206monitor-linux-amd64-v1.0.0.tar.gz
 cd ax206monitor-linux-amd64-v1.0.0
 
-# Install as system service (root)
-sudo ./ax206monitor --install
-
-# Or install as user service (no sudo)
-./ax206monitor --install
+# Run directly
+./ax206monitor
 ```
 
-## Service Management
+## Windows Package Layout
 
-```bash
-# root service
-sudo systemctl status ax206monitor
-sudo systemctl restart ax206monitor
-sudo ./ax206monitor --uninstall
+After `./package.sh`, Windows release files are placed at:
 
-# user service
-systemctl --user status ax206monitor
-systemctl --user restart ax206monitor
-./ax206monitor --uninstall
+```text
+dist/windows/ax206_monitor/
+├── ax206monitor.exe
+├── start.bat
+├── README.md
+└── (required DLL dependencies, e.g. libusb-1.0.dll)
 ```
+
+`package.sh` also generates `dist/windows/ax206_monitor.zip`.
 
 ## Configuration
 
@@ -138,7 +136,7 @@ npm run dev
 git clone https://github.com/yukunyi/ax206monitor.git
 cd ax206monitor
 ./build.sh
-sudo ./dist/ax206monitor-linux-amd64 --install
+./dist/ax206monitor-linux-amd64
 ```
 
 ## Repository
