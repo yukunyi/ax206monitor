@@ -29,21 +29,9 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 		return nil
 	}
 
-	maxValue := item.Max
-	if maxValue <= 0 {
-		if item.MaxValue != nil {
-			maxValue = *item.MaxValue
-		} else if value.Max > 0 {
-			maxValue = value.Max
-		} else {
-			maxValue = 100
-		}
-	}
-	if maxValue <= 0 {
-		maxValue = 100
-	}
-	if val < 0 {
-		val = 0
+	minValue, maxValue := resolveEffectiveMinMax(item, value, 0, 100)
+	if val < minValue {
+		val = minValue
 	}
 	if val > maxValue {
 		val = maxValue
@@ -54,7 +42,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 	bgColor := resolveItemBackground(item, config)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, bgColor, radius)
 
-	percentage := val / maxValue
+	percentage := (val - minValue) / (maxValue - minValue)
 	fillWidth := float64(item.Width) * percentage
 	if fillWidth > 0 {
 		itemColor := resolveMonitorColor(item, monitor, config)

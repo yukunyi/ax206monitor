@@ -362,17 +362,7 @@ func resolveMonitorColor(item *ItemConfig, monitor *CollectItem, config *Monitor
 		return resolveItemStaticColor(item, config)
 	}
 
-	minValue := value.Min
-	maxValue := value.Max
-	if item.MinValue != nil {
-		minValue = *item.MinValue
-	}
-	if item.MaxValue != nil {
-		maxValue = *item.MaxValue
-	}
-	if item.Max > 0 {
-		maxValue = item.Max
-	}
+	minValue, maxValue := resolveEffectiveMinMax(item, value, value.Min, value.Max)
 
 	thresholds := effectiveThresholds(item, minValue, maxValue, config)
 	colors := effectiveLevelColors(item, config)
@@ -389,6 +379,70 @@ func resolveMonitorColor(item *ItemConfig, monitor *CollectItem, config *Monitor
 		}
 	}
 	return colors[len(colors)-1]
+}
+
+func resolveEffectiveMinMax(item *ItemConfig, monitorValue *CollectValue, fallbackMin float64, fallbackMax float64) (float64, float64) {
+	minValue := fallbackMin
+	maxValue := fallbackMax
+	if monitorValue != nil {
+		minValue = monitorValue.Min
+		maxValue = monitorValue.Max
+	}
+
+	if !hasExplicitItemRange(item) && isTemperatureMetric(item, monitorValue) {
+		minValue = 0
+		maxValue = 100
+	}
+
+	if item != nil {
+		if item.MinValue != nil {
+			minValue = *item.MinValue
+		}
+		if item.MaxValue != nil {
+			maxValue = *item.MaxValue
+		}
+		if item.Max > 0 {
+			maxValue = item.Max
+		}
+	}
+
+	if maxValue <= minValue {
+		maxValue = minValue + 1
+	}
+	return minValue, maxValue
+}
+
+func hasExplicitItemRange(item *ItemConfig) bool {
+	if item == nil {
+		return false
+	}
+	if item.MinValue != nil || item.MaxValue != nil {
+		return true
+	}
+	return item.Max > 0
+}
+
+func isTemperatureMetric(item *ItemConfig, monitorValue *CollectValue) bool {
+	unit := ""
+	if item != nil {
+		unitOverride := strings.TrimSpace(item.Unit)
+		if unitOverride != "" && !strings.EqualFold(unitOverride, "auto") {
+			unit = unitOverride
+		}
+	}
+	if unit == "" && monitorValue != nil {
+		unit = monitorValue.Unit
+	}
+	normalizedUnit := strings.ToLower(strings.TrimSpace(unit))
+	if strings.Contains(normalizedUnit, "°c") || strings.Contains(normalizedUnit, "℃") {
+		return true
+	}
+
+	if item == nil {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(item.Monitor))
+	return strings.Contains(name, "temp") || strings.Contains(name, "temperature")
 }
 
 func resolveUnitColor(item *ItemConfig, config *MonitorConfig, fallback string) string {

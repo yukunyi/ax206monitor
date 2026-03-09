@@ -41,19 +41,58 @@ type sharedMemoryHeader struct {
 	OSDArrOffset uint32
 	OSDArrSize   uint32
 	OSDFrame     uint32
-	Busy         uint32
 }
 
 type appEntry struct {
-	Name                      [260]byte
-	ProcessID                 uint32
-	Frames                    uint32
-	Time0                     uint32
-	Time1                     uint32
-	Flags                     uint32
-	StatFlags                 uint32
+	ProcessID            uint32
+	Name                 [260]byte
+	Flags                uint32
+	Time0                uint32
+	Time1                uint32
+	Frames               uint32
+	FrameTime            uint32
+	StatFlags            uint32
+	StatTime0            uint32
+	StatTime1            uint32
+	StatFrames           uint32
+	StatCount            uint32
+	StatFramerateMin     uint32
+	StatFramerateAvg     uint32
+	StatFramerateMax     uint32
+	OSDX                 uint32
+	OSDY                 uint32
+	OSDPixel             uint32
+	OSDColor             uint32
+	OSDFrame             uint32
+	ScreenCaptureFlags   uint32
+	ScreenCapturePath    [260]byte
+	OSDBgndColor         uint32
+	VideoCaptureFlags    uint32
+	VideoCapturePath     [260]byte
+	VideoFramerate       uint32
+	VideoFramesize       uint32
+	VideoFormat          uint32
+	VideoQuality         uint32
+	VideoCaptureThreads  uint32
+	ScreenCaptureQuality uint32
+	ScreenCaptureThreads uint32
+	AudioCaptureFlags    uint32
+	VideoCaptureFlagsEx  uint32
+	AudioCaptureFlags2   uint32
+	StatFrameTimeMin     uint32
+	StatFrameTimeAvg     uint32
+	StatFrameTimeMax     uint32
+	StatFrameTimeCount   uint32
+	StatFrameTimeBuf     [1024]uint32
+	StatFrameTimeBufPos  uint32
+	// RTSS v2.5+ exposes direct FPS in 1/10 precision.
 	StatFrameTimeBufFramerate uint32
 }
+
+var (
+	minAppEntrySize = uint32(unsafe.Offsetof(appEntry{}.FrameTime) + unsafe.Sizeof(appEntry{}.FrameTime))
+	rawFPSFieldEnd  = uint32(unsafe.Offsetof(appEntry{}.StatFrameTimeBufFramerate) + unsafe.Sizeof(appEntry{}.StatFrameTimeBufFramerate))
+)
 
 func ReadMetrics() (Metrics, bool) {
 	name, err := windows.UTF16PtrFromString(sharedMemoryName)
@@ -79,7 +118,6 @@ func ReadMetrics() (Metrics, bool) {
 	if header.Signature != signatureA && header.Signature != signatureB {
 		return Metrics{}, false
 	}
-	minAppEntrySize := uint32(unsafe.Sizeof(appEntry{}))
 	if header.Version < versionMin || header.AppEntrySize < minAppEntrySize || header.AppArrSize == 0 || header.AppArrOffset == 0 {
 		return Metrics{}, false
 	}
@@ -99,7 +137,7 @@ func ReadMetrics() (Metrics, bool) {
 		if current == nil || current.ProcessID == 0 {
 			continue
 		}
-		fps, available := readEntryFPS(current, header.Version, nowTick)
+		fps, available := readEntryFPS(current, header.Version, header.AppEntrySize, nowTick)
 		if !available || fps <= 0 {
 			continue
 		}
@@ -118,18 +156,26 @@ func ReadMetrics() (Metrics, bool) {
 	return metrics, true
 }
 
-func readEntryFPS(entry *appEntry, version uint32, nowTick uint32) (float64, bool) {
+func readEntryFPS(entry *appEntry, version uint32, appEntrySize uint32, nowTick uint32) (float64, bool) {
 	if entry == nil {
 		return 0, false
 	}
-	if tickDeltaMS(nowTick, entry.Time1) > fpsStaleMS {
+	if entry.Time1 > 0 && tickDeltaMS(nowTick, entry.Time1) > fpsStaleMS {
 		return 0, false
 	}
 
 	// RTSS v2.5+ provides direct framerate in 1/10 FPS precision.
-	if version >= versionFPSRaw && entry.StatFrameTimeBufFramerate > 0 {
+	if version >= versionFPSRaw && appEntrySize >= rawFPSFieldEnd && entry.StatFrameTimeBufFramerate > 0 {
 		fps := sanitizeFPS(entry.StatFrameTimeBufFramerate)
 		return fps, fps > 0
+	}
+
+	// dwFrameTime is in microseconds per frame.
+	if entry.FrameTime > 0 {
+		fps := sanitizeFPSFloat(1000000.0 / float64(entry.FrameTime))
+		if fps > 0 {
+			return fps, true
+		}
 	}
 
 	// Fallback for older RTSS versions: frames / elapsed_ms * 1000.

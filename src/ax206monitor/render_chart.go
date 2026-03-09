@@ -50,21 +50,7 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
-	if item.MinValue != nil {
-		minVal = *item.MinValue
-	} else if value.Min < minVal {
-		minVal = value.Min
-	}
-	if item.MaxValue != nil {
-		maxVal = *item.MaxValue
-	} else if item.Max > 0 {
-		maxVal = item.Max
-	} else if value.Max > maxVal {
-		maxVal = value.Max
-	}
-	if maxVal <= minVal {
-		maxVal = minVal + 1
-	}
+	minVal, maxVal = resolveEffectiveMinMax(item, value, minVal, maxVal)
 
 	lineColor := resolveMonitorColor(item, monitor, config)
 	dc.SetColor(parseColor(lineColor))

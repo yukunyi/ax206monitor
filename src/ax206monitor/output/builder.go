@@ -56,7 +56,6 @@ func BuildManager(types []string, forceMemImg bool) (*OutputManager, []string) {
 				logErrorModule("ax206usb", "Handler creation failed: %v", err)
 				continue
 			}
-			logInfoModule("ax206usb", "Handler ready")
 			manager.AddHandler(handler)
 		}
 	}

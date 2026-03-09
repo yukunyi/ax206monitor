@@ -40,6 +40,7 @@ type WebAPI struct {
 	registry      *CollectorManager
 	renderManager *RenderManager
 	outputManager *OutputManager
+	outputTypes   []string
 	outputHasMem  bool
 	idleProvider  func() (*MonitorConfig, error)
 	previewOutput *MemImgOutputHandler
@@ -219,14 +220,23 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	renderManager := NewRenderManager(r.fontCache, registry)
 
 	outputTypes := registry.ResolveOutputTypes(configCopy.OutputTypes)
-	outputManager, _ := buildOutputManager(&MonitorConfig{OutputTypes: outputTypes}, false)
-
 	outputHasMem := false
 	for _, typeName := range outputTypes {
 		if typeName == outputTypeMemImg {
 			outputHasMem = true
 			break
 		}
+	}
+
+	var outputManager *OutputManager
+	r.mu.RLock()
+	existingOutputManager := r.outputManager
+	existingOutputTypes := append([]string(nil), r.outputTypes...)
+	r.mu.RUnlock()
+	if existingOutputManager != nil && equalStringSlices(existingOutputTypes, outputTypes) {
+		outputManager = existingOutputManager
+	} else {
+		outputManager, _ = buildOutputManager(&MonitorConfig{OutputTypes: outputTypes}, false)
 	}
 
 	r.mu.Lock()
@@ -236,15 +246,28 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	r.registry = registry
 	r.renderManager = renderManager
 	r.outputManager = outputManager
+	r.outputTypes = append([]string(nil), outputTypes...)
 	r.outputHasMem = outputHasMem
 	r.lastEpoch = 0
 	r.mu.Unlock()
 
-	if oldOutputManager != nil {
+	if oldOutputManager != nil && oldOutputManager != outputManager {
 		oldOutputManager.Close()
 	}
 	r.maybeProbeDataSources(configCopy)
 	return nil
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for idx := range left {
+		if left[idx] != right[idx] {
+			return false
+		}
+	}
+	return true
 }
 
 func enqueueLatestWebFrame(ch chan webOutputFrame, frame webOutputFrame) (bool, bool) {
@@ -512,6 +535,7 @@ func (r *WebAPI) Close() {
 	outputChan := r.outputChan
 	r.outputChan = nil
 	r.outputManager = nil
+	r.outputTypes = nil
 	r.registry = nil
 	r.renderManager = nil
 	r.config = nil

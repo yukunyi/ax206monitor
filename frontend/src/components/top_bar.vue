@@ -17,6 +17,8 @@ const emit = defineEmits([
   "create-profile",
   "rename-profile",
   "delete-profile",
+  "import-config",
+  "export-config",
 ]);
 
 const profileOptions = computed(() =>
@@ -73,6 +75,8 @@ function onProfileUpdate(value) {
       </n-space>
 
       <n-space align="center" :wrap="true" size="small">
+        <n-button size="small" @click="emit('import-config')">导入</n-button>
+        <n-button size="small" @click="emit('export-config')">导出</n-button>
         <n-button
           type="primary"
           size="small"

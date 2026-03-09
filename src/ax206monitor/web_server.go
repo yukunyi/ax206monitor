@@ -1260,13 +1260,9 @@ func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
 		}
 	case itemTypeSimpleRect, itemTypeSimpleCircle:
 		defaults.Background = "#33415566"
-	case itemTypeLabelText1:
+	case itemTypeLabelText:
 		defaults.RenderAttrsMap = map[string]interface{}{
 			"content_padding": 3,
-		}
-	case itemTypeLabelText2:
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"content_padding": 5,
 		}
 	case itemTypeFullChart:
 		defaults.Background = "#111827c8"
@@ -1554,17 +1550,12 @@ func setCollectorOptionDefault(cfg *MonitorConfig, collectorName, optionKey, val
 }
 
 func defaultEditUIName(current string, idx int, item *ItemConfig) string {
+	_ = idx
+	_ = item
 	if strings.TrimSpace(current) != "" {
 		return strings.TrimSpace(current)
 	}
-	name := strings.TrimSpace(item.Monitor)
-	if name == "" {
-		name = strings.TrimSpace(item.Type)
-	}
-	if name == "" {
-		name = "item"
-	}
-	return fmt.Sprintf("%d_%s", idx+1, name)
+	return ""
 }
 
 func normalizeItemType(itemType string) string {

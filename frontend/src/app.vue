@@ -40,6 +40,7 @@ const profileDialog = reactive({
   submitting: false,
   error: "",
 });
+const importInputRef = ref(null);
 
 const DEFAULT_OUTPUT_TYPES = ["memimg", "ax206usb"];
 const DEFAULT_ITEM_TYPES = [
@@ -49,8 +50,7 @@ const DEFAULT_ITEM_TYPES = [
   "simple_label",
   "simple_rect",
   "simple_circle",
-  "label_text1",
-  "label_text2",
+  "label_text",
   "full_chart",
   "full_progress",
 ];
@@ -71,8 +71,7 @@ const MONITOR_REQUIRED_TYPES = new Set([
   "simple_value",
   "simple_progress",
   "simple_line_chart",
-  "label_text1",
-  "label_text2",
+  "label_text",
   "full_chart",
   "full_progress",
 ]);
@@ -98,6 +97,7 @@ const STYLE_RENDER_ATTR_FIELDS = new Set([
   "meta_font_size",
   "title_font_size",
   "header_divider",
+  "header_divider_width",
   "header_divider_offset",
   "header_divider_color",
   "body_gap",
@@ -113,6 +113,7 @@ const STYLE_RENDER_ATTR_FIELDS = new Set([
   "chart_area_border_color",
   "progress_style",
   "bar_height",
+  "bar_radius",
   "track_color",
   "segments",
   "segment_gap",
@@ -132,8 +133,7 @@ const ITEM_TYPE_LABELS = {
   simple_label: "基础标签",
   simple_rect: "基础矩形",
   simple_circle: "基础圆形",
-  label_text1: "标签数值-左右",
-  label_text2: "标签数值-强调",
+  label_text: "标签数值",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
 };
@@ -142,11 +142,8 @@ const DEFAULT_TYPE_RENDER_ATTRS = {
   simple_line_chart: {
     history_points: 150,
   },
-  label_text1: {
+  label_text: {
     content_padding: 3,
-  },
-  label_text2: {
-    content_padding: 5,
   },
   full_chart: {
     content_padding: 1,
@@ -154,6 +151,7 @@ const DEFAULT_TYPE_RENDER_ATTRS = {
     title_font_size: 14,
     value_font_size: 16,
     header_divider: true,
+    header_divider_width: 1,
     header_divider_offset: 3,
     header_divider_color: "#94a3b840",
     history_points: 150,
@@ -173,10 +171,12 @@ const DEFAULT_TYPE_RENDER_ATTRS = {
     title_font_size: 14,
     value_font_size: 16,
     header_divider: true,
+    header_divider_width: 1,
     header_divider_offset: 3,
     header_divider_color: "#94a3b840",
     progress_style: "gradient",
     bar_height: 0,
+    bar_radius: 0,
     track_color: "#1f2937",
     segments: 12,
     segment_gap: 2,
@@ -358,6 +358,14 @@ function normalizeLevelColors(raw) {
   return result;
 }
 
+function normalizeProgressStyle(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (value === "solid" || value === "segmented" || value === "stripes") {
+    return value;
+  }
+  return "gradient";
+}
+
 function defaultTypeStyle(type, config) {
   const kind = String(type || "").trim();
   const isShape = kind === "simple_rect" || kind === "simple_circle";
@@ -408,6 +416,7 @@ function normalizeTypeDefaults(raw, config) {
     if (type === "full_progress") {
       attrsBase.title_font_size = Number(config.default_label_font_size || attrsBase.title_font_size || 14);
       attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
+      attrsBase.progress_style = normalizeProgressStyle(attrsInput.progress_style ?? attrsBase.progress_style);
     }
     const smallFontSize = Number(input.small_font_size ?? input.unit_font_size ?? base.small_font_size ?? 0);
     const mediumFontSize = Number(input.medium_font_size ?? input.font_size ?? base.medium_font_size ?? 0);
@@ -518,11 +527,11 @@ function normalizeConfig(cfg) {
   config.render_wait_max_ms = Math.max(0, Number(config.render_wait_max_ms || 300));
   config.history_size = Math.max(10, Number(config.history_size || 180));
   config.default_history_points = Math.max(10, Number(config.default_history_points || 150));
-  config.monitor_auto_tune = config.monitor_auto_tune !== false;
-  config.monitor_auto_tune_interval_sec = Math.max(1, Number(config.monitor_auto_tune_interval_sec || 5));
-  config.monitor_auto_tune_slow_rate = Math.max(1, Number(config.monitor_auto_tune_slow_rate || 1.2));
-  config.monitor_auto_tune_stable_runs = Math.max(1, Number(config.monitor_auto_tune_stable_runs || 3));
-  config.monitor_auto_tune_max_scale = Math.max(1, Number(config.monitor_auto_tune_max_scale || 8));
+  config.monitor_auto_tune = false;
+  config.monitor_auto_tune_interval_sec = 0;
+  config.monitor_auto_tune_slow_rate = 0;
+  config.monitor_auto_tune_stable_runs = 0;
+  config.monitor_auto_tune_max_scale = 0;
   config.default_font = String(config.default_font || "");
   config.default_color = String(config.default_color || "#f8fafc");
   config.default_background = String(config.default_background || "#0b1220");
@@ -540,6 +549,11 @@ function normalizeConfig(cfg) {
   config.items = config.items.map((item) => {
     const next = { ...(item || {}) };
     next.custom_style = config.allow_custom_style ? next.custom_style === true : false;
+    if (String(next.type || "") === "full_progress") {
+      const attrs = next.render_attrs_map && typeof next.render_attrs_map === "object" ? { ...next.render_attrs_map } : {};
+      attrs.progress_style = normalizeProgressStyle(attrs.progress_style);
+      next.render_attrs_map = attrs;
+    }
     return next;
   });
   config.custom_monitors = Array.isArray(config.custom_monitors) ? config.custom_monitors : [];
@@ -548,24 +562,12 @@ function normalizeConfig(cfg) {
   return config;
 }
 
-function monitorToDefaultName(raw) {
-  const monitor = String(raw || "").trim();
-  if (!monitor) return "";
-  return monitor;
-}
-
-function defaultTypeName(type) {
-  const key = String(type || "").trim();
-  return ITEM_TYPE_LABELS[key] || key || "element";
-}
-
 function createDefaultItem(type = "simple_value", monitor = "") {
   const selectedMonitor = String(monitor || "").trim();
   const defaultMonitor = selectedMonitor || String(monitorOptions.value[0]?.value || "");
-  const displayName = monitorToDefaultName(defaultMonitor) || defaultTypeName(type);
   return {
     type,
-    edit_ui_name: displayName,
+    edit_ui_name: "",
     custom_style: false,
     monitor: MONITOR_REQUIRED_TYPES.has(type) ? defaultMonitor : "",
     x: 10,
@@ -591,6 +593,56 @@ function setDirty() {
 
 function setError(err) {
   state.error = err ? String(err) : "";
+}
+
+function triggerImportConfig() {
+  if (readonlyProfile.value) {
+    setError("内置只读配置不能直接导入，请先新建可编辑配置");
+    return;
+  }
+  const input = importInputRef.value;
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+async function onImportFileChange(event) {
+  if (readonlyProfile.value) return;
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const imported = parsed && typeof parsed === "object" && parsed.config ? parsed.config : parsed;
+    if (!imported || typeof imported !== "object") {
+      throw new Error("配置文件格式不正确");
+    }
+    state.config = normalizeConfig(imported);
+    mergeConfigMonitors(state.config);
+    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
+    setDirty();
+    setError("");
+  } catch (err) {
+    setError(`导入失败: ${err.message}`);
+  }
+}
+
+function exportConfig() {
+  if (!state.config) return;
+  const payload = {
+    config: deepClone(state.config),
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const profileName = String(state.editingProfile || "config").trim() || "config";
+  link.href = url;
+  link.download = `${profileName}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function api(path, options = {}) {
@@ -730,7 +782,7 @@ async function refreshMonitorCatalog() {
 let previewSyncTimer = null;
 
 function schedulePreviewSync() {
-  if (!state.previewSync || readonlyProfile.value || !state.config) return;
+  if (!state.previewSync || !state.config) return;
   if (previewSyncTimer) {
     window.clearTimeout(previewSyncTimer);
     previewSyncTimer = null;
@@ -752,7 +804,6 @@ async function syncPreview(silent = false) {
   if (!state.config) return;
   try {
     await runtimeCall("preview_config", { config: deepClone(state.config) }, 6000);
-    await requestRuntime();
     if (!silent) setError("");
   } catch (err) {
     if (!silent) setError(`预览同步失败: ${err.message}`);
@@ -1134,8 +1185,30 @@ function closeProfileDialog() {
   profileDialog.error = "";
 }
 
-function setEditingProfile(name) {
-  state.editingProfile = String(name || "").trim();
+async function setEditingProfile(name) {
+  const nextProfile = String(name || "").trim();
+  if (!nextProfile || nextProfile === state.editingProfile) return;
+  if (state.dirty) {
+    setError("当前配置有未保存改动，请先保存应用");
+    return;
+  }
+  try {
+    const loaded = await api(`/api/profiles/${encodeURIComponent(nextProfile)}`);
+    state.editingProfile = nextProfile;
+    state.config = normalizeConfig(loaded.config);
+    mergeConfigMonitors(state.config);
+    if (state.config.items.length <= 0) {
+      state.selectedIndex = -1;
+    } else if (state.selectedIndex < 0 || state.selectedIndex >= state.config.items.length) {
+      state.selectedIndex = 0;
+    }
+    state.dirty = false;
+    await refreshMonitorCatalog();
+    await syncPreview(true);
+    setError("");
+  } catch (err) {
+    setError(err.message);
+  }
 }
 
 function switchTab(tab) {
@@ -1198,6 +1271,15 @@ onBeforeUnmount(() => {
         @create-profile="openCreateProfile"
         @rename-profile="openRenameProfile"
         @delete-profile="deleteProfile"
+        @import-config="triggerImportConfig"
+        @export-config="exportConfig"
+      />
+      <input
+        ref="importInputRef"
+        type="file"
+        accept=".json,application/json"
+        style="display: none"
+        @change="onImportFileChange"
       />
 
       <n-alert v-if="state.error" class="global_alert" type="error" :show-icon="false">

@@ -9,8 +9,7 @@ const (
 	itemTypeSimpleLabel    = "simple_label"
 	itemTypeSimpleRect     = "simple_rect"
 	itemTypeSimpleCircle   = "simple_circle"
-	itemTypeLabelText1     = "label_text1"
-	itemTypeLabelText2     = "label_text2"
+	itemTypeLabelText      = "label_text"
 
 	itemTypeFullChart     = "full_chart"
 	itemTypeFullProgress  = "full_progress"
@@ -31,8 +30,7 @@ var simpleItemTypes = []string{
 	itemTypeSimpleLabel,
 	itemTypeSimpleRect,
 	itemTypeSimpleCircle,
-	itemTypeLabelText1,
-	itemTypeLabelText2,
+	itemTypeLabelText,
 }
 
 var fullItemTypes = []string{
@@ -53,16 +51,14 @@ var legacyItemTypeAliases = map[string]string{
 	"linechart":    itemTypeSimpleChart,
 	"simple_value": itemTypeSimpleValue,
 	"simple_label": itemTypeSimpleLabel,
-	"labeltext1":   itemTypeLabelText1,
-	"labeltext2":   itemTypeLabelText2,
+	"labeltext":    itemTypeLabelText,
 }
 
 var collectorBoundItemTypeSet = toItemTypeSet(append([]string{
 	itemTypeSimpleValue,
 	itemTypeSimpleProgress,
 	itemTypeSimpleChart,
-	itemTypeLabelText1,
-	itemTypeLabelText2,
+	itemTypeLabelText,
 }, fullItemTypes...))
 
 var rangeItemTypeSet = toItemTypeSet([]string{

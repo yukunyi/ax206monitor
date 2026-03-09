@@ -28,6 +28,7 @@ func NewSharedAX206USBOutputHandler() (*AX206USBSharedOutputHandler, error) {
 			return nil, err
 		}
 		globalAX206Shared.handler = handler
+		logInfoModule("ax206usb", "Handler ready")
 	}
 	globalAX206Shared.refs++
 	return &AX206USBSharedOutputHandler{}, nil

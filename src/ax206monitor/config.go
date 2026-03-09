@@ -544,57 +544,23 @@ func (config *MonitorConfig) GetMonitorUpdateQueueSize(workers int) int {
 }
 
 func (config *MonitorConfig) GetMonitorAutoTune() bool {
-	if config.MonitorAutoTune == nil {
-		return true
-	}
-	return *config.MonitorAutoTune
+	return false
 }
 
 func (config *MonitorConfig) GetMonitorAutoTuneInterval() time.Duration {
-	seconds := config.MonitorAutoTuneInterval
-	if seconds <= 0 {
-		return 5 * time.Second
-	}
-	if seconds > 60 {
-		seconds = 60
-	}
-	return time.Duration(seconds) * time.Second
+	return 0
 }
 
 func (config *MonitorConfig) GetMonitorAutoTuneSlowRate() float64 {
-	rate := config.MonitorAutoTuneSlowRate
-	if rate <= 0 {
-		return 0.20
-	}
-	if rate > 1 {
-		return 1
-	}
-	if rate < 0.01 {
-		return 0.01
-	}
-	return rate
+	return 0
 }
 
 func (config *MonitorConfig) GetMonitorAutoTuneStableRuns() int {
-	runs := config.MonitorAutoTuneStable
-	if runs <= 0 {
-		return 3
-	}
-	if runs > 20 {
-		return 20
-	}
-	return runs
+	return 0
 }
 
 func (config *MonitorConfig) GetMonitorAutoTuneMaxScale() int {
-	scale := config.MonitorAutoTuneMaxScale
-	if scale <= 0 {
-		return 8
-	}
-	if scale > 64 {
-		return 64
-	}
-	return scale
+	return 0
 }
 
 func (config *MonitorConfig) GetCoolerControlURL() string {

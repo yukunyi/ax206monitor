@@ -26,31 +26,31 @@
     {"type": "simple_value", "edit_ui_name": "3_resolution", "monitor": "alias.system.resolution", "unit": "auto", "x": 240, "y": 2, "width": 117, "height": 20, "font_size": 12, "bg": "#111827"},
     {"type": "simple_value", "edit_ui_name": "4_refresh", "monitor": "alias.system.refresh_rate", "unit": "auto", "x": 359, "y": 2, "width": 119, "height": 20, "font_size": 12, "bg": "#111827"},
 
-    {"type": "label_text1", "edit_ui_name": "5_cpu_top", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "CPU"}},
-    {"type": "label_text1", "edit_ui_name": "6_gpu_top", "monitor": "alias.gpu.usage", "unit": "auto", "x": 161, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "GPU"}},
-    {"type": "label_text1", "edit_ui_name": "7_mem_top", "monitor": "alias.memory.usage", "unit": "auto", "x": 320, "y": 24, "width": 158, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "MEM"}},
+    {"type": "label_text", "edit_ui_name": "5_cpu_top", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "CPU"}},
+    {"type": "label_text", "edit_ui_name": "6_gpu_top", "monitor": "alias.gpu.usage", "unit": "auto", "x": 161, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "GPU"}},
+    {"type": "label_text", "edit_ui_name": "7_mem_top", "monitor": "alias.memory.usage", "unit": "auto", "x": 320, "y": 24, "width": 158, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "MEM"}},
 
     {"type": "full_chart", "edit_ui_name": "8_cpu_chart", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 50, "width": 237, "height": 144, "bg": "#0f172a", "render_attrs_map": {"title": "CPU Usage", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
     {"type": "full_chart", "edit_ui_name": "9_fps_chart", "monitor": "alias.gpu.fps", "unit": "auto", "x": 241, "y": 50, "width": 237, "height": 144, "bg": "#0f172a", "render_attrs_map": {"title": "GPU FPS", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
 
-    {"type": "label_text1", "edit_ui_name": "10_cpu_temp", "monitor": "alias.cpu.temp", "unit": "auto", "x": 2, "y": 196, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU T"}},
-    {"type": "label_text1", "edit_ui_name": "11_cpu_power", "monitor": "alias.cpu.power", "unit": "auto", "x": 161, "y": 196, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU P"}},
-    {"type": "label_text1", "edit_ui_name": "12_cpu_max", "monitor": "alias.cpu.max_freq", "unit": "auto", "x": 320, "y": 196, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU M"}},
+    {"type": "label_text", "edit_ui_name": "10_cpu_temp", "monitor": "alias.cpu.temp", "unit": "auto", "x": 2, "y": 196, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU T"}},
+    {"type": "label_text", "edit_ui_name": "11_cpu_power", "monitor": "alias.cpu.power", "unit": "auto", "x": 161, "y": 196, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU P"}},
+    {"type": "label_text", "edit_ui_name": "12_cpu_max", "monitor": "alias.cpu.max_freq", "unit": "auto", "x": 320, "y": 196, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU M"}},
 
-    {"type": "label_text1", "edit_ui_name": "13_gpu_power", "monitor": "alias.gpu.power", "unit": "auto", "x": 2, "y": 221, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU P"}},
-    {"type": "label_text1", "edit_ui_name": "14_gpu_vram", "monitor": "alias.gpu.vram", "unit": "auto", "x": 161, "y": 221, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "VRAM"}},
-    {"type": "label_text1", "edit_ui_name": "15_gpu_max", "monitor": "alias.gpu.max_freq", "unit": "auto", "x": 320, "y": 221, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU M"}},
+    {"type": "label_text", "edit_ui_name": "13_gpu_power", "monitor": "alias.gpu.power", "unit": "auto", "x": 2, "y": 221, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU P"}},
+    {"type": "label_text", "edit_ui_name": "14_gpu_vram", "monitor": "alias.gpu.vram", "unit": "auto", "x": 161, "y": 221, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "VRAM"}},
+    {"type": "label_text", "edit_ui_name": "15_gpu_max", "monitor": "alias.gpu.max_freq", "unit": "auto", "x": 320, "y": 221, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU M"}},
 
-    {"type": "label_text1", "edit_ui_name": "16_net_down", "monitor": "alias.net.download", "unit": "auto", "x": 2, "y": 246, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "NET D"}},
-    {"type": "label_text1", "edit_ui_name": "17_net_up", "monitor": "alias.net.upload", "unit": "auto", "x": 161, "y": 246, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "NET U"}},
-    {"type": "label_text1", "edit_ui_name": "18_fps", "monitor": "alias.gpu.fps", "unit": "auto", "x": 320, "y": 246, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "FPS"}},
+    {"type": "label_text", "edit_ui_name": "16_net_down", "monitor": "alias.net.download", "unit": "auto", "x": 2, "y": 246, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "NET D"}},
+    {"type": "label_text", "edit_ui_name": "17_net_up", "monitor": "alias.net.upload", "unit": "auto", "x": 161, "y": 246, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "NET U"}},
+    {"type": "label_text", "edit_ui_name": "18_fps", "monitor": "alias.gpu.fps", "unit": "auto", "x": 320, "y": 246, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "FPS"}},
 
-    {"type": "label_text1", "edit_ui_name": "19_fan_sys", "monitor": "alias.fan.system", "unit": "auto", "x": 2, "y": 271, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "SYS FAN"}},
-    {"type": "label_text1", "edit_ui_name": "20_fan_cpu", "monitor": "alias.fan.cpu", "unit": "auto", "x": 161, "y": 271, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU FAN"}},
-    {"type": "label_text1", "edit_ui_name": "21_fan_gpu", "monitor": "alias.fan.gpu", "unit": "auto", "x": 320, "y": 271, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU FAN"}},
+    {"type": "label_text", "edit_ui_name": "19_fan_sys", "monitor": "alias.fan.system", "unit": "auto", "x": 2, "y": 271, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "SYS FAN"}},
+    {"type": "label_text", "edit_ui_name": "20_fan_cpu", "monitor": "alias.fan.cpu", "unit": "auto", "x": 161, "y": 271, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU FAN"}},
+    {"type": "label_text", "edit_ui_name": "21_fan_gpu", "monitor": "alias.fan.gpu", "unit": "auto", "x": 320, "y": 271, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU FAN"}},
 
-    {"type": "label_text1", "edit_ui_name": "22_cpu_usage_bottom", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 296, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU"}},
-    {"type": "label_text1", "edit_ui_name": "23_gpu_usage_bottom", "monitor": "alias.gpu.usage", "unit": "auto", "x": 161, "y": 296, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU"}},
-    {"type": "label_text1", "edit_ui_name": "24_mem_usage_bottom", "monitor": "alias.memory.usage", "unit": "auto", "x": 320, "y": 296, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "MEM"}}
+    {"type": "label_text", "edit_ui_name": "22_cpu_usage_bottom", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 296, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "CPU"}},
+    {"type": "label_text", "edit_ui_name": "23_gpu_usage_bottom", "monitor": "alias.gpu.usage", "unit": "auto", "x": 161, "y": 296, "width": 157, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "GPU"}},
+    {"type": "label_text", "edit_ui_name": "24_mem_usage_bottom", "monitor": "alias.memory.usage", "unit": "auto", "x": 320, "y": 296, "width": 158, "height": 24, "bg": "#0f172a", "render_attrs_map": {"label": "MEM"}}
   ]
 }

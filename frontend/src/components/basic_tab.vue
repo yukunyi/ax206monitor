@@ -47,12 +47,14 @@ const fontOptions = computed(() =>
 );
 
 const monitorSelectOptions = computed(() => props.monitorOptions || []);
-const outputTypeOptions = computed(() =>
-  (props.meta.output_types || ["memimg", "ax206usb"]).map((item) => ({
-    label: String(item || ""),
-    value: String(item || ""),
-  })),
-);
+const outputTypeOptions = computed(() => {
+  const set = new Set();
+  (props.meta.output_types || ["memimg", "ax206usb"]).forEach((item) => set.add(String(item || "")));
+  (props.config.output_types || []).forEach((item) => set.add(String(item || "")));
+  return [...set]
+    .filter(Boolean)
+    .map((item) => ({ label: item, value: item }));
+});
 
 const customTypeOptions = computed(() => {
   const options = [
@@ -78,8 +80,7 @@ const ITEM_TYPE_LABELS = {
   simple_label: "基础标签",
   simple_rect: "基础矩形",
   simple_circle: "基础圆形",
-  label_text1: "标签数值-左右",
-  label_text2: "标签数值-强调",
+  label_text: "标签数值",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
 };
@@ -98,7 +99,6 @@ const progressStyleOptions = [
   { label: "solid", value: "solid" },
   { label: "segmented", value: "segmented" },
   { label: "stripes", value: "stripes" },
-  { label: "glow", value: "glow" },
 ];
 
 function collectorEntry(name) {
@@ -233,54 +233,21 @@ function typeDefaultAttr(type, key, fallback) {
                     @update:value="(v) => onField('allow_custom_style', !!v)"
                   />
                 </n-form-item-gi>
-                <n-form-item-gi label="自动调优">
-                  <n-switch
-                    :value="config.monitor_auto_tune !== false"
-                    :disabled="readonlyProfile"
-                    size="small"
-                    @update:value="(v) => onField('monitor_auto_tune', !!v)"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="调优周期(s)">
-                  <n-input-number
-                    :value="config.monitor_auto_tune_interval_sec"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('monitor_auto_tune_interval_sec', Number(v || 0))"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="慢速阈值">
-                  <n-input-number
-                    :value="config.monitor_auto_tune_slow_rate"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('monitor_auto_tune_slow_rate', Number(v || 0))"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="稳定轮次">
-                  <n-input-number
-                    :value="config.monitor_auto_tune_stable_runs"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('monitor_auto_tune_stable_runs', Number(v || 0))"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="最大放大倍数">
-                  <n-input-number
-                    :value="config.monitor_auto_tune_max_scale"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('monitor_auto_tune_max_scale', Number(v || 0))"
-                  />
-                </n-form-item-gi>
                 <n-form-item-gi label="输出类型" :span="2">
-                  <n-select
-                    multiple
+                  <n-checkbox-group
                     :value="config.output_types || []"
-                    :options="outputTypeOptions"
                     :disabled="readonlyProfile"
                     @update:value="(v) => onField('output_types', Array.isArray(v) ? v : [])"
-                  />
+                  >
+                    <n-space size="small" :wrap="true">
+                      <n-checkbox
+                        v-for="item in outputTypeOptions"
+                        :key="item.value"
+                        :value="item.value"
+                        :label="item.label"
+                      />
+                    </n-space>
+                  </n-checkbox-group>
                 </n-form-item-gi>
               </n-grid>
             </n-form>
@@ -540,6 +507,14 @@ function typeDefaultAttr(type, key, fallback) {
                         :disabled="readonlyProfile"
                         :show-button="false"
                         @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'bar_height'], Number(v || 0))"
+                      />
+                    </n-form-item-gi>
+                    <n-form-item-gi label="条圆角">
+                      <n-input-number
+                        :value="Number(typeDefaultAttr('full_progress', 'bar_radius', 0))"
+                        :disabled="readonlyProfile"
+                        :show-button="false"
+                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'bar_radius'], Number(v || 0))"
                       />
                     </n-form-item-gi>
                     <n-form-item-gi label="轨道颜色" :span="2">

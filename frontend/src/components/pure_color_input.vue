@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 const props = defineProps({
   value: { type: String, default: "" },
@@ -8,8 +8,6 @@ const props = defineProps({
 
 const emit = defineEmits(["update:value"]);
 
-const rootRef = ref(null);
-const panelOpen = ref(false);
 const draft = ref(String(props.value || ""));
 
 const PRESET_COLORS = [
@@ -150,71 +148,59 @@ function onNativeColorInput(event) {
   commit(value);
 }
 
-function togglePanel() {
-  if (props.disabled) return;
-  panelOpen.value = !panelOpen.value;
-}
-
-function onClickOutside(event) {
-  if (!panelOpen.value) return;
-  const root = rootRef.value;
-  if (!root) return;
-  if (root.contains(event.target)) return;
-  panelOpen.value = false;
-}
-
-onMounted(() => {
-  document.addEventListener("mousedown", onClickOutside, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", onClickOutside, true);
-});
 </script>
 
 <template>
-  <div ref="rootRef" class="pure_color_input" :class="{ disabled }">
-    <button
-      type="button"
-      class="pure_color_trigger"
+  <div class="pure_color_input" :class="{ disabled }">
+    <n-popover
+      trigger="click"
+      placement="bottom-start"
       :disabled="disabled"
-      :style="{ background: previewColor }"
-      @click="togglePanel"
-    />
-    <div v-if="panelOpen" class="pure_color_panel">
-      <div class="pure_color_presets">
+      to="body"
+    >
+      <template #trigger>
         <button
-          v-for="color in PRESET_COLORS"
-          :key="color"
           type="button"
-          class="pure_color_preset"
-          :style="{ background: color }"
-          @click="onPreset(color)"
-        />
-      </div>
-      <div class="pure_color_tools">
-        <input
-          class="pure_native_picker"
-          type="color"
+          class="pure_color_trigger"
           :disabled="disabled"
-          :value="nativeColorValue"
-          @input="onNativeColorInput"
+          :style="{ background: previewColor }"
         />
-        <n-input
-          class="pure_color_text"
-          size="small"
-          :disabled="disabled"
-          :value="draft"
-          placeholder="rgba(59,130,246,0.8) / #3b82f6"
-          @update:value="onDraftInput"
-          @keydown.enter.prevent="onApplyDraft"
-        />
-        <n-button size="small" :disabled="disabled" @click="onApplyDraft">应用</n-button>
+      </template>
+      <div class="pure_color_panel" @click.stop>
+        <div class="pure_color_presets">
+          <button
+            v-for="color in PRESET_COLORS"
+            :key="color"
+            type="button"
+            class="pure_color_preset"
+            :style="{ background: color }"
+            @click="onPreset(color)"
+          />
+        </div>
+        <div class="pure_color_tools">
+          <input
+            class="pure_native_picker"
+            type="color"
+            :disabled="disabled"
+            :value="nativeColorValue"
+            @input="onNativeColorInput"
+          />
+          <n-input
+            class="pure_color_text"
+            size="small"
+            :disabled="disabled"
+            :value="draft"
+            placeholder="rgba(59,130,246,0.8) / #3b82f6"
+            @update:value="onDraftInput"
+            @keydown.enter.prevent="onApplyDraft"
+          />
+          <n-button size="small" :disabled="disabled" @click="onApplyDraft">应用</n-button>
+        </div>
+        <n-text depth="3" style="font-size: 11px">
+          支持 rgba(...) / rgb(...) / #RGB / #RRGGBB / #RRGGBBAA
+        </n-text>
       </div>
-      <n-text depth="3" style="font-size: 11px">
-        支持 rgba(...) / rgb(...) / #RGB / #RRGGBB / #RRGGBBAA
-      </n-text>
-    </div>
+    </n-popover>
   </div>
 </template>
 
@@ -240,10 +226,8 @@ onBeforeUnmount(() => {
 }
 
 .pure_color_panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 6000;
+  position: relative;
+  z-index: 100000;
   min-width: 260px;
   padding: 8px;
   border-radius: 8px;

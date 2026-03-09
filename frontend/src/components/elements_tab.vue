@@ -63,8 +63,7 @@ const TYPE_LABELS = {
   simple_label: "基础标签",
   simple_rect: "基础矩形",
   simple_circle: "基础圆形",
-  label_text1: "标签数值-左右",
-  label_text2: "标签数值-强调",
+  label_text: "标签数值",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
 };
@@ -82,8 +81,7 @@ const itemTypeOptions = computed(() => {
     "simple_label",
     "simple_rect",
     "simple_circle",
-    "label_text1",
-    "label_text2",
+    "label_text",
     "full_chart",
     "full_progress",
   ];
@@ -109,8 +107,7 @@ const selectedMonitorRequired = computed(() => {
     type === "simple_value" ||
     type === "simple_progress" ||
     type === "simple_line_chart" ||
-    type === "label_text1" ||
-    type === "label_text2" ||
+    type === "label_text" ||
     type === "full_chart" ||
     type === "full_progress"
   );
@@ -122,8 +119,7 @@ const addMonitorRequired = computed(() => {
     type === "simple_value" ||
     type === "simple_progress" ||
     type === "simple_line_chart" ||
-    type === "label_text1" ||
-    type === "label_text2" ||
+    type === "label_text" ||
     type === "full_chart" ||
     type === "full_progress"
   );
@@ -134,13 +130,17 @@ const FULL_PROGRESS_STYLE_OPTIONS = [
   { label: "纯色", value: "solid" },
   { label: "分段", value: "segmented" },
   { label: "条纹", value: "stripes" },
-  { label: "辉光", value: "glow" },
 ];
 
 const selectedType = computed(() => String(selectedItem.value?.type || ""));
+const selectedIsLabelText = computed(() => selectedType.value === "label_text");
+const selectedIsSimpleLabel = computed(() => selectedType.value === "simple_label");
 const selectedIsSimpleLine = computed(() => selectedType.value === "simple_line_chart");
 const selectedIsFullChart = computed(() => selectedType.value === "full_chart");
 const selectedIsFullProgress = computed(() => selectedType.value === "full_progress");
+const selectedHasTitle = computed(
+  () => selectedType.value === "full_chart" || selectedType.value === "full_progress",
+);
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -150,6 +150,13 @@ function toNumber(v, fallback = 0) {
   const n = Number(v);
   if (Number.isFinite(n)) return n;
   return fallback;
+}
+
+function toOptionalNumber(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return n;
 }
 
 function colorValue(raw, fallback = "#f8fafc") {
@@ -645,13 +652,47 @@ watch(
                 @update:value="(v) => emit('change-item-field', { field: 'height', value: toNumber(v, 10) })"
               />
             </n-form-item-gi>
-            <n-form-item-gi label="单位">
+            <n-form-item-gi v-if="selectedHasTitle" label="标题">
+              <n-input
+                :value="renderAttrString('title', '')"
+                @update:value="(v) => updateRenderAttr('title', String(v || ''))"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi v-if="selectedHasTitle" label="单位">
               <n-input
                 :value="selectedItem.unit || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'unit', value: String(v || '') })"
               />
             </n-form-item-gi>
-            <n-form-item-gi label="文本" :span="2">
+            <n-form-item-gi v-else label="单位" :span="2">
+              <n-input
+                :value="selectedItem.unit || ''"
+                @update:value="(v) => emit('change-item-field', { field: 'unit', value: String(v || '') })"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi label="最小值">
+              <n-input-number
+                clearable
+                :show-button="false"
+                :value="selectedItem.min_value ?? null"
+                @update:value="(v) => emit('change-item-field', { field: 'min_value', value: toOptionalNumber(v) })"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi label="最大值">
+              <n-input-number
+                clearable
+                :show-button="false"
+                :value="selectedItem.max_value ?? null"
+                @update:value="(v) => emit('change-item-field', { field: 'max_value', value: toOptionalNumber(v) })"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi v-if="selectedIsLabelText" label="标签" :span="2">
+              <n-input
+                :value="renderAttrString('label', '')"
+                @update:value="(v) => updateRenderAttr('label', String(v || ''))"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi v-else-if="selectedIsSimpleLabel" label="标签" :span="2">
               <n-input
                 :value="selectedItem.text || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'text', value: String(v || '') })"
@@ -699,12 +740,6 @@ watch(
           <n-text depth="3" style="display: block; margin-bottom: 6px">复杂图表配置</n-text>
           <n-form label-placement="left" size="small" :label-width="84">
             <n-grid cols="2" :x-gap="6" :y-gap="2">
-              <n-form-item-gi label="标题" :span="2">
-                <n-input
-                  :value="renderAttrString('title', '')"
-                  @update:value="(v) => updateRenderAttr('title', String(v || ''))"
-                />
-              </n-form-item-gi>
               <n-form-item-gi label="内边距">
                 <n-input-number
                   :value="renderAttrNumber('content_padding', 1)"
@@ -819,12 +854,6 @@ watch(
           <n-text depth="3" style="display: block; margin-bottom: 6px">复杂进度配置</n-text>
           <n-form label-placement="left" size="small" :label-width="84">
             <n-grid cols="2" :x-gap="6" :y-gap="2">
-              <n-form-item-gi label="标题" :span="2">
-                <n-input
-                  :value="renderAttrString('title', '')"
-                  @update:value="(v) => updateRenderAttr('title', String(v || ''))"
-                />
-              </n-form-item-gi>
               <n-form-item-gi label="内边距">
                 <n-input-number
                   :value="renderAttrNumber('content_padding', 1)"
@@ -885,6 +914,13 @@ watch(
                   :value="renderAttrNumber('bar_height', 0)"
                   :show-button="false"
                   @update:value="(v) => updateRenderAttrNumber('bar_height', v, 0, 0, null)"
+                />
+              </n-form-item-gi>
+              <n-form-item-gi label="条圆角">
+                <n-input-number
+                  :value="renderAttrNumber('bar_radius', 0)"
+                  :show-button="false"
+                  @update:value="(v) => updateRenderAttrNumber('bar_radius', v, 0, 0, null)"
                 />
               </n-form-item-gi>
               <n-form-item-gi label="分段数量">

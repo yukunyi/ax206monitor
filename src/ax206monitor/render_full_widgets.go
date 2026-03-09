@@ -231,7 +231,11 @@ func (r *FullWidgetRenderer) drawHeader(dc *gg.Context, rect fullRect, baselineY
 	divider := getItemAttrBoolCfg(item, config, "header_divider", true)
 	if divider {
 		dc.SetColor(parseColor(getItemAttrColorCfg(item, config, "header_divider_color", "#94a3b840")))
-		dc.SetLineWidth(1)
+		dividerWidth := getItemAttrFloatCfg(item, config, "header_divider_width", 1)
+		if dividerWidth <= 0 {
+			dividerWidth = 1
+		}
+		dc.SetLineWidth(dividerWidth)
 		dividerOffset := getItemAttrFloatCfg(item, config, "header_divider_offset", 3)
 		if dividerOffset < 0 {
 			dividerOffset = 0
@@ -443,7 +447,13 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
 	style := strings.ToLower(getItemAttrStringCfg(item, config, "progress_style", "gradient"))
-	barRadius := resolveItemRadius(item, config, 0)
+	if style == "glow" {
+		style = "gradient"
+	}
+	barRadius := getItemAttrFloatCfg(item, config, "bar_radius", 0)
+	if barRadius <= 0 {
+		barRadius = resolveItemRadius(item, config, 0)
+	}
 	if barRadius < 0 {
 		barRadius = 0
 	}
@@ -454,6 +464,9 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 	}
 	if barHeight < 4 {
 		barHeight = 4
+	}
+	if barRadius > barHeight/2 {
+		barRadius = barHeight / 2
 	}
 	barY := body.y + (body.h-barHeight)/2
 	trackColor := getItemAttrColorCfg(item, config, "track_color", "#1f2937")
@@ -478,7 +491,11 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 				if i < filled {
 					colorValue = lineColor
 				}
-				drawRoundedRectFill(dc, segX, barY, segW, barHeight, math.Min(barRadius, 3), colorValue)
+				segRadius := barRadius
+				if segRadius > segW/2 {
+					segRadius = segW / 2
+				}
+				drawRoundedRectFill(dc, segX, barY, segW, barHeight, segRadius, colorValue)
 			}
 		case "stripes":
 			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, lineColor)
@@ -491,19 +508,18 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 				dc.Stroke()
 			}
 			dc.ResetClip()
-		case "glow":
-			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, lineColor)
-			dc.SetColor(parseColor(applyAlpha(lineColor, 0.4)))
-			dc.SetLineWidth(6)
-			dc.DrawRoundedRectangle(body.x, barY, fillWidth, barHeight, barRadius)
-			dc.Stroke()
 		default:
-			gradient := gg.NewLinearGradient(body.x, barY, body.x+fillWidth, barY)
-			gradient.AddColorStop(0, parseColor(applyAlpha(lineColor, 0.7)))
-			gradient.AddColorStop(1, parseColor(lineColor))
-			dc.SetFillStyle(gradient)
+			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, applyAlpha(lineColor, 0.9))
 			dc.DrawRoundedRectangle(body.x, barY, fillWidth, barHeight, barRadius)
+			dc.Clip()
+			gradient := gg.NewLinearGradient(body.x, barY, body.x, barY+barHeight)
+			gradient.AddColorStop(0, parseColor(applyAlpha("#ffffff", 0.35)))
+			gradient.AddColorStop(0.45, parseColor(applyAlpha("#ffffff", 0.08)))
+			gradient.AddColorStop(1, parseColor(applyAlpha("#000000", 0.2)))
+			dc.SetFillStyle(gradient)
+			dc.DrawRectangle(body.x, barY, fillWidth, barHeight)
 			dc.Fill()
+			dc.ResetClip()
 		}
 	}
 
@@ -833,25 +849,7 @@ type fullRect struct {
 }
 
 func resolveRangeValue(item *ItemConfig, monitorValue *CollectValue, fallbackMin float64, fallbackMax float64) (float64, float64) {
-	minValue := fallbackMin
-	maxValue := fallbackMax
-	if monitorValue != nil {
-		minValue = monitorValue.Min
-		maxValue = monitorValue.Max
-	}
-	if item.MinValue != nil {
-		minValue = *item.MinValue
-	}
-	if item.MaxValue != nil {
-		maxValue = *item.MaxValue
-	}
-	if item.Max > 0 {
-		maxValue = item.Max
-	}
-	if maxValue <= minValue {
-		maxValue = minValue + 1
-	}
-	return minValue, maxValue
+	return resolveEffectiveMinMax(item, monitorValue, fallbackMin, fallbackMax)
 }
 
 func normalizeRatio(value float64, minValue float64, maxValue float64) float64 {
