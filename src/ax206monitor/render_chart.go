@@ -36,30 +36,18 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
-	historySize := 60
-	if config != nil && config.HistorySize > 0 {
-		historySize = config.HistorySize
-	}
-	if item.PointSize > 0 {
-		historySize = item.PointSize
-	}
-	if historySize < 10 {
-		historySize = 10
-	}
+	historySize := resolveItemHistoryPoints(item, config, 60)
 
 	historyKey := c.getHistoryKey(item)
 	c.updateHistory(historyKey, val, historySize)
 	history := c.history[historyKey]
 
-	radius := float64(item.Radius)
-	if radius < 0 {
-		radius = 0
-	}
+	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
 	minVal, maxVal, ok := c.getMinMax(history)
 	if !ok {
-		drawItemBorder(dc, item)
+		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
 	if item.MinValue != nil {
@@ -88,7 +76,7 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	chartWidth := float64(item.Width) - 2*padding
 	chartHeight := float64(item.Height) - 2*padding
 	if chartWidth <= 1 || chartHeight <= 1 {
-		drawItemBorder(dc, item)
+		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
 
@@ -110,12 +98,12 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		drawnPoints++
 	}
 	if drawnPoints < 2 {
-		drawItemBorder(dc, item)
+		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
 	dc.Stroke()
 
-	drawItemBorder(dc, item)
+	drawBaseItemBorder(dc, item, config, radius)
 	_ = fontCache
 	return nil
 }

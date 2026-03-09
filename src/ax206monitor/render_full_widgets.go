@@ -74,18 +74,18 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 		return nil
 	}
 
-	cardRadius := float64(item.Radius)
-	if cardRadius <= 0 {
-		cardRadius = getItemAttrFloat(item, "card_radius", 2)
+	cardRadius := getItemAttrFloatCfg(item, config, "card_radius", -1)
+	if cardRadius < 0 {
+		cardRadius = resolveItemRadius(item, config, 0)
 	}
 	if cardRadius < 0 {
 		cardRadius = 0
 	}
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), cardRadius)
 
-	labelText := strings.TrimSpace(getItemAttrString(item, "title", ""))
+	labelText := strings.TrimSpace(getItemAttrStringCfg(item, config, "title", ""))
 	if labelText == "" {
-		labelText = strings.TrimSpace(getItemAttrString(item, "label", monitor.GetLabel()))
+		labelText = strings.TrimSpace(getItemAttrStringCfg(item, config, "label", monitor.GetLabel()))
 	}
 	if labelText == "" {
 		labelText = strings.TrimSpace(item.Monitor)
@@ -96,20 +96,35 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 		displayValue = strings.TrimSpace(valueText)
 	}
 
-	contentPadding := getItemAttrFloat(item, "content_padding", 1)
+	contentPadding := getItemAttrFloatCfg(item, config, "content_padding", 1)
 	if contentPadding < 1 {
 		contentPadding = 1
 	}
+	defaultBodyGap := 4.0
+	if r.itemType == itemTypeFullProgress {
+		defaultBodyGap = 0
+	}
+	bodyGap := getItemAttrFloatCfg(item, config, "body_gap", defaultBodyGap)
+	if bodyGap < 0 {
+		bodyGap = 0
+	}
 
-	defaultFontSize := resolveFullDefaultFontSize(config, 10)
-	labelSize := getItemAttrInt(item, "title_font_size", 0)
+	defaultLabelSize := resolveFullDefaultLabelFontSize(config, 10)
+	defaultValueSize := resolveFullDefaultValueFontSize(config, 11)
+	labelSize := getItemAttrIntCfg(item, config, "title_font_size", 0)
 	if labelSize <= 0 {
-		labelSize = defaultFontSize
+		labelSize = defaultLabelSize
 	}
 	if labelSize < 8 {
 		labelSize = 8
 	}
-	valueSize := labelSize + 1
+	valueSize := getItemAttrIntCfg(item, config, "value_font_size", 0)
+	if valueSize <= 0 {
+		valueSize = defaultValueSize
+	}
+	if valueSize < 8 {
+		valueSize = 8
+	}
 	labelFace := resolveFontFace(fontCache, labelSize)
 	valueFace := resolveFontFace(fontCache, valueSize)
 
@@ -147,9 +162,9 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 
 	bodyRect := fullRect{
 		x: float64(item.X) + contentPadding,
-		y: headerRect.y + headerRect.h + 4,
+		y: headerRect.y + headerRect.h + bodyGap,
 		w: float64(item.Width) - contentPadding*2,
-		h: float64(item.Height) - contentPadding - (headerRect.h + 4),
+		h: float64(item.Height) - contentPadding - (headerRect.h + bodyGap),
 	}
 	if bodyRect.w < 1 {
 		bodyRect.w = 1
@@ -160,58 +175,64 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 
 	lineColor := resolveMonitorColor(item, monitor, config)
 	textColor := resolveItemStaticColor(item, config)
-	if strings.TrimSpace(item.Color) == "" && config != nil {
-		textColor = config.GetDefaultTextColor()
-	}
 
-	r.drawHeader(dc, headerRect, headerBaselineY, labelFace, valueFace, labelText, displayValue, textColor, lineColor, item)
+	r.drawHeader(dc, headerRect, headerBaselineY, labelFace, valueFace, labelText, displayValue, textColor, lineColor, item, config)
 	r.drawByType(dc, item, fontCache, value, numberValue, lineColor, textColor, bodyRect, config)
 
-	drawItemBorder(dc, item)
+	drawBaseItemBorder(dc, item, config, cardRadius)
 	return nil
 }
 
 func (r *FullWidgetRenderer) drawByType(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	switch r.itemType {
 	case itemTypeFullChart:
-		r.drawFullChart(dc, item, fontCache, value, numberValue, lineColor, body)
+		r.drawFullChart(dc, item, fontCache, value, numberValue, resolveFullChartLineColor(item, config), body, config)
 	case itemTypeFullProgress:
-		r.drawFullProgress(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullProgress(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullGauge:
-		r.drawFullGauge(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullGauge(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullRing:
-		r.drawFullRing(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullRing(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullMinMax:
-		r.drawFullMinMax(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullMinMax(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullDelta:
 		r.drawFullDelta(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullStatus:
 		r.drawFullStatus(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullMeterH:
-		r.drawFullMeterH(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullMeterH(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullMeterV:
-		r.drawFullMeterV(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullMeterV(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullHeatStrip:
-		r.drawFullHeatStrip(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullHeatStrip(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	default:
-		r.drawFullProgress(dc, item, fontCache, value, numberValue, lineColor, textColor, body)
+		r.drawFullProgress(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	}
 }
 
-func (r *FullWidgetRenderer) drawHeader(dc *gg.Context, rect fullRect, baselineY float64, labelFace, valueFace font.Face, labelText string, valueText string, labelColor string, valueColor string, item *ItemConfig) {
+func (r *FullWidgetRenderer) drawHeader(dc *gg.Context, rect fullRect, baselineY float64, labelFace, valueFace font.Face, labelText string, valueText string, labelColor string, valueColor string, item *ItemConfig, config *MonitorConfig) {
+	_ = baselineY
+	headerCenterY := rect.y + rect.h/2
+	if r.itemType == itemTypeFullChart {
+		headerCenterY += 1
+	}
+	labelBaselineY := baselineForCenteredText(labelFace, labelText, headerCenterY)
+	valueBaselineY := baselineForCenteredText(valueFace, valueText, headerCenterY)
+	const headerHorizontalPadding = 2.0
+
 	dc.SetFontFace(labelFace)
 	dc.SetColor(parseColor(labelColor))
-	dc.DrawStringAnchored(labelText, rect.x, baselineY, 0, 0)
+	dc.DrawStringAnchored(labelText, rect.x+headerHorizontalPadding, labelBaselineY, 0, 0)
 
 	dc.SetFontFace(valueFace)
 	dc.SetColor(parseColor(valueColor))
-	dc.DrawStringAnchored(valueText, rect.x+rect.w, baselineY, 1, 0)
+	dc.DrawStringAnchored(valueText, rect.x+rect.w-headerHorizontalPadding, valueBaselineY, 1, 0)
 
-	divider := getItemAttrBool(item, "header_divider", true)
+	divider := getItemAttrBoolCfg(item, config, "header_divider", true)
 	if divider {
-		dc.SetColor(parseColor(getItemAttrColor(item, "header_divider_color", "#94a3b840")))
+		dc.SetColor(parseColor(getItemAttrColorCfg(item, config, "header_divider_color", "#94a3b840")))
 		dc.SetLineWidth(1)
-		dividerOffset := getItemAttrFloat(item, "header_divider_offset", 3)
+		dividerOffset := getItemAttrFloatCfg(item, config, "header_divider_offset", 3)
 		if dividerOffset < 0 {
 			dividerOffset = 0
 		}
@@ -260,7 +281,37 @@ func measureTextMetrics(face font.Face, text string) textMetrics {
 	return metrics
 }
 
-func resolveFullDefaultFontSize(config *MonitorConfig, fallback int) int {
+func baselineForCenteredText(face font.Face, text string, centerY float64) float64 {
+	metrics := measureTextMetrics(face, text)
+	return centerY + (metrics.ascent-metrics.descent)/2
+}
+
+func drawMetricAnchoredText(dc *gg.Context, face font.Face, text string, x, centerY, anchorX float64) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	baseline := baselineForCenteredText(face, text, centerY)
+	dc.SetFontFace(face)
+	dc.DrawStringAnchored(text, x, baseline, anchorX, 0)
+}
+
+func resolveFullDefaultLabelFontSize(config *MonitorConfig, fallback int) int {
+	if config != nil && config.GetDefaultLabelFontSize() > 0 {
+		return config.GetDefaultLabelFontSize()
+	}
+	if config != nil && config.GetDefaultFontSize() > 0 {
+		return config.GetDefaultFontSize()
+	}
+	if fallback > 0 {
+		return fallback
+	}
+	return 12
+}
+
+func resolveFullDefaultValueFontSize(config *MonitorConfig, fallback int) int {
+	if config != nil && config.GetDefaultValueFontSize() > 0 {
+		return config.GetDefaultValueFontSize()
+	}
 	if config != nil && config.GetDefaultFontSize() > 0 {
 		return config.GetDefaultFontSize()
 	}
@@ -270,9 +321,23 @@ func resolveFullDefaultFontSize(config *MonitorConfig, fallback int) int {
 	return 14
 }
 
-func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, body fullRect) {
-	points := getItemAttrInt(item, "history_points", 90)
-	history := r.appendHistory(item, numberValue, points)
+func resolveFullChartLineColor(item *ItemConfig, config *MonitorConfig) string {
+	attrColor := strings.TrimSpace(getItemAttrColorCfg(item, config, "chart_color", ""))
+	if attrColor != "" {
+		return attrColor
+	}
+	if canUseItemCustomStyle(item, config) && item != nil {
+		if color := strings.TrimSpace(item.Color); color != "" {
+			return color
+		}
+	}
+	return "#38bdf8"
+}
+
+func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
+	_ = fontCache
+	points := getItemAttrIntCfg(item, config, "history_points", 90)
+	history := r.appendHistory(item, numberValue, points, config)
 	if len(history) == 0 {
 		return
 	}
@@ -282,20 +347,40 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 		maxValue = minValue + 1
 	}
 
-	gridLines := getItemAttrInt(item, "grid_lines", 4)
-	if gridLines < 2 {
-		gridLines = 2
+	chartAreaBg := strings.TrimSpace(getItemAttrColorCfg(item, config, "chart_area_bg", ""))
+	if chartAreaBg != "" {
+		drawRoundedRectFill(dc, body.x, body.y, body.w, body.h, 4, chartAreaBg)
 	}
-	dc.SetLineWidth(1)
-	dc.SetColor(color.RGBA{71, 85, 105, 60})
-	for i := 0; i < gridLines; i++ {
-		y := body.y + float64(i)*(body.h/float64(gridLines-1))
-		dc.DrawLine(body.x, y, body.x+body.w, y)
+	chartAreaBorder := strings.TrimSpace(getItemAttrColorCfg(item, config, "chart_area_border_color", ""))
+	if chartAreaBorder != "" {
+		dc.SetLineWidth(1)
+		dc.SetColor(parseColor(chartAreaBorder))
+		dc.DrawRoundedRectangle(body.x, body.y, body.w, body.h, 4)
 		dc.Stroke()
 	}
 
-	fillArea := getItemAttrBool(item, "fill_area", true)
-	lineWidth := getItemAttrFloat(item, "line_width", 2)
+	showSegmentLines := getItemAttrBoolCfg(
+		item,
+		config,
+		"show_segment_lines",
+		getItemAttrBoolCfg(item, config, "show_grid_lines", true),
+	)
+	if showSegmentLines {
+		gridLines := getItemAttrIntCfg(item, config, "grid_lines", 4)
+		if gridLines < 2 {
+			gridLines = 2
+		}
+		dc.SetLineWidth(1)
+		dc.SetColor(color.RGBA{71, 85, 105, 60})
+		for i := 0; i < gridLines; i++ {
+			y := body.y + float64(i)*(body.h/float64(gridLines-1))
+			dc.DrawLine(body.x, y, body.x+body.w, y)
+			dc.Stroke()
+		}
+	}
+
+	fillArea := getItemAttrBoolCfg(item, config, "fill_area", true)
+	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 2)
 	if lineWidth < 1 {
 		lineWidth = 1
 	}
@@ -341,7 +426,7 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 	dc.SetColor(parseColor(lineColor))
 	dc.Stroke()
 
-	if getItemAttrBool(item, "show_avg_line", true) {
+	if getItemAttrBoolCfg(item, config, "show_avg_line", true) {
 		avg := historyAverage(history)
 		y := body.y + body.h - ((avg-minValue)/(maxValue-minValue))*body.h
 		dc.SetColor(parseColor(applyAlpha(lineColor, 0.7)))
@@ -350,29 +435,28 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 		dc.DrawLine(body.x, y, body.x+body.w, y)
 		dc.Stroke()
 		dc.SetDash()
-
-		avgFace := resolveFontFace(fontCache, 10)
-		dc.SetFontFace(avgFace)
-		dc.DrawStringAnchored("AVG", body.x+body.w-2, y-2, 1, 1)
 	}
 }
 
-func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
-	style := strings.ToLower(getItemAttrString(item, "progress_style", "gradient"))
-	barRadius := getItemAttrFloat(item, "bar_radius", 8)
+	style := strings.ToLower(getItemAttrStringCfg(item, config, "progress_style", "gradient"))
+	barRadius := resolveItemRadius(item, config, 0)
 	if barRadius < 0 {
 		barRadius = 0
 	}
 
-	barHeight := getItemAttrFloat(item, "bar_height", math.Min(20, body.h*0.42))
-	if barHeight < 8 {
-		barHeight = 8
+	barHeight := getItemAttrFloatCfg(item, config, "bar_height", 0)
+	if barHeight <= 0 || barHeight > body.h {
+		barHeight = body.h
+	}
+	if barHeight < 4 {
+		barHeight = 4
 	}
 	barY := body.y + (body.h-barHeight)/2
-	trackColor := getItemAttrColor(item, "track_color", "#1f2937")
+	trackColor := getItemAttrColorCfg(item, config, "track_color", "#1f2937")
 	drawRoundedRectFill(dc, body.x, barY, body.w, barHeight, barRadius, trackColor)
 
 	fillWidth := body.w * progress
@@ -381,11 +465,11 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 		case "solid":
 			drawRoundedRectFill(dc, body.x, barY, fillWidth, barHeight, barRadius, lineColor)
 		case "segmented":
-			segments := getItemAttrInt(item, "segments", 12)
+			segments := getItemAttrIntCfg(item, config, "segments", 12)
 			if segments < 4 {
 				segments = 4
 			}
-			gap := getItemAttrFloat(item, "segment_gap", 2)
+			gap := getItemAttrFloatCfg(item, config, "segment_gap", 2)
 			segW := (body.w - float64(segments-1)*gap) / float64(segments)
 			filled := int(math.Round(progress * float64(segments)))
 			for i := 0; i < segments; i++ {
@@ -423,13 +507,11 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 		}
 	}
 
-	percentText := fmt.Sprintf("%.0f%%", progress*100)
-	dc.SetFontFace(resolveFontFace(fontCache, 10))
-	dc.SetColor(parseColor(textColor))
-	dc.DrawStringAnchored(percentText, body.x+body.w, barY+barHeight+12, 1, 0.5)
+	_ = fontCache
+	_ = textColor
 }
 
-func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
@@ -439,7 +521,7 @@ func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, fon
 	if radius < 16 {
 		radius = 16
 	}
-	thickness := getItemAttrFloat(item, "gauge_thickness", 9)
+	thickness := getItemAttrFloatCfg(item, config, "gauge_thickness", 9)
 	if thickness < 4 {
 		thickness = 4
 	}
@@ -469,12 +551,12 @@ func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, fon
 	}
 
 	label := FormatCollectValue(value, true, resolveUnitOverride(item))
-	dc.SetFontFace(resolveFontFace(fontCache, 12))
+	labelFace := resolveFontFace(fontCache, 12)
 	dc.SetColor(parseColor(textColor))
-	dc.DrawStringAnchored(label, cx, body.y+body.h*0.72, 0.5, 0.5)
+	drawMetricAnchoredText(dc, labelFace, label, cx, body.y+body.h*0.72, 0.5)
 }
 
-func (r *FullWidgetRenderer) drawFullRing(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullRing(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
@@ -484,7 +566,7 @@ func (r *FullWidgetRenderer) drawFullRing(dc *gg.Context, item *ItemConfig, font
 	if radius < 12 {
 		radius = 12
 	}
-	thickness := getItemAttrFloat(item, "ring_thickness", 8)
+	thickness := getItemAttrFloatCfg(item, config, "ring_thickness", 8)
 	if thickness < 4 {
 		thickness = 4
 	}
@@ -501,12 +583,12 @@ func (r *FullWidgetRenderer) drawFullRing(dc *gg.Context, item *ItemConfig, font
 	dc.Stroke()
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 12))
-	dc.DrawStringAnchored(fmt.Sprintf("%.0f%%", progress*100), cx, cy, 0.5, 0.5)
+	ringFace := resolveFontFace(fontCache, 12)
+	drawMetricAnchoredText(dc, ringFace, fmt.Sprintf("%.0f%%", progress*100), cx, cy, 0.5)
 }
 
-func (r *FullWidgetRenderer) drawFullMinMax(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
-	history := r.appendHistory(item, numberValue, getItemAttrInt(item, "history_points", 120))
+func (r *FullWidgetRenderer) drawFullMinMax(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
+	history := r.appendHistory(item, numberValue, getItemAttrIntCfg(item, config, "history_points", 120), config)
 	if len(history) == 0 {
 		return
 	}
@@ -519,11 +601,11 @@ func (r *FullWidgetRenderer) drawFullMinMax(dc *gg.Context, item *ItemConfig, fo
 	}
 
 	statsY := body.y + 12
-	dc.SetFontFace(resolveFontFace(fontCache, 10))
+	statsFace := resolveFontFace(fontCache, 10)
 	dc.SetColor(parseColor(applyAlpha(textColor, 0.78)))
-	dc.DrawStringAnchored(fmt.Sprintf("Min %.1f", minVal), body.x, statsY, 0, 0.5)
-	dc.DrawStringAnchored(fmt.Sprintf("Avg %.1f", avgVal), body.x+body.w/2, statsY, 0.5, 0.5)
-	dc.DrawStringAnchored(fmt.Sprintf("Max %.1f", maxVal), body.x+body.w, statsY, 1, 0.5)
+	drawMetricAnchoredText(dc, statsFace, fmt.Sprintf("Min %.1f", minVal), body.x, statsY, 0)
+	drawMetricAnchoredText(dc, statsFace, fmt.Sprintf("Avg %.1f", avgVal), body.x+body.w/2, statsY, 0.5)
+	drawMetricAnchoredText(dc, statsFace, fmt.Sprintf("Max %.1f", maxVal), body.x+body.w, statsY, 1)
 
 	chart := fullRect{x: body.x, y: body.y + 20, w: body.w, h: body.h - 24}
 	dc.SetColor(parseColor(applyAlpha("#334155", 0.5)))
@@ -558,16 +640,16 @@ func (r *FullWidgetRenderer) drawFullMinMax(dc *gg.Context, item *ItemConfig, fo
 }
 
 func (r *FullWidgetRenderer) drawFullDelta(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
-	history := r.appendHistory(item, numberValue, getItemAttrInt(item, "history_points", 60))
+	history := r.appendHistory(item, numberValue, getItemAttrIntCfg(item, config, "history_points", 60), config)
 	previous := findPreviousValidHistoryValue(history, numberValue)
 	delta := numberValue - previous
 
 	minValue, maxValue := resolveRangeValue(item, value, previous-1, previous+1)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
-	mainSize := getItemAttrInt(item, "main_font_size", 0)
+	mainSize := getItemAttrIntCfg(item, config, "main_font_size", 0)
 	if mainSize <= 0 {
-		mainSize = resolveFullDefaultFontSize(config, 16)
+		mainSize = resolveFullDefaultValueFontSize(config, 16)
 	}
 	if mainSize < 12 {
 		mainSize = 12
@@ -583,12 +665,12 @@ func (r *FullWidgetRenderer) drawFullDelta(dc *gg.Context, item *ItemConfig, fon
 	}
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, mainSize))
-	dc.DrawStringAnchored(FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+2, body.y+body.h*0.35, 0, 0.5)
+	mainFace := resolveFontFace(fontCache, mainSize)
+	drawMetricAnchoredText(dc, mainFace, FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+2, body.y+body.h*0.35, 0)
 
 	dc.SetColor(parseColor(deltaColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 12))
-	dc.DrawStringAnchored(fmt.Sprintf("%s %.2f", deltaSign, delta), body.x+body.w, body.y+body.h*0.35, 1, 0.5)
+	deltaFace := resolveFontFace(fontCache, 12)
+	drawMetricAnchoredText(dc, deltaFace, fmt.Sprintf("%s %.2f", deltaSign, delta), body.x+body.w, body.y+body.h*0.35, 1)
 
 	barY := body.y + body.h*0.58
 	barH := math.Min(14, body.h*0.35)
@@ -622,12 +704,12 @@ func (r *FullWidgetRenderer) drawFullStatus(dc *gg.Context, item *ItemConfig, fo
 	pillY := body.y + 4
 	drawRoundedRectFill(dc, pillX, pillY, pillW, pillH, 12, applyAlpha(statusColor, 0.2))
 	dc.SetColor(parseColor(statusColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 11))
-	dc.DrawStringAnchored(statusText, pillX+pillW/2, pillY+pillH/2, 0.5, 0.5)
+	statusFace := resolveFontFace(fontCache, 11)
+	drawMetricAnchoredText(dc, statusFace, statusText, pillX+pillW/2, pillY+pillH/2, 0.5)
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 12))
-	dc.DrawStringAnchored(FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w, pillY+pillH/2, 1, 0.5)
+	valueFace := resolveFontFace(fontCache, 12)
+	drawMetricAnchoredText(dc, valueFace, FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w, pillY+pillH/2, 1)
 
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 	barY := body.y + body.h - 16
@@ -635,7 +717,7 @@ func (r *FullWidgetRenderer) drawFullStatus(dc *gg.Context, item *ItemConfig, fo
 	drawRoundedRectFill(dc, body.x, barY, body.w*progress, 10, 5, lineColor)
 }
 
-func (r *FullWidgetRenderer) drawFullMeterH(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullMeterH(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
@@ -643,7 +725,7 @@ func (r *FullWidgetRenderer) drawFullMeterH(dc *gg.Context, item *ItemConfig, fo
 	trackH := 10.0
 	drawRoundedRectFill(dc, body.x, trackY, body.w, trackH, 5, "#1f2937")
 
-	ticks := getItemAttrInt(item, "ticks", 8)
+	ticks := getItemAttrIntCfg(item, config, "ticks", 8)
 	if ticks < 3 {
 		ticks = 3
 	}
@@ -664,11 +746,11 @@ func (r *FullWidgetRenderer) drawFullMeterH(dc *gg.Context, item *ItemConfig, fo
 	dc.Fill()
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 11))
-	dc.DrawStringAnchored(FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w, body.y+12, 1, 0.5)
+	meterFace := resolveFontFace(fontCache, 11)
+	drawMetricAnchoredText(dc, meterFace, FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w, body.y+12, 1)
 }
 
-func (r *FullWidgetRenderer) drawFullMeterV(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullMeterV(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
@@ -678,7 +760,7 @@ func (r *FullWidgetRenderer) drawFullMeterV(dc *gg.Context, item *ItemConfig, fo
 	trackH := body.h - 12
 	drawRoundedRectFill(dc, trackX, trackY, trackW, trackH, 6, "#1f2937")
 
-	segments := getItemAttrInt(item, "segments", 12)
+	segments := getItemAttrIntCfg(item, config, "segments", 12)
 	if segments < 4 {
 		segments = 4
 	}
@@ -695,19 +777,19 @@ func (r *FullWidgetRenderer) drawFullMeterV(dc *gg.Context, item *ItemConfig, fo
 	}
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 11))
-	dc.DrawStringAnchored(FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w/2, body.y+body.h-2, 0.5, 1)
+	meterFace := resolveFontFace(fontCache, 11)
+	drawMetricAnchoredText(dc, meterFace, FormatCollectValue(value, true, resolveUnitOverride(item)), body.x+body.w/2, body.y+body.h-8, 0.5)
 }
 
-func (r *FullWidgetRenderer) drawFullHeatStrip(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect) {
+func (r *FullWidgetRenderer) drawFullHeatStrip(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
-	cells := getItemAttrInt(item, "cells", 12)
+	cells := getItemAttrIntCfg(item, config, "cells", 12)
 	if cells < 4 {
 		cells = 4
 	}
-	gap := getItemAttrFloat(item, "cell_gap", 2)
+	gap := getItemAttrFloatCfg(item, config, "cell_gap", 2)
 	if gap < 0 {
 		gap = 0
 	}
@@ -728,17 +810,17 @@ func (r *FullWidgetRenderer) drawFullHeatStrip(dc *gg.Context, item *ItemConfig,
 	}
 
 	dc.SetColor(parseColor(textColor))
-	dc.SetFontFace(resolveFontFace(fontCache, 11))
-	dc.DrawStringAnchored(fmt.Sprintf("%.0f%%", progress*100), body.x+body.w, body.y+body.h-1, 1, 1)
+	heatFace := resolveFontFace(fontCache, 11)
+	drawMetricAnchoredText(dc, heatFace, fmt.Sprintf("%.0f%%", progress*100), body.x+body.w, body.y+body.h-8, 1)
 	_ = lineColor
 	_ = value
 }
 
-func (r *FullWidgetRenderer) appendHistory(item *ItemConfig, value float64, defaultPoints int) []float64 {
+func (r *FullWidgetRenderer) appendHistory(item *ItemConfig, value float64, defaultPoints int, config *MonitorConfig) []float64 {
 	if r.history == nil {
 		return []float64{value}
 	}
-	points := getItemAttrInt(item, "history_points", defaultPoints)
+	points := getItemAttrIntCfg(item, config, "history_points", defaultPoints)
 	key := fmt.Sprintf("%s|%s|%d|%d|%d|%d", item.Type, item.Monitor, item.X, item.Y, item.Width, item.Height)
 	return r.history.append(key, value, points)
 }

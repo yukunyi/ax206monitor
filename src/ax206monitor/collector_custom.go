@@ -4,6 +4,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type customEntry struct {
@@ -13,6 +14,7 @@ type customEntry struct {
 
 type CustomCollector struct {
 	*BaseCollector
+	mu     sync.RWMutex
 	cfg    *MonitorConfig
 	lookup func(string) *CollectItem
 	items  map[string]customEntry
@@ -21,32 +23,45 @@ type CustomCollector struct {
 func NewCustomCollector(cfg *MonitorConfig, lookup func(string) *CollectItem) *CustomCollector {
 	collector := &CustomCollector{
 		BaseCollector: NewBaseCollector("custom.all"),
-		cfg:           cfg,
 		lookup:        lookup,
 		items:         make(map[string]customEntry),
 	}
-	if cfg != nil {
-		collector.SetEnabled(cfg.IsCollectorEnabled("custom.all", true))
-	}
+	collector.ApplyConfig(cfg)
 	return collector
 }
 
-func (c *CustomCollector) GetAllItems() map[string]*CollectItem {
+func (c *CustomCollector) ApplyConfig(cfg *MonitorConfig) {
+	c.mu.Lock()
+	c.cfg = cfg
+	if cfg != nil {
+		c.SetEnabled(cfg.IsCollectorEnabled(collectorCustomAll, true))
+	} else {
+		c.SetEnabled(true)
+	}
+	c.rebuildItemsLocked()
+	c.mu.Unlock()
+}
+
+func (c *CustomCollector) rebuildItemsLocked() {
+	c.items = make(map[string]customEntry)
+	c.clearItems()
 	if c.cfg == nil {
-		return c.ItemsSnapshot()
+		return
 	}
 	for _, custom := range c.cfg.CustomMonitors {
 		name := strings.TrimSpace(custom.Name)
 		if name == "" {
 			continue
 		}
-		if _, exists := c.items[name]; exists {
-			continue
-		}
 		item := buildCustomCollectItem(&custom, custom.Name, "", 2, 0, 0)
 		c.items[name] = customEntry{cfg: custom, item: item}
 		c.setItem(name, item)
 	}
+}
+
+func (c *CustomCollector) GetAllItems() map[string]*CollectItem {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.ItemsSnapshot()
 }
 
@@ -54,9 +69,15 @@ func (c *CustomCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	_ = c.GetAllItems()
-
+	c.mu.RLock()
+	entries := make([]customEntry, 0, len(c.items))
 	for _, entry := range c.items {
+		entries = append(entries, entry)
+	}
+	lookup := c.lookup
+	c.mu.RUnlock()
+
+	for _, entry := range entries {
 		item := entry.item
 		if item == nil || !item.IsEnabled() {
 			continue
@@ -86,10 +107,10 @@ func (c *CustomCollector) UpdateItems() error {
 			values := make([]float64, 0, len(custom.Sources))
 			for _, sourceName := range custom.Sources {
 				sourceName = strings.TrimSpace(sourceName)
-				if sourceName == "" || c.lookup == nil {
+				if sourceName == "" || lookup == nil {
 					continue
 				}
-				source := c.lookup(sourceName)
+				source := lookup(sourceName)
 				if source == nil || !source.IsAvailable() {
 					continue
 				}
@@ -131,11 +152,11 @@ func (c *CustomCollector) UpdateItems() error {
 			item.SetAvailable(true)
 		case "coolercontrol", "librehardwaremonitor":
 			sourceKey := strings.TrimSpace(custom.Source)
-			if sourceKey == "" || c.lookup == nil {
+			if sourceKey == "" || lookup == nil {
 				item.SetAvailable(false)
 				continue
 			}
-			source := c.lookup(sourceKey)
+			source := lookup(sourceKey)
 			if source == nil || !source.IsAvailable() {
 				item.SetAvailable(false)
 				continue

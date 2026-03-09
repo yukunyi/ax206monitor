@@ -63,6 +63,8 @@ type LibreHardwareMonitorData struct {
 
 type LibreHardwareMonitorClient struct {
 	baseURL    string
+	username   string
+	password   string
 	httpClient *http.Client
 	data       *LibreHardwareMonitorData
 	options    []LibreHardwareMonitorMonitorOption
@@ -75,21 +77,25 @@ var (
 	libreHWMonitorClientsMu sync.Mutex
 )
 
-func GetLibreHardwareMonitorClient(url string) *LibreHardwareMonitorClient {
+func GetLibreHardwareMonitorClient(url, username, password string) *LibreHardwareMonitorClient {
 	if strings.TrimSpace(url) == "" {
 		url = "http://127.0.0.1:8085"
 	}
 	url = strings.TrimRight(url, "/")
+	username = strings.TrimSpace(username)
 
 	libreHWMonitorClientsMu.Lock()
 	defer libreHWMonitorClientsMu.Unlock()
 
-	if client, ok := libreHWMonitorClients[url]; ok {
+	key := fmt.Sprintf("%s|%s|%s", url, username, password)
+	if client, ok := libreHWMonitorClients[key]; ok {
 		return client
 	}
 
 	client := &LibreHardwareMonitorClient{
-		baseURL: url,
+		baseURL:  url,
+		username: username,
+		password: password,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -99,7 +105,7 @@ func GetLibreHardwareMonitorClient(url string) *LibreHardwareMonitorClient {
 		options:   []LibreHardwareMonitorMonitorOption{},
 		sensorMap: make(map[string]string),
 	}
-	libreHWMonitorClients[url] = client
+	libreHWMonitorClients[key] = client
 	return client
 }
 
@@ -112,7 +118,14 @@ func (c *LibreHardwareMonitorClient) FetchData() error {
 	}
 
 	url := c.baseURL + "/data.json"
-	resp, err := c.httpClient.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build request for %s: %v", url, err)
+	}
+	if c.username != "" || c.password != "" {
+		req.SetBasicAuth(c.username, c.password)
+	}
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch data from %s: %v", url, err)
 	}

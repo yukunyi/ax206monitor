@@ -3,13 +3,14 @@ package main
 import (
 	"ax206monitor/rtsssource"
 	"ax206monitor/webui"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	goruntime "runtime"
 	"sort"
 	"strings"
@@ -30,7 +31,7 @@ type ConfigStore struct {
 	path      string
 	mu        sync.RWMutex
 	cfg       *MonitorConfig
-	runtime   *WebRuntime
+	runtime   *WebAPI
 	profiles  *ProfileManager
 	wsMu      sync.RWMutex
 	wsClients map[*webSocketClient]struct{}
@@ -38,6 +39,7 @@ type ConfigStore struct {
 
 type WebMetaResponse struct {
 	ConfigPath           string   `json:"config_path"`
+	Platform             string   `json:"platform,omitempty"`
 	Monitors             []string `json:"monitors"`
 	Collectors           []string `json:"collectors,omitempty"`
 	ItemTypes            []string `json:"item_types"`
@@ -53,24 +55,174 @@ type WebConfigResponse struct {
 	Config *MonitorConfig `json:"config"`
 }
 
-type ProfileInfo struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	UpdatedAt string `json:"updated_at"`
-	Size      int64  `json:"size"`
-	ReadOnly  bool   `json:"readonly,omitempty"`
-	Builtin   bool   `json:"builtin,omitempty"`
+var (
+	runningWebServerMu sync.Mutex
+	runningWebServer   *echo.Echo
+)
+
+func claimRunningWebServer(server *echo.Echo) error {
+	if server == nil {
+		return fmt.Errorf("web server instance is nil")
+	}
+	runningWebServerMu.Lock()
+	defer runningWebServerMu.Unlock()
+	if runningWebServer != nil {
+		return fmt.Errorf("web server already running")
+	}
+	runningWebServer = server
+	return nil
 }
 
-type ProfileManager struct {
-	currentConfigPath string
-	profilesDir       string
-	activeProfileFile string
-	builtinProfiles   map[string]*MonitorConfig
-	mu                sync.RWMutex
+func releaseRunningWebServer(server *echo.Echo) {
+	runningWebServerMu.Lock()
+	defer runningWebServerMu.Unlock()
+	if runningWebServer == server {
+		runningWebServer = nil
+	}
 }
 
-var profileNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+func stopRunningWebServer(timeout time.Duration) error {
+	runningWebServerMu.Lock()
+	server := runningWebServer
+	runningWebServerMu.Unlock()
+	if server == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := server.Shutdown(ctx)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+type WebServerProcess struct {
+	mu       sync.Mutex
+	port     int
+	devMode  bool
+	viteURL  string
+	done     chan error
+	stopping bool
+}
+
+func NewWebServerProcess(port int, devMode bool, viteURL string) *WebServerProcess {
+	return &WebServerProcess{
+		port:    port,
+		devMode: devMode,
+		viteURL: viteURL,
+	}
+}
+
+func (p *WebServerProcess) URL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", p.port)
+}
+
+func (p *WebServerProcess) IsRunning() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done != nil
+}
+
+func (p *WebServerProcess) Start() error {
+	p.mu.Lock()
+	if p.done != nil {
+		p.mu.Unlock()
+		return nil
+	}
+	done := make(chan error, 1)
+	p.done = done
+	p.stopping = false
+	p.mu.Unlock()
+
+	options := WebServerOptions{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", p.port),
+		DevMode: p.devMode,
+		ViteURL: p.viteURL,
+	}
+
+	go func() {
+		err := RunWebServer(options)
+		done <- err
+		close(done)
+	}()
+	select {
+	case err := <-done:
+		p.mu.Lock()
+		if p.done == done {
+			p.done = nil
+			p.stopping = false
+		}
+		p.mu.Unlock()
+		if err == nil {
+			return nil
+		}
+		return err
+	case <-time.After(150 * time.Millisecond):
+		go p.watchProcess(done)
+		logInfoModule("tray", "web server started in-process pid=%d addr=%s", os.Getpid(), p.URL())
+		return nil
+	}
+}
+
+func (p *WebServerProcess) watchProcess(done chan error) {
+	err, ok := <-done
+	if !ok {
+		err = nil
+	}
+
+	p.mu.Lock()
+	stopping := p.stopping
+	if p.done == done {
+		p.done = nil
+		p.stopping = false
+	}
+	p.mu.Unlock()
+
+	if err != nil {
+		if stopping {
+			logInfoModule("tray", "web server stopped")
+			return
+		}
+		logWarnModule("tray", "web server exited with error: %v", err)
+		return
+	}
+	if stopping {
+		logInfoModule("tray", "web server stopped")
+		return
+	}
+	logInfoModule("tray", "web server exited")
+}
+
+func (p *WebServerProcess) Stop() error {
+	p.mu.Lock()
+	done := p.done
+	if done != nil {
+		p.stopping = true
+	}
+	p.mu.Unlock()
+
+	if done == nil {
+		return nil
+	}
+
+	if err := stopRunningWebServer(3 * time.Second); err != nil {
+		return fmt.Errorf("stop web server failed: %w", err)
+	}
+
+	select {
+	case err, ok := <-done:
+		if !ok || err == nil {
+			return nil
+		}
+		return err
+	case <-time.After(4 * time.Second):
+		return fmt.Errorf("wait web server stop timeout")
+	}
+}
 
 func RunWebServer(options WebServerOptions) error {
 	configPath, err := getUserConfigPath()
@@ -83,11 +235,7 @@ func RunWebServer(options WebServerOptions) error {
 		return err
 	}
 
-	profileManager, err := NewProfileManager(configPath)
-	if err != nil {
-		return err
-	}
-	initialConfig, err = profileManager.Initialize(initialConfig)
+	profileManager, initialConfig, err := InitializeGlobalProfileManager(configPath, initialConfig)
 	if err != nil {
 		return err
 	}
@@ -98,10 +246,11 @@ func RunWebServer(options WebServerOptions) error {
 		profiles:  profileManager,
 		wsClients: make(map[*webSocketClient]struct{}),
 	}
-	runtime, err := NewWebRuntime(initialConfig)
+	runtime, err := AcquireSharedWebAPI(initialConfig)
 	if err != nil {
 		return err
 	}
+	defer ReleaseSharedWebAPI(runtime)
 	runtime.SetIdleConfigProvider(func() (*MonitorConfig, error) {
 		activeName := profileManager.ActiveName()
 		if strings.TrimSpace(activeName) == "" {
@@ -114,7 +263,6 @@ func RunWebServer(options WebServerOptions) error {
 		return cfg, nil
 	})
 	store.runtime = runtime
-	defer runtime.Close()
 
 	e := echo.New()
 	e.HideBanner = true
@@ -513,13 +661,22 @@ func RunWebServer(options WebServerOptions) error {
 		logInfoModule("web", "Web config server started: http://%s", options.Addr)
 	}
 
-	return e.Start(options.Addr)
+	if err := claimRunningWebServer(e); err != nil {
+		return err
+	}
+	defer releaseRunningWebServer(e)
+	err = e.Start(options.Addr)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 	config := store.getConfig()
 	return WebMetaResponse{
 		ConfigPath:           store.path,
+		Platform:             goruntime.GOOS,
 		Monitors:             collectMonitorNames(config, store.runtime),
 		Collectors:           store.collectorNames(),
 		ItemTypes:            webItemTypes(),
@@ -532,13 +689,16 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 	}
 }
 
-func collectMonitorNames(config *MonitorConfig, runtimeState *WebRuntime) []string {
+func collectMonitorNames(config *MonitorConfig, runtimeState *WebAPI) []string {
 	monitorSet := make(map[string]struct{})
 	registryConfig := getCollectorManagerConfig()
 	for _, monitor := range registryConfig.Items {
 		monitorSet[monitor.Name] = struct{}{}
 	}
-	if goruntime.GOOS == "windows" && config != nil && config.IsCollectorEnabled("external.rtss", false) {
+	for _, aliasName := range monitorAliasNames() {
+		monitorSet[aliasName] = struct{}{}
+	}
+	if goruntime.GOOS == "windows" && config != nil && config.IsRTSSCollectEnabled() {
 		for _, option := range rtsssource.GetRTSSClient().ListMonitorOptions() {
 			if strings.TrimSpace(option.Name) == "" {
 				continue
@@ -639,6 +799,9 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		Height:                  320,
 		DefaultFont:             getDefaultFontName(),
 		DefaultFontSize:         16,
+		DefaultValueFontSize:    18,
+		DefaultLabelFontSize:    16,
+		DefaultUnitFontSize:     14,
 		DefaultColor:            "#f8fafc",
 		DefaultBackground:       "#0b1220",
 		LevelColors:             []string{"#22c55e", "#eab308", "#f97316", "#ef4444"},
@@ -649,31 +812,31 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		CollectWarnMS:           100,
 		RenderWaitMaxMS:         300,
 		HistorySize:             150,
+		DefaultHistoryPoints:    150,
 		NetworkInterface:        "",
 		LibreHardwareMonitorURL: defaultLibreHardwareMonitorURL,
 		CoolerControlURL:        defaultCoolerControlURL,
 		CustomMonitors:          []CustomMonitorConfig{},
 		CollectorConfig: map[string]CollectorConfig{
-			"go_native.cpu":                 {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"go_native.memory":              {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"go_native.system":              {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"go_native.disk":                {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"go_native.network":             {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"custom.all":                    {Enabled: boolPtr(true), Options: map[string]interface{}{}},
-			"external.coolercontrol":        {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultCoolerControlURL}},
-			"external.librehardwaremonitor": {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultLibreHardwareMonitorURL}},
-			"external.rtss":                 {Enabled: boolPtr(false), Options: map[string]interface{}{}},
+			collectorGoNativeCPU:          {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorGoNativeMemory:       {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorGoNativeSystem:       {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorGoNativeDisk:         {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorGoNativeNetwork:      {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorCustomAll:            {Enabled: boolPtr(true), Options: map[string]interface{}{}},
+			collectorCoolerControl:        {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultCoolerControlURL}},
+			collectorLibreHardwareMonitor: {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultLibreHardwareMonitorURL}},
+			collectorRTSS:                 {Enabled: boolPtr(false), Options: map[string]interface{}{}},
 		},
 		Items: []ItemConfig{
 			{
-				Type:     itemTypeSimpleValue,
-				Monitor:  "go_native.cpu.temp",
-				Unit:     "auto",
-				X:        12,
-				Y:        12,
-				Width:    180,
-				Height:   56,
-				FontSize: 16,
+				Type:    itemTypeSimpleValue,
+				Monitor: "go_native.cpu.temp",
+				Unit:    "auto",
+				X:       12,
+				Y:       12,
+				Width:   180,
+				Height:  56,
 			},
 		},
 	}
@@ -702,18 +865,46 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.CollectorConfig == nil {
 		cfg.CollectorConfig = make(map[string]CollectorConfig)
 	}
-	ensureCollectorConfigDefault(cfg, "go_native.cpu", true)
-	ensureCollectorConfigDefault(cfg, "go_native.memory", true)
-	ensureCollectorConfigDefault(cfg, "go_native.system", true)
-	ensureCollectorConfigDefault(cfg, "go_native.disk", true)
-	ensureCollectorConfigDefault(cfg, "go_native.network", true)
-	ensureCollectorConfigDefault(cfg, "custom.all", true)
-	ensureCollectorConfigDefault(cfg, "external.coolercontrol", false)
-	ensureCollectorConfigDefault(cfg, "external.librehardwaremonitor", false)
-	ensureCollectorConfigDefault(cfg, "external.rtss", false)
+	migrateLegacyCollectorConfig(cfg)
+	builtinCooler, builtinLibre, builtinRTSS := builtinCollectorDefaults(cfg.Name)
+	ensureCollectorConfigDefault(cfg, collectorGoNativeCPU, true)
+	ensureCollectorConfigDefault(cfg, collectorGoNativeMemory, true)
+	ensureCollectorConfigDefault(cfg, collectorGoNativeSystem, true)
+	ensureCollectorConfigDefault(cfg, collectorGoNativeDisk, true)
+	ensureCollectorConfigDefault(cfg, collectorGoNativeNetwork, true)
+	ensureCollectorConfigDefault(cfg, collectorCustomAll, true)
+	ensureCollectorConfigDefault(cfg, collectorCoolerControl, builtinCooler)
+	ensureCollectorConfigDefault(cfg, collectorLibreHardwareMonitor, builtinLibre)
+	defaultRTSS := builtinRTSS
+	if goruntime.GOOS == "windows" {
+		defaultRTSS = true
+	}
+	ensureCollectorConfigDefault(cfg, collectorRTSS, defaultRTSS)
+	applyBuiltinCollectorDefaults(cfg, builtinCooler, builtinLibre, builtinRTSS)
+	if goruntime.GOOS == "windows" && configNeedsRTSS(cfg) {
+		setCollectorEnabled(cfg, collectorRTSS, true)
+	}
+	if cfg.EnableRTSSCollect {
+		entry := cfg.CollectorConfig[collectorRTSS]
+		enabled := true
+		entry.Enabled = &enabled
+		if entry.Options == nil {
+			entry.Options = map[string]interface{}{}
+		}
+		cfg.CollectorConfig[collectorRTSS] = entry
+	}
+	if cfg.IsCollectorEnabled(collectorRTSS, false) {
+		cfg.EnableRTSSCollect = true
+	}
+	enforceCollectorPlatformSupport(cfg)
 
 	if cfg.FontFamilies == nil {
 		cfg.FontFamilies = getDefaultFontFamilies()
+	}
+	if goruntime.GOOS == "windows" {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(cfg.DefaultFont)), "wqy") {
+			cfg.DefaultFont = getDefaultFontName()
+		}
 	}
 	if cfg.CustomMonitors == nil {
 		cfg.CustomMonitors = []CustomMonitorConfig{}
@@ -793,6 +984,24 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.DefaultFontSize <= 0 {
 		cfg.DefaultFontSize = 16
 	}
+	if cfg.DefaultValueFontSize <= 0 {
+		cfg.DefaultValueFontSize = cfg.GetDefaultFontSize() + 2
+	}
+	if cfg.DefaultValueFontSize < 8 {
+		cfg.DefaultValueFontSize = 8
+	}
+	if cfg.DefaultLabelFontSize <= 0 {
+		cfg.DefaultLabelFontSize = cfg.GetDefaultFontSize()
+	}
+	if cfg.DefaultLabelFontSize < 8 {
+		cfg.DefaultLabelFontSize = 8
+	}
+	if cfg.DefaultUnitFontSize <= 0 {
+		cfg.DefaultUnitFontSize = cfg.GetDefaultLabelFontSize() - 2
+	}
+	if cfg.DefaultUnitFontSize < 8 {
+		cfg.DefaultUnitFontSize = 8
+	}
 	if strings.TrimSpace(cfg.DefaultColor) == "" {
 		cfg.DefaultColor = "#f8fafc"
 	}
@@ -815,14 +1024,34 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if strings.TrimSpace(cfg.LibreHardwareMonitorURL) == "" {
 		cfg.LibreHardwareMonitorURL = defaultLibreHardwareMonitorURL
 	}
-	setCollectorOptionDefault(cfg, "external.coolercontrol", "url", defaultCoolerControlURL)
-	setCollectorOptionDefault(cfg, "external.librehardwaremonitor", "url", defaultLibreHardwareMonitorURL)
+	if cfg.DefaultHistoryPoints <= 0 {
+		if cfg.HistorySize > 0 {
+			cfg.DefaultHistoryPoints = cfg.HistorySize
+		} else {
+			cfg.DefaultHistoryPoints = 150
+		}
+	}
+	if cfg.DefaultHistoryPoints < 10 {
+		cfg.DefaultHistoryPoints = 10
+	}
+	if cfg.DefaultHistoryPoints > 5000 {
+		cfg.DefaultHistoryPoints = 5000
+	}
+	if cfg.HistorySize <= 0 {
+		cfg.HistorySize = cfg.DefaultHistoryPoints
+	}
+	ensureTypeDefaults(cfg)
+	setCollectorOptionDefault(cfg, collectorCoolerControl, "url", defaultCoolerControlURL)
+	setCollectorOptionDefault(cfg, collectorLibreHardwareMonitor, "url", defaultLibreHardwareMonitorURL)
 
 	for idx := range cfg.Items {
 		item := &cfg.Items[idx]
 		item.Type = normalizeItemType(item.Type)
 		item.Monitor = normalizeMonitorAlias(item.Monitor)
 		item.EditUIName = defaultEditUIName(item.EditUIName, idx, item)
+		if !cfg.AllowCustomStyle {
+			item.CustomStyle = false
+		}
 		if item.Width <= 0 {
 			item.Width = 120
 		}
@@ -841,13 +1070,13 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		if item.UnitFontSize < 0 {
 			item.UnitFontSize = 0
 		}
+		if isBuiltinProfileName(cfg.Name) {
+			stripBuiltinItemStyleOverrides(item)
+		}
 		if item.Type == itemTypeSimpleChart {
 			item.History = true
-			if item.PointSize <= 0 {
-				item.PointSize = cfg.HistorySize
-			}
-			if item.PointSize < 10 {
-				item.PointSize = 10
+			if item.PointSize < 0 {
+				item.PointSize = 0
 			}
 		} else {
 			item.History = false
@@ -883,9 +1112,400 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	}
 }
 
+func ensureTypeDefaults(cfg *MonitorConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.TypeDefaults == nil {
+		cfg.TypeDefaults = map[string]ItemTypeDefaults{}
+	}
+	for _, itemType := range webItemTypes() {
+		entry := cfg.TypeDefaults[itemType]
+		entry = normalizeTypeDefaultsEntry(cfg, itemType, entry)
+		cfg.TypeDefaults[itemType] = entry
+	}
+}
+
+func normalizeTypeDefaultsEntry(cfg *MonitorConfig, itemType string, entry ItemTypeDefaults) ItemTypeDefaults {
+	base := defaultTypeDefaults(cfg, itemType)
+
+	if entry.FontSize < 0 {
+		entry.FontSize = 0
+	}
+	if entry.SmallFontSize < 0 {
+		entry.SmallFontSize = 0
+	}
+	if entry.MediumFontSize < 0 {
+		entry.MediumFontSize = 0
+	}
+	if entry.LargeFontSize < 0 {
+		entry.LargeFontSize = 0
+	}
+	if entry.UnitFontSize < 0 {
+		entry.UnitFontSize = 0
+	}
+	if entry.SmallFontSize == 0 && entry.UnitFontSize > 0 {
+		entry.SmallFontSize = entry.UnitFontSize
+	}
+	if entry.MediumFontSize == 0 && entry.FontSize > 0 {
+		entry.MediumFontSize = entry.FontSize
+	}
+	if entry.LargeFontSize == 0 && entry.FontSize > 0 {
+		entry.LargeFontSize = entry.FontSize
+	}
+	if entry.PointSize < 0 {
+		entry.PointSize = 0
+	}
+	if isHistoryItemType(itemType) {
+		if entry.PointSize == 0 {
+			entry.PointSize = base.PointSize
+		}
+		if entry.PointSize < 10 {
+			entry.PointSize = 10
+		}
+	} else {
+		entry.PointSize = 0
+	}
+	if itemType == itemTypeSimpleChart {
+		if entry.RenderAttrsMap == nil {
+			entry.RenderAttrsMap = map[string]interface{}{}
+		}
+		historyPoints := entry.PointSize
+		if historyPoints <= 0 {
+			if raw, exists := entry.RenderAttrsMap["history_points"]; exists && raw != nil {
+				switch typed := raw.(type) {
+				case int:
+					historyPoints = typed
+				case int32:
+					historyPoints = int(typed)
+				case int64:
+					historyPoints = int(typed)
+				case float32:
+					historyPoints = int(typed)
+				case float64:
+					historyPoints = int(typed)
+				}
+			}
+		}
+		if historyPoints <= 0 {
+			historyPoints = base.PointSize
+		}
+		if historyPoints < 10 {
+			historyPoints = 10
+		}
+		entry.PointSize = historyPoints
+		entry.RenderAttrsMap["history_points"] = historyPoints
+	}
+	if entry.BorderWidth < 0 {
+		entry.BorderWidth = 0
+	}
+	if entry.Radius < 0 {
+		entry.Radius = 0
+	}
+	if strings.TrimSpace(entry.Color) == "" {
+		entry.Color = base.Color
+	}
+	if strings.TrimSpace(entry.Background) == "" {
+		entry.Background = base.Background
+	}
+	if strings.TrimSpace(entry.UnitColor) == "" {
+		entry.UnitColor = base.UnitColor
+	}
+	if strings.TrimSpace(entry.BorderColor) == "" {
+		entry.BorderColor = base.BorderColor
+	}
+	entry.FontSize = 0
+	entry.UnitFontSize = 0
+
+	entry.RenderAttrsMap = mergeDefaultRenderAttrs(base.RenderAttrsMap, entry.RenderAttrsMap)
+	return entry
+}
+
+func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
+	defaultColor := "#f8fafc"
+	defaultValueSize := 16
+	defaultLabelSize := 14
+	defaultHistoryPoints := 150
+	if cfg != nil {
+		defaultColor = cfg.GetDefaultTextColor()
+		defaultValueSize = cfg.GetDefaultValueFontSize()
+		defaultLabelSize = cfg.GetDefaultLabelFontSize()
+		defaultHistoryPoints = cfg.GetDefaultHistoryPoints()
+	}
+
+	defaults := ItemTypeDefaults{
+		FontSize:       0,
+		SmallFontSize:  0,
+		MediumFontSize: 0,
+		LargeFontSize:  0,
+		Color:          defaultColor,
+		Background:     "",
+		UnitColor:      defaultColor,
+		UnitFontSize:   0,
+		PointSize:      0,
+		BorderColor:    "#475569",
+		BorderWidth:    0,
+		Radius:         0,
+		RenderAttrsMap: map[string]interface{}{},
+	}
+
+	if isHistoryItemType(itemType) {
+		defaults.PointSize = defaultHistoryPoints
+	}
+
+	switch itemType {
+	case itemTypeSimpleChart:
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"history_points": defaultHistoryPoints,
+		}
+	case itemTypeSimpleRect, itemTypeSimpleCircle:
+		defaults.Background = "#33415566"
+	case itemTypeLabelText1:
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"content_padding": 3,
+		}
+	case itemTypeLabelText2:
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"content_padding": 5,
+		}
+	case itemTypeFullChart:
+		defaults.Background = "#111827c8"
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"content_padding":         1,
+			"body_gap":                4,
+			"title_font_size":         defaultLabelSize,
+			"value_font_size":         defaultValueSize,
+			"header_divider":          true,
+			"header_divider_offset":   3,
+			"header_divider_color":    "#94a3b840",
+			"history_points":          defaultHistoryPoints,
+			"show_segment_lines":      true,
+			"show_grid_lines":         true,
+			"grid_lines":              4,
+			"fill_area":               true,
+			"line_width":              2.0,
+			"show_avg_line":           true,
+			"chart_color":             "#38bdf8",
+			"chart_area_bg":           "",
+			"chart_area_border_color": "",
+		}
+	case itemTypeFullProgress:
+		defaults.Background = "#111827c8"
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"content_padding":       1,
+			"body_gap":              0,
+			"title_font_size":       defaultLabelSize,
+			"value_font_size":       defaultValueSize,
+			"header_divider":        true,
+			"header_divider_offset": 3,
+			"header_divider_color":  "#94a3b840",
+			"progress_style":        "gradient",
+			"bar_height":            0.0,
+			"track_color":           "#1f2937",
+			"segments":              12,
+			"segment_gap":           2.0,
+		}
+	}
+
+	return defaults
+}
+
+func mergeDefaultRenderAttrs(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
+	if len(base) == 0 && len(overrides) == 0 {
+		return map[string]interface{}{}
+	}
+	merged := make(map[string]interface{}, len(base)+len(overrides))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range overrides {
+		merged[key] = value
+	}
+	return merged
+}
+
+func stripBuiltinItemStyleOverrides(item *ItemConfig) {
+	if item == nil {
+		return
+	}
+	item.FontSize = 0
+	item.Color = ""
+	item.Background = ""
+	item.UnitColor = ""
+	item.UnitFontSize = 0
+	item.BorderColor = ""
+	item.BorderWidth = 0
+	item.Radius = 0
+	item.PointSize = 0
+	if len(item.RenderAttrsMap) == 0 {
+		return
+	}
+	styleKeys := map[string]struct{}{
+		"content_padding":         {},
+		"body_gap":                {},
+		"value_font_size":         {},
+		"label_font_size":         {},
+		"meta_font_size":          {},
+		"title_font_size":         {},
+		"header_divider":          {},
+		"header_divider_offset":   {},
+		"header_divider_color":    {},
+		"history_points":          {},
+		"show_segment_lines":      {},
+		"show_grid_lines":         {},
+		"grid_lines":              {},
+		"fill_area":               {},
+		"line_width":              {},
+		"show_avg_line":           {},
+		"chart_color":             {},
+		"chart_area_bg":           {},
+		"chart_area_border_color": {},
+		"progress_style":          {},
+		"bar_height":              {},
+		"track_color":             {},
+		"segments":                {},
+		"segment_gap":             {},
+	}
+	filtered := make(map[string]interface{}, len(item.RenderAttrsMap))
+	for key, value := range item.RenderAttrsMap {
+		if _, remove := styleKeys[key]; remove {
+			continue
+		}
+		filtered[key] = value
+	}
+	item.RenderAttrsMap = filtered
+}
+
+func migrateLegacyCollectorConfig(cfg *MonitorConfig) {
+	if cfg == nil || cfg.CollectorConfig == nil {
+		return
+	}
+	migrateCollectorConfigKey(cfg, legacyCollectorCoolerControl, collectorCoolerControl)
+	migrateCollectorConfigKey(cfg, legacyCollectorLibreHardwareMonitor, collectorLibreHardwareMonitor)
+	migrateCollectorConfigKey(cfg, legacyCollectorRTSS, collectorRTSS)
+}
+
+func migrateCollectorConfigKey(cfg *MonitorConfig, oldKey, newKey string) {
+	if cfg == nil || cfg.CollectorConfig == nil {
+		return
+	}
+	oldEntry, oldExists := cfg.CollectorConfig[oldKey]
+	newEntry, newExists := cfg.CollectorConfig[newKey]
+	if !oldExists {
+		return
+	}
+	if !newExists {
+		cfg.CollectorConfig[newKey] = oldEntry
+	} else {
+		if newEntry.Enabled == nil {
+			newEntry.Enabled = oldEntry.Enabled
+		}
+		if newEntry.Options == nil {
+			newEntry.Options = map[string]interface{}{}
+		}
+		for key, value := range oldEntry.Options {
+			if _, exists := newEntry.Options[key]; !exists {
+				newEntry.Options[key] = value
+			}
+		}
+		cfg.CollectorConfig[newKey] = newEntry
+	}
+	delete(cfg.CollectorConfig, oldKey)
+}
+
+func enforceCollectorPlatformSupport(cfg *MonitorConfig) {
+	if cfg == nil || cfg.CollectorConfig == nil {
+		return
+	}
+	for name, entry := range cfg.CollectorConfig {
+		if isCollectorSupportedOnCurrentPlatform(name) {
+			continue
+		}
+		disabled := false
+		entry.Enabled = &disabled
+		if entry.Options == nil {
+			entry.Options = map[string]interface{}{}
+		}
+		cfg.CollectorConfig[name] = entry
+	}
+}
+
 func boolPtr(value bool) *bool {
 	v := value
 	return &v
+}
+
+func builtinCollectorDefaults(profileName string) (cooler bool, libre bool, rtss bool) {
+	if !isBuiltinProfileName(profileName) {
+		return false, false, false
+	}
+	switch goruntime.GOOS {
+	case "windows":
+		return false, true, true
+	case "linux":
+		return true, false, false
+	default:
+		return false, false, false
+	}
+}
+
+func applyBuiltinCollectorDefaults(cfg *MonitorConfig, cooler, libre, rtss bool) {
+	if cfg == nil || !isBuiltinProfileName(cfg.Name) {
+		return
+	}
+	setCollectorEnabled(cfg, collectorCoolerControl, cooler)
+	setCollectorEnabled(cfg, collectorLibreHardwareMonitor, libre)
+	setCollectorEnabled(cfg, collectorRTSS, rtss)
+}
+
+func setCollectorEnabled(cfg *MonitorConfig, name string, enabled bool) {
+	if cfg == nil {
+		return
+	}
+	entry := cfg.CollectorConfig[name]
+	entry.Enabled = boolPtr(enabled)
+	if entry.Options == nil {
+		entry.Options = map[string]interface{}{}
+	}
+	cfg.CollectorConfig[name] = entry
+}
+
+func isBuiltinProfileName(name string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(name))
+	switch trimmed {
+	case "builtin1", "builtin2", "builtin3", "builtin4":
+		return true
+	default:
+		return false
+	}
+}
+
+func configNeedsRTSS(cfg *MonitorConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, item := range cfg.Items {
+		name := strings.ToLower(strings.TrimSpace(item.Monitor))
+		if name == "" {
+			continue
+		}
+		if name == "alias.gpu.fps" || strings.HasPrefix(name, "rtss_") {
+			return true
+		}
+	}
+	for _, custom := range cfg.CustomMonitors {
+		name := strings.ToLower(strings.TrimSpace(custom.Name))
+		if name == "alias.gpu.fps" || strings.HasPrefix(name, "rtss_") {
+			return true
+		}
+		for _, source := range custom.Sources {
+			src := strings.ToLower(strings.TrimSpace(source))
+			if src == "alias.gpu.fps" || strings.HasPrefix(src, "rtss_") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func ensureCollectorConfigDefault(cfg *MonitorConfig, name string, defaultEnabled bool) {
@@ -952,13 +1572,7 @@ func normalizeItemType(itemType string) string {
 }
 
 func normalizeMonitorAlias(name string) string {
-	trimmed := strings.TrimSpace(name)
-	switch trimmed {
-	case "gpu_fps":
-		return "rtss_fps"
-	default:
-		return trimmed
-	}
+	return normalizeMonitorAliasInput(name)
 }
 
 func normalizeLevelColors(colors []string, fallback []string) []string {
@@ -1071,350 +1685,4 @@ func (s *ConfigStore) setCollectorEnabled(name string, enabled bool) bool {
 		return false
 	}
 	return s.runtime.SetCollectorEnabled(name, enabled)
-}
-
-func NewProfileManager(currentConfigPath string) (*ProfileManager, error) {
-	configDir := filepath.Dir(currentConfigPath)
-	builtins, err := loadBuiltinProfiles()
-	if err != nil {
-		return nil, err
-	}
-	pm := &ProfileManager{
-		currentConfigPath: currentConfigPath,
-		profilesDir:       filepath.Join(configDir, "profiles"),
-		activeProfileFile: filepath.Join(configDir, "profiles", "active-profile"),
-		builtinProfiles:   builtins,
-	}
-	if err := os.MkdirAll(pm.profilesDir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create profiles directory: %w", err)
-	}
-	return pm, nil
-}
-
-func (pm *ProfileManager) Initialize(baseConfig *MonitorConfig) (*MonitorConfig, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	if !pm.customProfileExistsUnsafe("default") {
-		seed := cloneMonitorConfig(baseConfig)
-		if builtin, ok := pm.builtinProfiles["normal"]; ok {
-			seed = cloneMonitorConfig(builtin)
-		}
-		if err := pm.saveProfileUnsafe("default", seed); err != nil {
-			return nil, err
-		}
-	}
-
-	items, err := pm.listUnsafe()
-	if err != nil || len(items) == 0 {
-		return nil, fmt.Errorf("no available profile")
-	}
-
-	active := pm.activeUnsafe()
-	if active == "" || !pm.profileExistsUnsafe(active) {
-		if pm.profileExistsUnsafe("default") {
-			active = "default"
-		} else {
-			active = items[0].Name
-		}
-		if err := pm.setActiveUnsafe(active); err != nil {
-			return nil, err
-		}
-	}
-
-	cfg, err := pm.loadProfileUnsafe(active)
-	if err != nil {
-		if err := pm.saveProfileUnsafe(active, baseConfig); err != nil {
-			return nil, err
-		}
-		cfg = cloneMonitorConfig(baseConfig)
-		normalizeMonitorConfig(cfg)
-	}
-
-	if err := saveUserConfig(pm.currentConfigPath, cfg); err != nil {
-		return nil, err
-	}
-	return cfg, nil
-}
-
-func (pm *ProfileManager) ActiveName() string {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.activeUnsafe()
-}
-
-func (pm *ProfileManager) List() ([]ProfileInfo, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.listUnsafe()
-}
-
-func (pm *ProfileManager) SaveProfile(name string, cfg *MonitorConfig) error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
-	}
-	return pm.saveProfileUnsafe(name, cfg)
-}
-
-func (pm *ProfileManager) LoadProfile(name string) (*MonitorConfig, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.loadProfileUnsafe(name)
-}
-
-func (pm *ProfileManager) RenameProfile(oldName, newName string) (*MonitorConfig, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	oldName = strings.TrimSpace(oldName)
-	newName = strings.TrimSpace(newName)
-	if err := validateProfileName(oldName); err != nil {
-		return nil, err
-	}
-	if err := validateProfileName(newName); err != nil {
-		return nil, err
-	}
-	if oldName == newName {
-		return nil, nil
-	}
-	if pm.isBuiltinProfileUnsafe(oldName) {
-		return nil, fmt.Errorf("built-in profile is read-only: %s", oldName)
-	}
-	if !pm.customProfileExistsUnsafe(oldName) {
-		return nil, fmt.Errorf("profile not found: %s", oldName)
-	}
-	if pm.profileExistsUnsafe(newName) {
-		return nil, fmt.Errorf("target profile already exists: %s", newName)
-	}
-
-	if err := os.Rename(pm.profilePath(oldName), pm.profilePath(newName)); err != nil {
-		return nil, fmt.Errorf("failed to rename profile: %w", err)
-	}
-
-	if pm.activeUnsafe() != oldName {
-		return nil, nil
-	}
-	if err := pm.setActiveUnsafe(newName); err != nil {
-		return nil, err
-	}
-	cfg, err := pm.loadProfileUnsafe(newName)
-	if err != nil {
-		return nil, err
-	}
-	if err := saveUserConfig(pm.currentConfigPath, cfg); err != nil {
-		return nil, err
-	}
-	return cfg, nil
-}
-
-func (pm *ProfileManager) Switch(name string) (*MonitorConfig, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	cfg, err := pm.loadProfileUnsafe(name)
-	if err != nil {
-		return nil, err
-	}
-	if err := pm.setActiveUnsafe(name); err != nil {
-		return nil, err
-	}
-	if err := saveUserConfig(pm.currentConfigPath, cfg); err != nil {
-		return nil, err
-	}
-	return cfg, nil
-}
-
-func (pm *ProfileManager) DeleteProfile(name string) error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	if err := validateProfileName(name); err != nil {
-		return err
-	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
-	}
-	targetPath := pm.profilePath(name)
-	if _, err := os.Stat(targetPath); err != nil {
-		return fmt.Errorf("profile not found: %s", name)
-	}
-
-	active := pm.activeUnsafe()
-	if active == name {
-		items, err := pm.listUnsafe()
-		if err != nil {
-			return err
-		}
-		var next string
-		for _, item := range items {
-			if item.Name != name {
-				next = item.Name
-				break
-			}
-		}
-		if next == "" {
-			return fmt.Errorf("no fallback profile available")
-		}
-		cfg, err := pm.loadProfileUnsafe(next)
-		if err != nil {
-			return err
-		}
-		if err := pm.setActiveUnsafe(next); err != nil {
-			return err
-		}
-		if err := saveUserConfig(pm.currentConfigPath, cfg); err != nil {
-			return err
-		}
-	}
-
-	if err := os.Remove(targetPath); err != nil {
-		return fmt.Errorf("failed to delete profile: %w", err)
-	}
-	return nil
-}
-
-func (pm *ProfileManager) profilePath(name string) string {
-	return filepath.Join(pm.profilesDir, name+".json")
-}
-
-func (pm *ProfileManager) activeUnsafe() string {
-	data, err := os.ReadFile(pm.activeProfileFile)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func (pm *ProfileManager) setActiveUnsafe(name string) error {
-	if err := validateProfileName(name); err != nil {
-		return err
-	}
-	return os.WriteFile(pm.activeProfileFile, []byte(name+"\n"), 0o644)
-}
-
-func (pm *ProfileManager) profileExistsUnsafe(name string) bool {
-	if err := validateProfileName(name); err != nil {
-		return false
-	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return true
-	}
-	_, err := os.Stat(pm.profilePath(name))
-	return err == nil
-}
-
-func (pm *ProfileManager) customProfileExistsUnsafe(name string) bool {
-	if err := validateProfileName(name); err != nil {
-		return false
-	}
-	_, err := os.Stat(pm.profilePath(name))
-	return err == nil
-}
-
-func (pm *ProfileManager) isBuiltinProfileUnsafe(name string) bool {
-	if pm.builtinProfiles == nil {
-		return false
-	}
-	_, ok := pm.builtinProfiles[strings.TrimSpace(name)]
-	return ok
-}
-
-func (pm *ProfileManager) saveProfileUnsafe(name string, cfg *MonitorConfig) error {
-	if err := validateProfileName(name); err != nil {
-		return err
-	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
-	}
-	normalizeMonitorConfig(cfg)
-	cfg.Name = name
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode profile: %w", err)
-	}
-	if err := os.WriteFile(pm.profilePath(name), append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("failed to write profile: %w", err)
-	}
-	return nil
-}
-
-func (pm *ProfileManager) loadProfileUnsafe(name string) (*MonitorConfig, error) {
-	if err := validateProfileName(name); err != nil {
-		return nil, err
-	}
-	if builtin, ok := pm.builtinProfiles[name]; ok {
-		cfg := cloneMonitorConfig(builtin)
-		normalizeMonitorConfig(cfg)
-		cfg.Name = name
-		return cfg, nil
-	}
-	data, err := os.ReadFile(pm.profilePath(name))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read profile '%s': %w", name, err)
-	}
-
-	var cfg MonitorConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid profile '%s': %w", name, err)
-	}
-	normalizeMonitorConfig(&cfg)
-	cfg.Name = name
-	return &cfg, nil
-}
-
-func (pm *ProfileManager) listUnsafe() ([]ProfileInfo, error) {
-	entries, err := os.ReadDir(pm.profilesDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read profiles directory: %w", err)
-	}
-
-	items := make([]ProfileInfo, 0, len(entries)+len(pm.builtinProfiles))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		name := strings.TrimSuffix(entry.Name(), ".json")
-		if err := validateProfileName(name); err != nil {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		items = append(items, ProfileInfo{
-			Name:      name,
-			Path:      pm.profilePath(name),
-			UpdatedAt: info.ModTime().Format(time.RFC3339),
-			Size:      info.Size(),
-		})
-	}
-
-	for _, name := range sortedBuiltinProfileNames(pm.builtinProfiles) {
-		if pm.customProfileExistsUnsafe(name) {
-			continue
-		}
-		items = append(items, ProfileInfo{
-			Name:      name,
-			Path:      "[builtin]",
-			UpdatedAt: "",
-			Size:      0,
-			ReadOnly:  true,
-			Builtin:   true,
-		})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-	return items, nil
-}
-
-func validateProfileName(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("profile name is empty")
-	}
-	if !profileNamePattern.MatchString(name) {
-		return fmt.Errorf("invalid profile name: %s", name)
-	}
-	return nil
 }

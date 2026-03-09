@@ -51,7 +51,7 @@ func BuildManager(types []string, forceMemImg bool) (*OutputManager, []string) {
 		case TypeMemImg:
 			manager.AddHandler(NewMemImgOutputHandler())
 		case TypeAX206USB:
-			handler, err := NewAX206USBOutputHandler()
+			handler, err := NewSharedAX206USBOutputHandler()
 			if err != nil {
 				logErrorModule("ax206usb", "Handler creation failed: %v", err)
 				continue

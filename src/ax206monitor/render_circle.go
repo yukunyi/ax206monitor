@@ -28,13 +28,10 @@ func (r *CircleRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Coll
 		dc.Fill()
 	}
 
-	if item.BorderWidth > 0 {
-		borderColor := item.BorderColor
-		if borderColor == "" {
-			borderColor = "#475569"
-		}
-		dc.SetColor(parseColor(borderColor))
-		dc.SetLineWidth(item.BorderWidth)
+	borderWidth := resolveItemBorderWidth(item, config)
+	if borderWidth > 0 {
+		dc.SetColor(parseColor(resolveItemBorderColor(item, config)))
+		dc.SetLineWidth(borderWidth)
 		dc.DrawEllipse(cx, cy, rx, ry)
 		dc.Stroke()
 	}

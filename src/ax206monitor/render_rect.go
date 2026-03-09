@@ -15,12 +15,6 @@ func (r *RectRenderer) GetType() string {
 func (r *RectRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
 	_ = registry
 	_ = fontCache
-
-	radius := float64(item.Radius)
-	if radius < 0 {
-		radius = 0
-	}
-	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
-	drawItemBorder(dc, item)
+	drawBaseItemFrame(dc, item, config)
 	return nil
 }

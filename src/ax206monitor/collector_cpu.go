@@ -23,6 +23,7 @@ type GoNativeCPUCollector struct {
 
 	freqMu       sync.RWMutex
 	freqValue    float64
+	freqMaxValue float64
 	freqOK       bool
 	freqAt       time.Time
 	freqUpdating int32
@@ -40,6 +41,7 @@ func (c *GoNativeCPUCollector) GetAllItems() map[string]*CollectItem {
 		c.setItem("go_native.cpu.usage", NewCollectItem("go_native.cpu.usage", "CPU usage", "%", 0, 100, 0))
 		c.setItem("go_native.cpu.temp", NewCollectItem("go_native.cpu.temp", "CPU temperature", "°C", 0, 120, 0))
 		c.setItem("go_native.cpu.freq", NewCollectItem("go_native.cpu.freq", "CPU frequency", "MHz", 0, 0, 0))
+		c.setItem("go_native.cpu.max_freq", NewCollectItem("go_native.cpu.max_freq", "CPU max frequency", "MHz", 0, 0, 0))
 		c.setItem("go_native.cpu.model", NewCollectItem("go_native.cpu.model", "CPU model", "", 0, 0, 0))
 		c.setItem("go_native.cpu.cores", NewCollectItem("go_native.cpu.cores", "CPU cores", "", 0, 0, 0))
 	}
@@ -100,6 +102,14 @@ func (c *GoNativeCPUCollector) UpdateItems() error {
 			freq.SetAvailable(true)
 		} else {
 			freq.SetAvailable(false)
+		}
+	}
+	if maxFreq := c.getItem("go_native.cpu.max_freq"); maxFreq != nil {
+		if value, ok := c.getCachedMaxFreq(); ok {
+			maxFreq.SetValue(value)
+			maxFreq.SetAvailable(true)
+		} else {
+			maxFreq.SetAvailable(false)
 		}
 	}
 
@@ -209,7 +219,7 @@ func (c *GoNativeCPUCollector) triggerFreqRefresh() {
 	}
 	go func() {
 		defer atomic.StoreInt32(&c.freqUpdating, 0)
-		current, _ := getRealCPUFrequency()
+		current, maxFreq := getRealCPUFrequency()
 		now := time.Now()
 		c.freqMu.Lock()
 		c.freqAt = now
@@ -218,6 +228,9 @@ func (c *GoNativeCPUCollector) triggerFreqRefresh() {
 			c.freqOK = true
 		} else {
 			c.freqOK = false
+		}
+		if maxFreq > 0 {
+			c.freqMaxValue = maxFreq
 		}
 		c.freqMu.Unlock()
 	}()
@@ -230,4 +243,13 @@ func (c *GoNativeCPUCollector) getCachedFreq() (float64, bool) {
 		return 0, false
 	}
 	return c.freqValue, true
+}
+
+func (c *GoNativeCPUCollector) getCachedMaxFreq() (float64, bool) {
+	c.freqMu.RLock()
+	defer c.freqMu.RUnlock()
+	if c.freqMaxValue <= 0 {
+		return 0, false
+	}
+	return c.freqMaxValue, true
 }

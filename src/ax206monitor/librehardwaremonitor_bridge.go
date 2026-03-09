@@ -9,6 +9,6 @@ type LibreHardwareMonitorMonitorOption = librehardwaremonitor.LibreHardwareMonit
 type LibreHardwareMonitorData = librehardwaremonitor.LibreHardwareMonitorData
 type LibreHardwareMonitorClient = librehardwaremonitor.LibreHardwareMonitorClient
 
-func GetLibreHardwareMonitorClient(url string) *LibreHardwareMonitorClient {
-	return librehardwaremonitor.GetLibreHardwareMonitorClient(url)
+func GetLibreHardwareMonitorClient(url, username, password string) *LibreHardwareMonitorClient {
+	return librehardwaremonitor.GetLibreHardwareMonitorClient(url, username, password)
 }

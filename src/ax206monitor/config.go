@@ -46,44 +46,67 @@ type CollectorConfig struct {
 	Options map[string]interface{} `json:"options,omitempty"`
 }
 
+type ItemTypeDefaults struct {
+	FontSize       int                    `json:"font_size,omitempty"`
+	SmallFontSize  int                    `json:"small_font_size,omitempty"`
+	MediumFontSize int                    `json:"medium_font_size,omitempty"`
+	LargeFontSize  int                    `json:"large_font_size,omitempty"`
+	Color          string                 `json:"color,omitempty"`
+	Background     string                 `json:"bg,omitempty"`
+	UnitColor      string                 `json:"unit_color,omitempty"`
+	UnitFontSize   int                    `json:"unit_font_size,omitempty"`
+	PointSize      int                    `json:"point_size,omitempty"`
+	BorderColor    string                 `json:"border_color,omitempty"`
+	BorderWidth    float64                `json:"border_width,omitempty"`
+	Radius         int                    `json:"radius,omitempty"`
+	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
+}
+
 type MonitorConfig struct {
-	Name                    string                     `json:"name"`
-	Width                   int                        `json:"width"`
-	Height                  int                        `json:"height"`
-	LayoutPadding           int                        `json:"layout_padding,omitempty"`
-	MonitorUpdateWorkers    int                        `json:"monitor_update_workers,omitempty"`
-	MonitorUpdateQueueSize  int                        `json:"monitor_update_queue_size,omitempty"`
-	MonitorAutoTune         *bool                      `json:"monitor_auto_tune,omitempty"`
-	MonitorAutoTuneInterval int                        `json:"monitor_auto_tune_interval_sec,omitempty"`
-	MonitorAutoTuneSlowRate float64                    `json:"monitor_auto_tune_slow_rate,omitempty"`
-	MonitorAutoTuneStable   int                        `json:"monitor_auto_tune_stable_runs,omitempty"`
-	MonitorAutoTuneMaxScale int                        `json:"monitor_auto_tune_max_scale,omitempty"`
-	DefaultFont             string                     `json:"default_font,omitempty"`
-	DefaultFontSize         int                        `json:"default_font_size,omitempty"`
-	DefaultColor            string                     `json:"default_color,omitempty"`
-	DefaultBackground       string                     `json:"default_background,omitempty"`
-	LevelColors             []string                   `json:"level_colors,omitempty"`
-	DefaultThresholds       []float64                  `json:"default_thresholds,omitempty"`
-	FontFamilies            []string                   `json:"font_families"`
-	OutputTypes             []string                   `json:"output_types"`
-	RefreshInterval         int                        `json:"refresh_interval"`
-	CollectWarnMS           int                        `json:"collect_warn_ms,omitempty"`
-	RenderWaitMaxMS         int                        `json:"render_wait_max_ms,omitempty"`
-	HistorySize             int                        `json:"history_size,omitempty"`
-	NetworkInterface        string                     `json:"network_interface,omitempty"`
-	EnableRTSSCollect       bool                       `json:"enable_rtss_collect,omitempty"`
-	LibreHardwareMonitorURL string                     `json:"libre_hardware_monitor_url,omitempty"`
-	CoolerControlURL        string                     `json:"coolercontrol_url,omitempty"`
-	CoolerControlUsername   string                     `json:"coolercontrol_username,omitempty"`
-	CoolerControlPassword   string                     `json:"coolercontrol_password,omitempty"`
-	CollectorConfig         map[string]CollectorConfig `json:"collector_config,omitempty"`
-	CustomMonitors          []CustomMonitorConfig      `json:"custom_monitors,omitempty"`
-	Items                   []ItemConfig               `json:"items"`
+	Name                    string                      `json:"name"`
+	Width                   int                         `json:"width"`
+	Height                  int                         `json:"height"`
+	LayoutPadding           int                         `json:"layout_padding,omitempty"`
+	MonitorUpdateWorkers    int                         `json:"monitor_update_workers,omitempty"`
+	MonitorUpdateQueueSize  int                         `json:"monitor_update_queue_size,omitempty"`
+	MonitorAutoTune         *bool                       `json:"monitor_auto_tune,omitempty"`
+	MonitorAutoTuneInterval int                         `json:"monitor_auto_tune_interval_sec,omitempty"`
+	MonitorAutoTuneSlowRate float64                     `json:"monitor_auto_tune_slow_rate,omitempty"`
+	MonitorAutoTuneStable   int                         `json:"monitor_auto_tune_stable_runs,omitempty"`
+	MonitorAutoTuneMaxScale int                         `json:"monitor_auto_tune_max_scale,omitempty"`
+	DefaultFont             string                      `json:"default_font,omitempty"`
+	DefaultFontSize         int                         `json:"default_font_size,omitempty"`
+	DefaultValueFontSize    int                         `json:"default_value_font_size,omitempty"`
+	DefaultLabelFontSize    int                         `json:"default_label_font_size,omitempty"`
+	DefaultUnitFontSize     int                         `json:"default_unit_font_size,omitempty"`
+	DefaultColor            string                      `json:"default_color,omitempty"`
+	DefaultBackground       string                      `json:"default_background,omitempty"`
+	LevelColors             []string                    `json:"level_colors,omitempty"`
+	DefaultThresholds       []float64                   `json:"default_thresholds,omitempty"`
+	AllowCustomStyle        bool                        `json:"allow_custom_style,omitempty"`
+	FontFamilies            []string                    `json:"font_families"`
+	OutputTypes             []string                    `json:"output_types"`
+	RefreshInterval         int                         `json:"refresh_interval"`
+	CollectWarnMS           int                         `json:"collect_warn_ms,omitempty"`
+	RenderWaitMaxMS         int                         `json:"render_wait_max_ms,omitempty"`
+	HistorySize             int                         `json:"history_size,omitempty"`
+	DefaultHistoryPoints    int                         `json:"default_history_points,omitempty"`
+	NetworkInterface        string                      `json:"network_interface,omitempty"`
+	EnableRTSSCollect       bool                        `json:"enable_rtss_collect,omitempty"`
+	LibreHardwareMonitorURL string                      `json:"libre_hardware_monitor_url,omitempty"`
+	CoolerControlURL        string                      `json:"coolercontrol_url,omitempty"`
+	CoolerControlUsername   string                      `json:"coolercontrol_username,omitempty"`
+	CoolerControlPassword   string                      `json:"coolercontrol_password,omitempty"`
+	CollectorConfig         map[string]CollectorConfig  `json:"collector_config,omitempty"`
+	TypeDefaults            map[string]ItemTypeDefaults `json:"type_defaults,omitempty"`
+	CustomMonitors          []CustomMonitorConfig       `json:"custom_monitors,omitempty"`
+	Items                   []ItemConfig                `json:"items"`
 }
 
 type ItemConfig struct {
 	Type           string                 `json:"type"`
 	EditUIName     string                 `json:"edit_ui_name,omitempty"`
+	CustomStyle    bool                   `json:"custom_style,omitempty"`
 	Monitor        string                 `json:"monitor,omitempty"`
 	Unit           string                 `json:"unit,omitempty"`
 	UnitColor      string                 `json:"unit_color,omitempty"`
@@ -269,6 +292,56 @@ func (config *MonitorConfig) GetDefaultFontSize() int {
 	return 16
 }
 
+func (config *MonitorConfig) GetDefaultValueFontSize() int {
+	if config.DefaultValueFontSize > 0 {
+		return config.DefaultValueFontSize
+	}
+	base := config.GetDefaultFontSize()
+	if base <= 0 {
+		base = 16
+	}
+	return base + 2
+}
+
+func (config *MonitorConfig) GetDefaultLabelFontSize() int {
+	if config.DefaultLabelFontSize > 0 {
+		return config.DefaultLabelFontSize
+	}
+	base := config.GetDefaultFontSize()
+	if base <= 0 {
+		base = 16
+	}
+	return base
+}
+
+func (config *MonitorConfig) GetDefaultUnitFontSize() int {
+	if config.DefaultUnitFontSize > 0 {
+		return config.DefaultUnitFontSize
+	}
+	base := config.GetDefaultLabelFontSize() - 2
+	if base < 8 {
+		base = 8
+	}
+	return base
+}
+
+func (config *MonitorConfig) GetDefaultHistoryPoints() int {
+	points := config.DefaultHistoryPoints
+	if points <= 0 {
+		points = config.HistorySize
+	}
+	if points <= 0 {
+		points = 150
+	}
+	if points < 10 {
+		points = 10
+	}
+	if points > 5000 {
+		points = 5000
+	}
+	return points
+}
+
 func (config *MonitorConfig) GetDefaultTextColor() string {
 	if strings.TrimSpace(config.DefaultColor) != "" {
 		return strings.TrimSpace(config.DefaultColor)
@@ -281,6 +354,24 @@ func (config *MonitorConfig) GetDefaultBackgroundColor() string {
 		return strings.TrimSpace(config.DefaultBackground)
 	}
 	return "#0b1220"
+}
+
+func (config *MonitorConfig) GetTypeDefaults(itemType string) ItemTypeDefaults {
+	if config == nil {
+		return ItemTypeDefaults{}
+	}
+	normalizedType := normalizeItemTypeName(itemType)
+	if config.TypeDefaults == nil {
+		return ItemTypeDefaults{}
+	}
+	defaults, exists := config.TypeDefaults[normalizedType]
+	if !exists {
+		return ItemTypeDefaults{}
+	}
+	if defaults.RenderAttrsMap == nil {
+		defaults.RenderAttrsMap = map[string]interface{}{}
+	}
+	return defaults
 }
 
 func (config *MonitorConfig) GetLevelColors() []string {
@@ -374,7 +465,7 @@ func (config *MonitorConfig) IsRTSSCollectEnabled() bool {
 	if runtime.GOOS != "windows" {
 		return false
 	}
-	if enabled := config.IsCollectorEnabled("external.rtss", false); enabled {
+	if enabled := config.IsCollectorEnabled(collectorRTSS, false); enabled {
 		return true
 	}
 	return config.EnableRTSSCollect
@@ -507,7 +598,7 @@ func (config *MonitorConfig) GetMonitorAutoTuneMaxScale() int {
 }
 
 func (config *MonitorConfig) GetCoolerControlURL() string {
-	if url := config.GetCollectorStringOption("external.coolercontrol", "url", ""); url != "" {
+	if url := config.GetCollectorStringOption(collectorCoolerControl, "url", ""); url != "" {
 		return normalizeEndpointURL(url)
 	}
 	if url := normalizeEndpointURL(config.CoolerControlURL); url != "" {
@@ -517,7 +608,7 @@ func (config *MonitorConfig) GetCoolerControlURL() string {
 }
 
 func (config *MonitorConfig) GetCoolerControlUsername() string {
-	if username := strings.TrimSpace(config.GetCollectorStringOption("external.coolercontrol", "username", "")); username != "" {
+	if username := strings.TrimSpace(config.GetCollectorStringOption(collectorCoolerControl, "username", "")); username != "" {
 		return username
 	}
 	if config.CoolerControlUsername != "" {
@@ -530,20 +621,28 @@ func (config *MonitorConfig) GetCoolerControlUsername() string {
 }
 
 func (config *MonitorConfig) GetCoolerControlPassword() string {
-	if password := config.GetCollectorStringOption("external.coolercontrol", "password", ""); password != "" {
+	if password := config.GetCollectorStringOption(collectorCoolerControl, "password", ""); password != "" {
 		return password
 	}
 	return config.CoolerControlPassword
 }
 
 func (config *MonitorConfig) GetLibreHardwareMonitorURL() string {
-	if url := config.GetCollectorStringOption("external.librehardwaremonitor", "url", ""); url != "" {
+	if url := config.GetCollectorStringOption(collectorLibreHardwareMonitor, "url", ""); url != "" {
 		return normalizeEndpointURL(url)
 	}
 	if url := normalizeEndpointURL(config.LibreHardwareMonitorURL); url != "" {
 		return url
 	}
 	return normalizeEndpointURL(defaultLibreHardwareMonitorURL)
+}
+
+func (config *MonitorConfig) GetLibreHardwareMonitorUsername() string {
+	return strings.TrimSpace(config.GetCollectorStringOption(collectorLibreHardwareMonitor, "username", ""))
+}
+
+func (config *MonitorConfig) GetLibreHardwareMonitorPassword() string {
+	return config.GetCollectorStringOption(collectorLibreHardwareMonitor, "password", "")
 }
 
 func (config *MonitorConfig) GetCollectorConfig(name string) CollectorConfig {

@@ -18,10 +18,7 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Colle
 		return nil
 	}
 
-	radius := float64(item.Radius)
-	if radius < 0 {
-		radius = 0
-	}
+	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
 	value := monitor.GetValue()
@@ -30,9 +27,9 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Colle
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 
 	itemColor := resolveMonitorColor(item, monitor, config)
-	unitColor := resolveUnitColor(item, itemColor)
+	unitColor := resolveUnitColor(item, config, itemColor)
 	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, itemColor, unitFontSize, unitColor, fontCache)
-	drawItemBorder(dc, item)
+	drawBaseItemBorder(dc, item, config, radius)
 
 	return nil
 }

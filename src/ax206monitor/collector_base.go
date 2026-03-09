@@ -22,6 +22,10 @@ type Collector interface {
 	UpdateItems() error
 }
 
+type CollectorConfigApplier interface {
+	ApplyConfig(cfg *MonitorConfig)
+}
+
 type BaseCollector struct {
 	name    string
 	enabled bool

@@ -395,9 +395,11 @@ type CollectorManager struct {
 	items            map[string]*CollectItem
 	itemToCollector  map[string]string
 
-	requiredSet map[string]struct{}
-	requiredSig string
-	modeFull    bool
+	requiredSet      map[string]struct{}
+	requiredResolved map[string]struct{}
+	requiredSig      string
+	modeFull         bool
+	previewMode      bool
 
 	missingRetryAttempts int
 	missingRetryNextAt   time.Time
@@ -456,6 +458,7 @@ func NewCollectorManager() *CollectorManager {
 		items:            make(map[string]*CollectItem),
 		itemToCollector:  make(map[string]string),
 		requiredSet:      make(map[string]struct{}),
+		requiredResolved: make(map[string]struct{}),
 		epochStates:      make(map[int64]*collectorEpochState),
 		workerChans:      make(map[string]chan int64),
 		stopCh:           make(chan struct{}),
@@ -529,6 +532,7 @@ func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector) {
 		m.items[key] = item
 		m.itemToCollector[key] = discoveredOwners[key]
 	}
+	m.rebuildRequiredResolvedLocked()
 	m.mutex.Unlock()
 }
 
@@ -568,10 +572,11 @@ func (m *CollectorManager) setRequiredItems(names []string) {
 	if sig != "" {
 		for _, name := range strings.Split(sig, "\n") {
 			if name != "" {
-				m.requiredSet[name] = struct{}{}
+				m.requiredSet[normalizeMonitorAliasInput(name)] = struct{}{}
 			}
 		}
 	}
+	m.rebuildRequiredResolvedLocked()
 	m.missingRetryAttempts = 0
 	m.missingRetryNextAt = time.Time{}
 }
@@ -587,6 +592,46 @@ func (m *CollectorManager) requiredItemsSnapshot() []string {
 	return result
 }
 
+func (m *CollectorManager) rebuildRequiredResolvedLocked() {
+	m.requiredResolved = make(map[string]struct{}, len(m.requiredSet))
+	for name := range m.requiredSet {
+		trimmed := normalizeMonitorAliasInput(name)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := m.items[trimmed]; exists {
+			m.requiredResolved[trimmed] = struct{}{}
+			continue
+		}
+		resolved := resolveMonitorAliasWithItems(trimmed, m.items)
+		if resolved != "" {
+			if _, exists := m.items[resolved]; exists {
+				m.requiredResolved[resolved] = struct{}{}
+				continue
+			}
+		}
+		if !isMonitorAliasName(trimmed) {
+			m.requiredResolved[trimmed] = struct{}{}
+		}
+	}
+}
+
+func (m *CollectorManager) isRequiredItemSatisfiedLocked(name string) bool {
+	trimmed := normalizeMonitorAliasInput(name)
+	if trimmed == "" {
+		return true
+	}
+	if _, exists := m.items[trimmed]; exists {
+		return true
+	}
+	resolved := resolveMonitorAliasWithItems(trimmed, m.items)
+	if resolved == "" || resolved == trimmed {
+		return false
+	}
+	_, exists := m.items[resolved]
+	return exists
+}
+
 func (m *CollectorManager) setItemEnabledStatesLocked() {
 	for name, item := range m.items {
 		if item == nil {
@@ -596,7 +641,7 @@ func (m *CollectorManager) setItemEnabledStatesLocked() {
 		collectorEnabled := m.collectorEnabled[collectorName]
 		enabled := collectorEnabled
 		if !m.modeFull {
-			_, required := m.requiredSet[name]
+			_, required := m.requiredResolved[name]
 			enabled = collectorEnabled && required
 		}
 		item.SetEnabled(enabled)
@@ -624,7 +669,7 @@ func (m *CollectorManager) maybeRetryDiscover(now time.Time) {
 	}
 	missing := false
 	for key := range m.requiredSet {
-		if _, exists := m.items[key]; !exists {
+		if !m.isRequiredItemSatisfiedLocked(key) {
 			missing = true
 			break
 		}
@@ -657,7 +702,7 @@ func (m *CollectorManager) maybeRetryDiscover(now time.Time) {
 	defer m.mutex.Unlock()
 	resolved := true
 	for key := range m.requiredSet {
-		if _, exists := m.items[key]; !exists {
+		if !m.isRequiredItemSatisfiedLocked(key) {
 			resolved = false
 			break
 		}
@@ -1064,15 +1109,34 @@ func (m *CollectorManager) WaitForEpoch(epochID int64, maxWait time.Duration) (b
 func (m *CollectorManager) Get(name string) *CollectItem {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	return m.items[name]
+	normalized := normalizeMonitorAliasInput(name)
+	if normalized == "" {
+		return nil
+	}
+	if item, exists := m.items[normalized]; exists {
+		return item
+	}
+	resolved := resolveMonitorAliasWithItems(normalized, m.items)
+	if resolved == "" || resolved == normalized {
+		return nil
+	}
+	return m.items[resolved]
 }
 
 func (m *CollectorManager) GetAll() map[string]*CollectItem {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	result := make(map[string]*CollectItem, len(m.items))
+	aliasMap := buildMonitorAliasResolution(m.items)
+	result := make(map[string]*CollectItem, len(m.items)+len(aliasMap))
 	for key, item := range m.items {
 		result[key] = item
+	}
+	for aliasName, targetName := range aliasMap {
+		item := m.items[targetName]
+		if item == nil {
+			continue
+		}
+		result[aliasName] = item
 	}
 	return result
 }
@@ -1104,6 +1168,22 @@ func (m *CollectorManager) SetCollectorEnabled(name string, enabled bool) bool {
 	}
 	m.collectorEnabled[trimmed] = enabled
 	return true
+}
+
+func (m *CollectorManager) SetPreviewMode(enabled bool) {
+	m.mutex.Lock()
+	m.previewMode = enabled
+	m.mutex.Unlock()
+}
+
+func (m *CollectorManager) PreviewMode() bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.previewMode
+}
+
+func (m *CollectorManager) ResolveOutputTypes(outputTypes []string) []string {
+	return resolveOutputTypes(&MonitorConfig{OutputTypes: outputTypes}, m.PreviewMode())
 }
 
 func (m *CollectorManager) CollectorStates() map[string]bool {
@@ -1226,6 +1306,7 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.cpu.usage",
 		"go_native.cpu.temp",
 		"go_native.cpu.freq",
+		"go_native.cpu.max_freq",
 		"go_native.cpu.model",
 		"go_native.cpu.cores",
 		"go_native.memory.usage",
@@ -1236,6 +1317,9 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.memory.swap_usage",
 		"go_native.system.load_avg",
 		"go_native.system.current_time",
+		"go_native.system.hostname",
+		"go_native.system.resolution",
+		"go_native.system.refresh_rate",
 		"go_native.system.collect.max_ms",
 		"go_native.system.collect.avg_ms",
 		"go_native.system.render.max_ms",
@@ -1247,6 +1331,7 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.system.output.ax206usb.max_ms",
 		"go_native.system.output.ax206usb.avg_ms",
 	}
+	names = append(names, monitorAliasNames()...)
 	items := make([]CollectItemConfig, 0, len(names))
 	for _, name := range names {
 		items = append(items, CollectItemConfig{Name: name, Required: true})
@@ -1267,13 +1352,13 @@ func initializeCollectors(manager *CollectorManager, cfg *MonitorConfig) {
 	registerCollectorWithConfig(manager, cfg, NewGoNativeDiskCollector(manager.requiredItemsSnapshot), true)
 	registerCollectorWithConfig(manager, cfg, NewGoNativeNetworkCollector(manager.requiredItemsSnapshot), true)
 	if cc := NewCoolerControlCollector(cfg); cc != nil {
-		registerCollectorWithConfig(manager, cfg, cc, false)
+		registerCollectorWithConfig(manager, cfg, cc, true)
 	}
 	if lhm := NewLibreHardwareMonitorCollector(cfg); lhm != nil {
-		registerCollectorWithConfig(manager, cfg, lhm, false)
+		registerCollectorWithConfig(manager, cfg, lhm, true)
 	}
 	if rtss := NewRTSSCollector(cfg); rtss != nil {
-		registerCollectorWithConfig(manager, cfg, rtss, false)
+		registerCollectorWithConfig(manager, cfg, rtss, true)
 	}
 	registerCollectorWithConfig(manager, cfg, NewCustomCollector(cfg, manager.Get), true)
 	manager.discoverAll()
@@ -1284,19 +1369,54 @@ func registerCollectorWithConfig(manager *CollectorManager, cfg *MonitorConfig, 
 		return
 	}
 	manager.RegisterCollector(collector)
-	name := collector.Name()
-	manager.collectorEnabled[name] = true
-	if cfg != nil {
-		manager.collectorEnabled[name] = cfg.IsCollectorEnabled(name, defaultEnabled)
+	manager.mutex.Lock()
+	manager.collectorEnabled[collector.Name()] = defaultEnabled
+	manager.mutex.Unlock()
+	if applier, ok := collector.(CollectorConfigApplier); ok {
+		applier.ApplyConfig(cfg)
 	}
+}
+
+func defaultCollectorEnabled(name string) bool {
+	switch strings.TrimSpace(name) {
+	case collectorCoolerControl, collectorLibreHardwareMonitor, collectorRTSS:
+		return false
+	default:
+		return true
+	}
+}
+
+func (m *CollectorManager) ApplyConfig(cfg *MonitorConfig, requiredItems []string) {
+	if m == nil {
+		return
+	}
+	if cfg == nil {
+		cfg = &MonitorConfig{}
+	}
+	m.configureRuntimeFromConfig(cfg)
+	m.setRequiredItems(requiredItems)
+	collectors := m.snapshotCollectors()
+
+	m.mutex.Lock()
+	for _, entry := range collectors {
+		defaultEnabled := defaultCollectorEnabled(entry.name)
+		m.collectorEnabled[entry.name] = cfg.IsCollectorEnabled(entry.name, defaultEnabled)
+	}
+	m.mutex.Unlock()
+
+	for _, entry := range collectors {
+		if applier, ok := entry.collector.(CollectorConfigApplier); ok {
+			applier.ApplyConfig(cfg)
+		}
+	}
+	m.discoverAll()
 }
 
 func newCollectorManagerFromConfig(cfg *MonitorConfig, requiredItems []string) *CollectorManager {
 	manager := NewCollectorManager()
 	manager.modeFull = true
-	manager.setRequiredItems(requiredItems)
-	manager.configureRuntimeFromConfig(cfg)
 	initializeCollectors(manager, cfg)
+	manager.ApplyConfig(cfg, requiredItems)
 	manager.startAsyncIfNeeded()
 	return manager
 }
@@ -1312,7 +1432,9 @@ func GetCollectorManager() *CollectorManager {
 	defer globalCollectorMu.Unlock()
 	if globalCollectorManager == nil {
 		globalCollectorManager = newCollectorManagerFromConfig(globalCollectorConfig, nil)
+		return globalCollectorManager
 	}
+	globalCollectorManager.ApplyConfig(globalCollectorConfig, globalCollectorManager.requiredItemsSnapshot())
 	return globalCollectorManager
 }
 
@@ -1324,7 +1446,7 @@ func GetCollectorManagerWithConfig(requiredItems []string, networkInterface stri
 		globalCollectorManager = newCollectorManagerFromConfig(globalCollectorConfig, requiredItems)
 		return globalCollectorManager
 	}
-	globalCollectorManager.setRequiredItems(requiredItems)
+	globalCollectorManager.ApplyConfig(globalCollectorConfig, requiredItems)
 	return globalCollectorManager
 }
 
@@ -1332,6 +1454,9 @@ func SetGlobalCollectorConfig(config *MonitorConfig) {
 	globalCollectorMu.Lock()
 	defer globalCollectorMu.Unlock()
 	globalCollectorConfig = config
+	if globalCollectorManager != nil {
+		globalCollectorManager.ApplyConfig(config, globalCollectorManager.requiredItemsSnapshot())
+	}
 }
 
 func GetGlobalCollectorConfig() *MonitorConfig {

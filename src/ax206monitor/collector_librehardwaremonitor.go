@@ -1,15 +1,24 @@
 package main
 
-import "strings"
+import (
+	"runtime"
+	"strings"
+	"sync"
+)
 
 type LibreHardwareMonitorCollector struct {
 	*BaseCollector
-	client  *LibreHardwareMonitorClient
-	sources map[string]string
+	mu          sync.RWMutex
+	client      *LibreHardwareMonitorClient
+	sources     map[string]string
+	endpointKey string
 }
 
 func isLibreHardwareMonitorEnabled(cfg *MonitorConfig) bool {
-	return cfg != nil && cfg.IsCollectorEnabled("external.librehardwaremonitor", false)
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return cfg != nil && cfg.IsCollectorEnabled(collectorLibreHardwareMonitor, false)
 }
 
 func getConfiguredLibreHardwareMonitorClient(cfg *MonitorConfig) *LibreHardwareMonitorClient {
@@ -20,7 +29,11 @@ func getConfiguredLibreHardwareMonitorClient(cfg *MonitorConfig) *LibreHardwareM
 	if url == "" {
 		return nil
 	}
-	return GetLibreHardwareMonitorClient(url)
+	return GetLibreHardwareMonitorClient(
+		url,
+		cfg.GetLibreHardwareMonitorUsername(),
+		cfg.GetLibreHardwareMonitorPassword(),
+	)
 }
 
 func listConfiguredLibreHardwareMonitorOptions(cfg *MonitorConfig) ([]LibreHardwareMonitorMonitorOption, error) {
@@ -39,27 +52,61 @@ func listConfiguredLibreHardwareMonitorOptions(cfg *MonitorConfig) ([]LibreHardw
 }
 
 func NewLibreHardwareMonitorCollector(cfg *MonitorConfig) *LibreHardwareMonitorCollector {
-	client := getConfiguredLibreHardwareMonitorClient(cfg)
-	if client == nil {
+	if runtime.GOOS != "windows" {
 		return nil
 	}
 	collector := &LibreHardwareMonitorCollector{
-		BaseCollector: NewBaseCollector("external.librehardwaremonitor"),
-		client:        client,
+		BaseCollector: NewBaseCollector(collectorLibreHardwareMonitor),
 		sources:       make(map[string]string),
 	}
-	collector.SetEnabled(cfg.IsCollectorEnabled("external.librehardwaremonitor", true))
+	collector.ApplyConfig(cfg)
 	return collector
 }
 
+func (c *LibreHardwareMonitorCollector) ApplyConfig(cfg *MonitorConfig) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	enabled := cfg != nil && cfg.IsCollectorEnabled(collectorLibreHardwareMonitor, false)
+	client := getConfiguredLibreHardwareMonitorClient(cfg)
+	nextEndpointKey := ""
+	if cfg != nil {
+		nextEndpointKey = strings.TrimSpace(cfg.GetLibreHardwareMonitorURL())
+		nextEndpointKey += "|" + cfg.GetLibreHardwareMonitorUsername()
+		nextEndpointKey += "|" + cfg.GetLibreHardwareMonitorPassword()
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SetEnabled(enabled)
+	if !enabled {
+		c.client = nil
+		c.sources = map[string]string{}
+		c.clearItems()
+		c.endpointKey = ""
+		return
+	}
+	if c.endpointKey != nextEndpointKey {
+		c.sources = map[string]string{}
+		c.clearItems()
+	}
+	c.client = client
+	c.endpointKey = nextEndpointKey
+}
+
 func (c *LibreHardwareMonitorCollector) GetAllItems() map[string]*CollectItem {
-	if c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+	if client == nil {
 		return c.ItemsSnapshot()
 	}
-	options, err := c.client.ListMonitorOptions()
+	options, err := client.ListMonitorOptions()
 	if err != nil {
 		return c.ItemsSnapshot()
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, option := range options {
 		name := strings.TrimSpace(option.Name)
 		if name == "" {
@@ -89,18 +136,25 @@ func (c *LibreHardwareMonitorCollector) GetAllItems() map[string]*CollectItem {
 }
 
 func (c *LibreHardwareMonitorCollector) UpdateItems() error {
-	if !c.IsEnabled() || c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	sources := make(map[string]string, len(c.sources))
+	for key, value := range c.sources {
+		sources[key] = value
+	}
+	c.mu.RUnlock()
+	if !c.IsEnabled() || client == nil {
 		return nil
 	}
-	if err := c.client.FetchData(); err != nil {
+	if err := client.FetchData(); err != nil {
 		return err
 	}
-	for key, sourceName := range c.sources {
+	for key, sourceName := range sources {
 		item := c.getItem(key)
 		if item == nil || !item.IsEnabled() {
 			continue
 		}
-		value, unit, ok, err := c.client.GetMonitorValueByNameCached(sourceName)
+		value, unit, ok, err := client.GetMonitorValueByNameCached(sourceName)
 		if err != nil || !ok {
 			item.SetAvailable(false)
 			continue

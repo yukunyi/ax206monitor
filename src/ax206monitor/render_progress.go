@@ -49,10 +49,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 		val = maxValue
 	}
 
-	radius := float64(item.Radius)
-	if radius < 0 {
-		radius = 0
-	}
+	radius := resolveItemRadius(item, config, 0)
 
 	bgColor := resolveItemBackground(item, config)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, bgColor, radius)
@@ -74,9 +71,9 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 	fontSize := resolveItemFontSize(item, config, 14)
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 	textColor := config.GetDefaultTextColor()
-	unitColor := resolveUnitColor(item, textColor)
+	unitColor := resolveUnitColor(item, config, textColor)
 	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, textColor, unitFontSize, unitColor, fontCache)
 
-	drawItemBorder(dc, item)
+	drawBaseItemBorder(dc, item, config, radius)
 	return nil
 }

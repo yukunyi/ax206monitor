@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"image"
+	"strings"
 
 	"github.com/fogleman/gg"
 )
@@ -50,13 +52,25 @@ func (rm *RenderManager) Render(config *MonitorConfig) (image.Image, error) {
 	dc.SetColor(parseColor(config.GetDefaultBackgroundColor()))
 	dc.Clear()
 
-	for _, item := range config.Items {
-		if renderer, exists := rm.renderers[item.Type]; exists {
-			if err := renderer.Render(dc, &item, rm.registry, rm.fontCache, config); err != nil {
-				continue
-			}
+	for idx := range config.Items {
+		item := &config.Items[idx]
+		renderer, exists := rm.renderers[item.Type]
+		if !exists {
+			continue
+		}
+		if err := rm.renderItemSafely(renderer, dc, item, config); err != nil {
+			logWarnModule("render", "skip item idx=%d type=%s monitor=%s: %v", idx, item.Type, strings.TrimSpace(item.Monitor), err)
 		}
 	}
 
 	return dc.Image(), nil
+}
+
+func (rm *RenderManager) renderItemSafely(renderer RenderItem, dc *gg.Context, item *ItemConfig, config *MonitorConfig) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("panic: %v", recovered)
+		}
+	}()
+	return renderer.Render(dc, item, rm.registry, rm.fontCache, config)
 }

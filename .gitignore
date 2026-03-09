@@ -5,3 +5,4 @@ dev_run.sh
 libre_hardware_monitor_data_sample.json
 frontend/node_modules
 frontend/dist
+webdist

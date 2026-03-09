@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var logger *logrus.Logger
@@ -20,28 +22,20 @@ type CustomFormatter struct{}
 func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	timestamp := entry.Time.Format("2006-01-02 15:04:05")
 
-	// Color codes for different levels
-	var levelColor string
+	// Keep plain text output so log files are directly searchable/readable.
 	var levelText string
 	switch entry.Level {
 	case logrus.InfoLevel:
-		levelColor = "\033[36m" // Cyan
 		levelText = " INFO"
 	case logrus.WarnLevel:
-		levelColor = "\033[33m" // Yellow
 		levelText = " WARN"
 	case logrus.ErrorLevel:
-		levelColor = "\033[31m" // Red
 		levelText = "ERROR"
 	case logrus.DebugLevel:
-		levelColor = "\033[37m" // White
 		levelText = "DEBUG"
 	default:
-		levelColor = "\033[0m" // Reset
 		levelText = strings.ToUpper(entry.Level.String())
 	}
-
-	reset := "\033[0m"
 
 	// Get module name from fields or use default
 	module := "main"
@@ -52,22 +46,26 @@ func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	}
 
 	// Format: [LEVEL timestamp] [module] message
-	return []byte(fmt.Sprintf("[%s%s%s %s] [%12s] %s\n",
-		levelColor, levelText, reset, timestamp, module, entry.Message)), nil
+	return []byte(fmt.Sprintf("[%s %s] [%12s] %s\n", levelText, timestamp, module, entry.Message)), nil
 }
 
 func initLogger() {
 	logger = logrus.New()
 
-	var writer io.Writer = os.Stdout
-
-	if runtime.GOOS == "windows" {
-		if logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-			writer = io.MultiWriter(os.Stdout, logFile)
-		}
+	logFilePath := resolveLogFilePath()
+	rotatingFileWriter := &lumberjack.Logger{
+		Filename:   logFilePath,
+		MaxSize:    100,
+		MaxBackups: 2,
+		LocalTime:  true,
+		Compress:   false,
+	}
+	writers := []io.Writer{rotatingFileWriter}
+	if runtime.GOOS != "windows" {
+		writers = append([]io.Writer{os.Stdout}, writers...)
 	}
 
-	logger.SetOutput(writer)
+	logger.SetOutput(io.MultiWriter(writers...))
 	logger.SetLevel(logrus.InfoLevel)
 	logger.SetFormatter(&CustomFormatter{})
 
@@ -84,6 +82,27 @@ func initLogger() {
 		WarnModule:  logWarnModule,
 		DebugModule: logDebugModule,
 	})
+	logInfoModule("log", "log file: %s", logFilePath)
+}
+
+func resolveLogFilePath() string {
+	executablePath, err := os.Executable()
+	if err == nil {
+		executablePath = strings.TrimSpace(executablePath)
+		tempDir := filepath.Clean(os.TempDir())
+		inGoBuildCache := tempDir != "" && strings.Contains(filepath.Clean(executablePath), filepath.Join(tempDir, "go-build"))
+		if executablePath != "" && !inGoBuildCache {
+			return filepath.Join(filepath.Dir(executablePath), "app.log")
+		}
+	}
+	workingDir, err := os.Getwd()
+	if err == nil {
+		workingDir = strings.TrimSpace(workingDir)
+		if workingDir != "" {
+			return filepath.Join(workingDir, "app.log")
+		}
+	}
+	return "app.log"
 }
 
 // Convenience functions with module support

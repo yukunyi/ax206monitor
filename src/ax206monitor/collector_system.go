@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/shirou/gopsutil/v3/load"
+	"os"
 	"strings"
 	"time"
 )
@@ -18,6 +19,9 @@ func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
 	if c.getItem("go_native.system.load_avg") == nil {
 		c.setItem("go_native.system.load_avg", NewCollectItem("go_native.system.load_avg", "System load average", "", 0, 0, 1))
 		c.setItem("go_native.system.current_time", NewCollectItem("go_native.system.current_time", "Current time", "", 0, 0, 0))
+		c.setItem("go_native.system.hostname", NewCollectItem("go_native.system.hostname", "Host name", "", 0, 0, 0))
+		c.setItem("go_native.system.resolution", NewCollectItem("go_native.system.resolution", "Display resolution", "", 0, 0, 0))
+		c.setItem("go_native.system.refresh_rate", NewCollectItem("go_native.system.refresh_rate", "Display refresh rate", "", 0, 0, 0))
 		c.setItem("go_native.system.collect.max_ms", NewCollectItem("go_native.system.collect.max_ms", "Collect max duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.collect.avg_ms", NewCollectItem("go_native.system.collect.avg_ms", "Collect avg duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.render.max_ms", NewCollectItem("go_native.system.render.max_ms", "Render max duration", "ms", 0, 0, 0))
@@ -33,6 +37,15 @@ func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
 		item.SetValue(time.Now().Format("2006-01-02 15:04:05"))
 		item.SetAvailable(true)
 	}
+	if item := c.getItem("go_native.system.hostname"); item != nil {
+		if hostName, err := os.Hostname(); err == nil && strings.TrimSpace(hostName) != "" {
+			item.SetValue(hostName)
+			item.SetAvailable(true)
+		} else {
+			item.SetAvailable(false)
+		}
+	}
+	updateSystemDisplayItems(c)
 	return c.ItemsSnapshot()
 }
 
@@ -57,6 +70,15 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 		item.SetValue(time.Now().Format("2006-01-02 15:04:05"))
 		item.SetAvailable(true)
 	}
+	if item := c.getItem("go_native.system.hostname"); item != nil {
+		if hostName, err := os.Hostname(); err == nil && strings.TrimSpace(hostName) != "" {
+			item.SetValue(hostName)
+			item.SetAvailable(true)
+		} else {
+			item.SetAvailable(false)
+		}
+	}
+	updateSystemDisplayItems(c)
 
 	stats := GetCollectorManager().Stats()
 	setSystemMetricItem(c.getItem("go_native.system.collect.max_ms"), stats.CollectMaxMS)
@@ -100,4 +122,29 @@ func setOutputTypeMetric(c *GoNativeSystemCollector, typeName string, stats map[
 	maxItem.SetAvailable(true)
 	avgItem.SetValue(entry.AvgMS)
 	avgItem.SetAvailable(true)
+}
+
+func updateSystemDisplayItems(c *GoNativeSystemCollector) {
+	if c == nil {
+		return
+	}
+	resolution, refreshRate, ok := getDisplayInfoSnapshot(30 * time.Second)
+	resolutionItem := c.getItem("go_native.system.resolution")
+	refreshItem := c.getItem("go_native.system.refresh_rate")
+	if resolutionItem != nil {
+		if ok && strings.TrimSpace(resolution) != "" {
+			resolutionItem.SetValue(resolution)
+			resolutionItem.SetAvailable(true)
+		} else {
+			resolutionItem.SetAvailable(false)
+		}
+	}
+	if refreshItem != nil {
+		if ok && strings.TrimSpace(refreshRate) != "" {
+			refreshItem.SetValue(refreshRate)
+			refreshItem.SetAvailable(true)
+		} else {
+			refreshItem.SetAvailable(false)
+		}
+	}
 }

@@ -371,7 +371,7 @@ func (fc *FontCache) GetFont(size int) (font.Face, error) {
 		fc.mutex.RLock()
 	}
 
-	if face, exists := fc.fontMap[size]; exists && face != nil {
+	if face, exists := fc.fontMap[size]; exists && !isNilFontFace(face) {
 		fc.mutex.RUnlock()
 		return face, nil
 	}

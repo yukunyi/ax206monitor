@@ -1,0 +1,55 @@
+{
+  "name": "builtin4",
+  "width": 480,
+  "height": 320,
+  "layout_padding": 1,
+  "default_font": "wqy-microhei.ttc",
+  "font_families": ["wqy-microhei.ttc", "WenQuanYi Micro Hei", "Noto Sans Mono CJK SC"],
+  "default_font_size": 14,
+  "default_value_font_size": 16,
+  "default_label_font_size": 14,
+  "default_unit_font_size": 12,
+  "default_color": "#f8fafc",
+  "default_background": "#0b1220",
+  "level_colors": ["#22c55e", "#eab308", "#f97316", "#ef4444"],
+  "default_thresholds": [25, 50, 75, 100],
+  "output_types": ["memimg"],
+  "refresh_interval": 1000,
+  "collect_warn_ms": 100,
+  "render_wait_max_ms": 300,
+  "default_history_points": 120,
+  "history_size": 120,
+  "custom_monitors": [],
+  "items": [
+    {"type": "simple_value", "edit_ui_name": "1_ip", "monitor": "alias.net.ip", "unit": "auto", "x": 2, "y": 2, "width": 117, "height": 20, "font_size": 12, "bg": "#111827"},
+    {"type": "simple_value", "edit_ui_name": "2_time", "monitor": "alias.system.time", "unit": "auto", "x": 121, "y": 2, "width": 117, "height": 20, "font_size": 12, "bg": "#111827"},
+    {"type": "simple_value", "edit_ui_name": "3_resolution", "monitor": "alias.system.resolution", "unit": "auto", "x": 240, "y": 2, "width": 117, "height": 20, "font_size": 12, "bg": "#111827"},
+    {"type": "simple_value", "edit_ui_name": "4_refresh", "monitor": "alias.system.refresh_rate", "unit": "auto", "x": 359, "y": 2, "width": 119, "height": 20, "font_size": 12, "bg": "#111827"},
+
+    {"type": "label_text1", "edit_ui_name": "5_cpu_top", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "CPU"}},
+    {"type": "label_text1", "edit_ui_name": "6_gpu_top", "monitor": "alias.gpu.usage", "unit": "auto", "x": 161, "y": 24, "width": 157, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "GPU"}},
+    {"type": "label_text1", "edit_ui_name": "7_fps_top", "monitor": "alias.gpu.fps", "unit": "auto", "x": 320, "y": 24, "width": 158, "height": 24, "bg": "#111827", "render_attrs_map": {"label": "FPS"}},
+
+    {"type": "full_chart", "edit_ui_name": "8_fps_chart", "monitor": "alias.gpu.fps", "unit": "auto", "x": 2, "y": 50, "width": 316, "height": 110, "bg": "#0f172a", "render_attrs_map": {"title": "GPU FPS", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
+    {"type": "full_chart", "edit_ui_name": "9_gpu_chart", "monitor": "alias.gpu.usage", "unit": "auto", "x": 320, "y": 50, "width": 158, "height": 110, "bg": "#0f172a", "render_attrs_map": {"title": "GPU Usage", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
+
+    {"type": "full_chart", "edit_ui_name": "10_cpu_chart", "monitor": "alias.cpu.usage", "unit": "auto", "x": 2, "y": 162, "width": 237, "height": 64, "bg": "#0f172a", "render_attrs_map": {"title": "CPU Usage", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
+    {"type": "full_chart", "edit_ui_name": "11_cpu_temp_chart", "monitor": "alias.cpu.temp", "unit": "auto", "x": 241, "y": 162, "width": 237, "height": 64, "bg": "#0f172a", "render_attrs_map": {"title": "CPU Temp", "history_points": 120, "show_avg_line": true, "fill_area": true, "line_width": 2}},
+
+    {"type": "label_text1", "edit_ui_name": "12_cpu_power", "monitor": "alias.cpu.power", "unit": "auto", "x": 2, "y": 228, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "CPU P"}},
+    {"type": "label_text1", "edit_ui_name": "13_cpu_max", "monitor": "alias.cpu.max_freq", "unit": "auto", "x": 161, "y": 228, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "CPU M"}},
+    {"type": "label_text1", "edit_ui_name": "14_mem_usage", "monitor": "alias.memory.usage", "unit": "auto", "x": 320, "y": 228, "width": 158, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "MEM"}},
+
+    {"type": "label_text1", "edit_ui_name": "15_gpu_power", "monitor": "alias.gpu.power", "unit": "auto", "x": 2, "y": 250, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "GPU P"}},
+    {"type": "label_text1", "edit_ui_name": "16_gpu_vram", "monitor": "alias.gpu.vram", "unit": "auto", "x": 161, "y": 250, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "VRAM"}},
+    {"type": "label_text1", "edit_ui_name": "17_gpu_max", "monitor": "alias.gpu.max_freq", "unit": "auto", "x": 320, "y": 250, "width": 158, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "GPU M"}},
+
+    {"type": "label_text1", "edit_ui_name": "18_net_down", "monitor": "alias.net.download", "unit": "auto", "x": 2, "y": 272, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "NET D"}},
+    {"type": "label_text1", "edit_ui_name": "19_net_up", "monitor": "alias.net.upload", "unit": "auto", "x": 161, "y": 272, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "NET U"}},
+    {"type": "label_text1", "edit_ui_name": "20_fan_sys", "monitor": "alias.fan.system", "unit": "auto", "x": 320, "y": 272, "width": 158, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "SYS FAN"}},
+
+    {"type": "label_text1", "edit_ui_name": "21_fan_cpu", "monitor": "alias.fan.cpu", "unit": "auto", "x": 2, "y": 294, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "CPU FAN"}},
+    {"type": "label_text1", "edit_ui_name": "22_fan_gpu", "monitor": "alias.fan.gpu", "unit": "auto", "x": 161, "y": 294, "width": 157, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "GPU FAN"}},
+    {"type": "label_text1", "edit_ui_name": "23_cpu_temp_quick", "monitor": "alias.cpu.temp", "unit": "auto", "x": 320, "y": 294, "width": 158, "height": 22, "bg": "#0f172a", "render_attrs_map": {"label": "CPU T"}}
+  ]
+}

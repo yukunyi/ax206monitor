@@ -21,6 +21,10 @@ func sanitizeFPS(raw uint32) float64 {
 		return 0
 	}
 	fps := float64(raw) / 10.0
+	return sanitizeFPSFloat(fps)
+}
+
+func sanitizeFPSFloat(fps float64) float64 {
 	if math.IsNaN(fps) || math.IsInf(fps, 0) || fps < 0 {
 		return 0
 	}

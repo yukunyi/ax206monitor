@@ -5,36 +5,51 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 type RTSSCollector struct {
 	*BaseCollector
+	mu      sync.RWMutex
 	client  *rtsssource.RTSSClient
 	sources map[string]string
 }
 
 func NewRTSSCollector(cfg *MonitorConfig) *RTSSCollector {
-	if runtime.GOOS != "windows" || cfg == nil {
-		return nil
-	}
-	if !cfg.IsCollectorEnabled("external.rtss", false) {
+	if runtime.GOOS != "windows" {
 		return nil
 	}
 	collector := &RTSSCollector{
-		BaseCollector: NewBaseCollector("external.rtss"),
+		BaseCollector: NewBaseCollector(collectorRTSS),
 		client:        rtsssource.GetRTSSClient(),
 		sources:       make(map[string]string),
 	}
-	collector.SetEnabled(cfg.IsCollectorEnabled("external.rtss", true))
+	collector.ApplyConfig(cfg)
 	return collector
 }
 
+func (c *RTSSCollector) ApplyConfig(cfg *MonitorConfig) {
+	enabled := cfg != nil && cfg.IsCollectorEnabled(collectorRTSS, false)
+	c.SetEnabled(enabled)
+	if !enabled {
+		c.mu.Lock()
+		c.sources = map[string]string{}
+		c.clearItems()
+		c.mu.Unlock()
+	}
+}
+
 func (c *RTSSCollector) GetAllItems() map[string]*CollectItem {
-	if c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+	if client == nil {
 		return c.ItemsSnapshot()
 	}
-	options := c.client.ListMonitorOptions()
+	options := client.ListMonitorOptions()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, option := range options {
 		name := strings.TrimSpace(option.Name)
 		if name == "" {
@@ -51,16 +66,23 @@ func (c *RTSSCollector) GetAllItems() map[string]*CollectItem {
 }
 
 func (c *RTSSCollector) UpdateItems() error {
-	if !c.IsEnabled() || c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	sources := make(map[string]string, len(c.sources))
+	for key, value := range c.sources {
+		sources[key] = value
+	}
+	c.mu.RUnlock()
+	if !c.IsEnabled() || client == nil {
 		return nil
 	}
-	c.client.RefreshMetrics(250 * time.Millisecond)
-	for key, sourceName := range c.sources {
+	client.RefreshMetrics(250 * time.Millisecond)
+	for key, sourceName := range sources {
 		item := c.getItem(key)
 		if item == nil || !item.IsEnabled() {
 			continue
 		}
-		value, unit, ok, err := c.client.GetMonitorValueByNameCached(sourceName)
+		value, unit, ok, err := client.GetMonitorValueByNameCached(sourceName)
 		if err != nil || !ok {
 			item.SetAvailable(false)
 			continue

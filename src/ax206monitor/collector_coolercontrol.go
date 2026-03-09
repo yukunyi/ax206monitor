@@ -1,15 +1,24 @@
 package main
 
-import "strings"
+import (
+	"runtime"
+	"strings"
+	"sync"
+)
 
 type CoolerControlCollector struct {
 	*BaseCollector
+	mu      sync.RWMutex
 	client  *CoolerControlClient
 	sources map[string]string
+	url     string
 }
 
 func isCoolerControlEnabled(cfg *MonitorConfig) bool {
-	return cfg != nil && cfg.IsCollectorEnabled("external.coolercontrol", false)
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	return cfg != nil && cfg.IsCollectorEnabled(collectorCoolerControl, false)
 }
 
 func getConfiguredCoolerControlClient(cfg *MonitorConfig) *CoolerControlClient {
@@ -39,27 +48,59 @@ func listConfiguredCoolerControlOptions(cfg *MonitorConfig) ([]CoolerControlMoni
 }
 
 func NewCoolerControlCollector(cfg *MonitorConfig) *CoolerControlCollector {
-	client := getConfiguredCoolerControlClient(cfg)
-	if client == nil {
+	if runtime.GOOS != "linux" {
 		return nil
 	}
 	collector := &CoolerControlCollector{
-		BaseCollector: NewBaseCollector("external.coolercontrol"),
-		client:        client,
+		BaseCollector: NewBaseCollector(collectorCoolerControl),
 		sources:       make(map[string]string),
 	}
-	collector.SetEnabled(cfg.IsCollectorEnabled("external.coolercontrol", true))
+	collector.ApplyConfig(cfg)
 	return collector
 }
 
+func (c *CoolerControlCollector) ApplyConfig(cfg *MonitorConfig) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	enabled := cfg != nil && cfg.IsCollectorEnabled(collectorCoolerControl, false)
+	client := getConfiguredCoolerControlClient(cfg)
+	nextURL := ""
+	if cfg != nil {
+		nextURL = strings.TrimSpace(cfg.GetCoolerControlURL())
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SetEnabled(enabled)
+	if !enabled {
+		c.client = nil
+		c.sources = map[string]string{}
+		c.clearItems()
+		c.url = ""
+		return
+	}
+	if c.url != nextURL {
+		c.sources = map[string]string{}
+		c.clearItems()
+	}
+	c.client = client
+	c.url = nextURL
+}
+
 func (c *CoolerControlCollector) GetAllItems() map[string]*CollectItem {
-	if c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+	if client == nil {
 		return c.ItemsSnapshot()
 	}
-	options, err := c.client.ListMonitorOptions()
+	options, err := client.ListMonitorOptions()
 	if err != nil {
 		return c.ItemsSnapshot()
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, option := range options {
 		name := strings.TrimSpace(option.Name)
 		if name == "" {
@@ -91,19 +132,26 @@ func (c *CoolerControlCollector) GetAllItems() map[string]*CollectItem {
 }
 
 func (c *CoolerControlCollector) UpdateItems() error {
-	if !c.IsEnabled() || c.client == nil {
+	c.mu.RLock()
+	client := c.client
+	sources := make(map[string]string, len(c.sources))
+	for key, value := range c.sources {
+		sources[key] = value
+	}
+	c.mu.RUnlock()
+	if !c.IsEnabled() || client == nil {
 		return nil
 	}
-	_, err := c.client.FetchSnapshot()
+	_, err := client.FetchSnapshot()
 	if err != nil {
 		return err
 	}
-	for key, sourceName := range c.sources {
+	for key, sourceName := range sources {
 		item := c.getItem(key)
 		if item == nil || !item.IsEnabled() {
 			continue
 		}
-		value, unit, ok, getErr := c.client.GetMonitorValueByNameCached(sourceName)
+		value, unit, ok, getErr := client.GetMonitorValueByNameCached(sourceName)
 		if getErr != nil || !ok {
 			item.SetAvailable(false)
 			continue

@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"image"
 	"os"
 	"os/signal"
 	"sort"
@@ -78,6 +77,10 @@ func main() {
 	if err != nil {
 		logFatal("Config load failed '%s': %v", userConfigPath, err)
 	}
+	profileManager, config, err := InitializeGlobalProfileManager(userConfigPath, config)
+	if err != nil {
+		logFatal("Profile initialization failed: %v", err)
+	}
 	configSource := userConfigPath
 
 	// Set global config for monitor system
@@ -147,13 +150,24 @@ func main() {
 		return
 	}
 
-	fontCache, err := loadFontCache()
+	runtimeAPI, err := AcquireSharedWebAPI(config)
 	if err != nil {
-		logFatal("Font initialization failed: %v", err)
+		logFatal("Runtime initialization failed: %v", err)
 	}
+	defer ReleaseSharedWebAPI(runtimeAPI)
+	runtimeAPI.SetIdleConfigProvider(func() (*MonitorConfig, error) {
+		activeName := strings.TrimSpace(profileManager.ActiveName())
+		if activeName == "" {
+			return loadUserConfigOrDefault(userConfigPath)
+		}
+		cfg, err := profileManager.LoadProfile(activeName)
+		if err != nil {
+			return nil, err
+		}
+		return cfg, nil
+	})
 
-	renderManager := NewRenderManager(fontCache, registry)
-	outputManager, outputTypes := buildOutputManager(config, false)
+	outputTypes := resolveOutputTypes(config, false)
 	webProcessController := NewWebServerProcess(*portFlag, webDevEnabled, devViteURL)
 	if webDevEnabled {
 		if err := webProcessController.Start(); err != nil {
@@ -188,73 +202,14 @@ func main() {
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
 	logInfo("Monitoring %d items", len(requiredMonitors))
-
-	// Keep at most one pending frame and always prefer the newest frame.
-	outputChan := make(chan outputFrame, 1)
-	go func() {
-		for frame := range outputChan {
-			outputStart := time.Now()
-			if err := outputManager.Output(frame.img); err != nil {
-				logWarn("Output failed: %v", err)
-			} else {
-				outputDuration := time.Since(outputStart)
-				queueDelay := outputStart.Sub(frame.enqueuedAt)
-				logDebug("Output time: %v | Queue delay: %v", outputDuration, queueDelay)
-			}
-		}
-	}()
-
-	lastEpoch := int64(0)
 	for {
 		select {
 		case <-signalChan:
 			logInfo("Shutdown initiated")
-			close(outputChan)
-			outputManager.Close()
 			return
 		default:
+			time.Sleep(200 * time.Millisecond)
 		}
-
-		cycleStart := time.Now()
-		noteRenderAccess()
-
-		epochID, waitComplete, waitDuration := registry.WaitForNextEpoch(lastEpoch, renderWaitMax)
-		if epochID <= lastEpoch {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		lastEpoch = epochID
-
-		// Render timing
-		renderStart := time.Now()
-		img, err := renderManager.Render(config)
-		if err != nil {
-			logError("Render failed: %v", err)
-			continue
-		}
-		renderDuration := time.Since(renderStart)
-		recordRenderDuration(renderDuration)
-
-		// Async output (non-blocking), drop stale pending frame first.
-		replaced, ok := enqueueLatestFrame(outputChan, outputFrame{
-			img:        img,
-			enqueuedAt: time.Now(),
-		})
-		if !ok {
-			logWarn("Output queue busy, skipping frame")
-		} else if replaced {
-			logDebug("Output queue replaced stale frame")
-		}
-
-		cycleDuration := time.Since(cycleStart)
-		logDebug(
-			"Cycle: %v | Epoch: %d | CollectWait: %v (complete=%v) | Render: %v",
-			cycleDuration,
-			epochID,
-			waitDuration,
-			waitComplete,
-			renderDuration,
-		)
 	}
 }
 
@@ -271,33 +226,6 @@ func parseEnvBool(raw string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-type outputFrame struct {
-	img        image.Image
-	enqueuedAt time.Time
-}
-
-func enqueueLatestFrame(ch chan outputFrame, frame outputFrame) (bool, bool) {
-	select {
-	case ch <- frame:
-		return false, true
-	default:
-	}
-
-	replaced := false
-	select {
-	case <-ch:
-		replaced = true
-	default:
-	}
-
-	select {
-	case ch <- frame:
-		return replaced, true
-	default:
-		return replaced, false
 	}
 }
 
@@ -384,23 +312,13 @@ func listAllMonitors() {
 	fmt.Println("Updating monitor values...")
 	_, _, _ = registry.WaitForNextEpoch(0, 500*time.Millisecond)
 
-	registry.mutex.RLock()
-	defer registry.mutex.RUnlock()
-
 	// Collect and sort monitor names
 	var names []string
-	for name := range registry.items {
+	items := registry.GetAll()
+	for name := range items {
 		names = append(names, name)
 	}
-
-	// Sort names
-	for i := 0; i < len(names)-1; i++ {
-		for j := i + 1; j < len(names); j++ {
-			if names[i] > names[j] {
-				names[i], names[j] = names[j], names[i]
-			}
-		}
-	}
+	sort.Strings(names)
 
 	fmt.Println("\n=== System Information ===")
 	printSystemInfo()
@@ -410,7 +328,10 @@ func listAllMonitors() {
 	fmt.Printf("%-30s %-20s %s\n", "----", "-----", "-------------")
 
 	for _, name := range names {
-		monitor := registry.items[name]
+		monitor := items[name]
+		if monitor == nil {
+			continue
+		}
 		label := monitor.GetLabel()
 		if label == "" {
 			label = "-"
