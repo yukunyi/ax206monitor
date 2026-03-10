@@ -28,7 +28,6 @@ After `./package.sh`, Windows release files are placed at:
 ```text
 dist/windows/ax206_monitor/
 ├── ax206monitor.exe
-├── start.bat
 ├── README.md
 └── (required DLL dependencies, e.g. libusb-1.0.dll)
 ```

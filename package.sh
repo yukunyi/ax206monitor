@@ -187,13 +187,6 @@ if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
 fi
 copy_windows_runtime_deps "$WINDOWS_DIST_DIR/ax206monitor.exe" "$WINDOWS_DIST_DIR"
 
-cat > "$WINDOWS_DIST_DIR/start.bat" << 'EOF'
-@echo off
-cd /d "%~dp0"
-ax206monitor.exe
-pause
-EOF
-
 echo "Verifying Linux package contents..."
 echo "Linux package directory contents:"
 ls -la "$LINUX_PACKAGE/"
@@ -239,7 +232,7 @@ echo ""
 echo "Windows:"
 echo "1. Use directory: $WINDOWS_DIST_DIR"
 echo "2. Or extract zip: $WINDOWS_ZIP_PATH"
-echo "3. Double-click start.bat or ax206monitor.exe"
+echo "3. Run ax206monitor.exe"
 echo "4. Use Web UI if needed: set AX206_MONITOR_WEB=1 && ax206monitor.exe --port 18086"
 
 echo ""
