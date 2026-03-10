@@ -38,7 +38,7 @@ func (r *LabelTextRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	if labelText == "" {
 		labelText = strings.TrimSpace(item.Monitor)
 	}
-	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)

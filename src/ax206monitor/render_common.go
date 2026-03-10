@@ -227,8 +227,13 @@ func canUseItemCustomStyle(item *ItemConfig, config *MonitorConfig) bool {
 }
 
 func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) && item.FontSize > 0 {
-		return item.FontSize
+	if canUseItemCustomStyle(item, config) {
+		if item.LargeFontSize > 0 {
+			return item.LargeFontSize
+		}
+		if item.FontSize > 0 {
+			return item.FontSize
+		}
 	}
 	if config != nil && item != nil {
 		if defaults := config.GetTypeDefaults(item.Type); defaults.LargeFontSize > 0 {
@@ -251,8 +256,13 @@ func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) 
 }
 
 func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) && item.FontSize > 0 {
-		return item.FontSize
+	if canUseItemCustomStyle(item, config) {
+		if item.MediumFontSize > 0 {
+			return item.MediumFontSize
+		}
+		if item.FontSize > 0 {
+			return item.FontSize
+		}
 	}
 	if config != nil && item != nil {
 		if defaults := config.GetTypeDefaults(item.Type); defaults.MediumFontSize > 0 {
@@ -272,8 +282,13 @@ func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int)
 }
 
 func resolveUnitFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) && item.UnitFontSize > 0 {
-		return item.UnitFontSize
+	if canUseItemCustomStyle(item, config) {
+		if item.SmallFontSize > 0 {
+			return item.SmallFontSize
+		}
+		if item.UnitFontSize > 0 {
+			return item.UnitFontSize
+		}
 	}
 	if config != nil && item != nil {
 		if defaults := config.GetTypeDefaults(item.Type); defaults.SmallFontSize > 0 {

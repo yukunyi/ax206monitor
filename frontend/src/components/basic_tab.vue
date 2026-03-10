@@ -73,34 +73,6 @@ const aggregateOptions = [
   { label: "avg", value: "avg" },
 ];
 
-const ITEM_TYPE_LABELS = {
-  simple_value: "基础数值",
-  simple_progress: "基础进度条",
-  simple_line_chart: "基础折线图",
-  simple_label: "基础标签",
-  simple_rect: "基础矩形",
-  simple_circle: "基础圆形",
-  label_text: "标签数值",
-  full_chart: "复杂图表",
-  full_progress: "复杂进度条",
-};
-
-const typeDefaultRows = computed(() => {
-  const order = Array.isArray(props.meta?.item_types) && props.meta.item_types.length > 0
-    ? props.meta.item_types.map((item) => (typeof item === "string" ? item : String(item?.value || "")))
-    : Object.keys(ITEM_TYPE_LABELS);
-  const unique = new Set(order.filter(Boolean));
-  Object.keys(props.config.type_defaults || {}).forEach((type) => unique.add(type));
-  return [...unique];
-});
-
-const progressStyleOptions = [
-  { label: "gradient", value: "gradient" },
-  { label: "solid", value: "solid" },
-  { label: "segmented", value: "segmented" },
-  { label: "stripes", value: "stripes" },
-];
-
 function collectorEntry(name) {
   if (!props.config.collector_config) return { enabled: false, options: {} };
   return props.config.collector_config[name] || { enabled: false, options: {} };
@@ -135,37 +107,6 @@ function thresholdValue(index) {
 function levelColorValue(index) {
   const list = Array.isArray(props.config.level_colors) ? props.config.level_colors : [];
   return String(list[index] || ["#22c55e", "#eab308", "#f97316", "#ef4444"][index]);
-}
-
-function typeLabel(type) {
-  const key = String(type || "");
-  return ITEM_TYPE_LABELS[key] || key;
-}
-
-function typeDefaultEntry(type) {
-  const table = props.config.type_defaults || {};
-  const entry = table[type];
-  if (!entry || typeof entry !== "object") return {};
-  return entry;
-}
-
-function typeDefaultNumber(type, key, fallback = 0) {
-  const entry = typeDefaultEntry(type);
-  const value = Number(entry[key]);
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function typeDefaultColor(type, key, fallback = "#f8fafc") {
-  const entry = typeDefaultEntry(type);
-  const value = String(entry[key] || "").trim();
-  return value || fallback;
-}
-
-function typeDefaultAttr(type, key, fallback) {
-  const attrs = typeDefaultEntry(type).render_attrs_map || {};
-  const value = attrs[key];
-  if (value === undefined || value === null) return fallback;
-  return value;
 }
 </script>
 
@@ -231,6 +172,14 @@ function typeDefaultAttr(type, key, fallback) {
                     :disabled="readonlyProfile"
                     size="small"
                     @update:value="(v) => onField('allow_custom_style', !!v)"
+                  />
+                </n-form-item-gi>
+                <n-form-item-gi label="锁屏暂停采集">
+                  <n-switch
+                    :value="config.pause_collect_on_lock === true"
+                    :disabled="readonlyProfile"
+                    size="small"
+                    @update:value="(v) => onField('pause_collect_on_lock', !!v)"
                   />
                 </n-form-item-gi>
                 <n-form-item-gi label="输出类型" :span="2">
@@ -371,248 +320,6 @@ function typeDefaultAttr(type, key, fallback) {
           </n-card>
         </n-grid-item>
       </n-grid>
-
-      <n-card title="按类型默认参数" size="small" style="margin-top: 8px">
-        <n-table size="small" striped>
-          <thead>
-            <tr>
-              <th style="width: 160px">类型</th>
-              <th style="width: 90px">小</th>
-              <th style="width: 90px">中</th>
-              <th style="width: 90px">大</th>
-              <th style="width: 90px">边框宽度</th>
-              <th style="width: 80px">圆角</th>
-              <th style="width: 64px">前景</th>
-              <th style="width: 64px">背景</th>
-              <th style="width: 64px">边框</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="type in typeDefaultRows" :key="type">
-              <td>{{ typeLabel(type) }}</td>
-              <td>
-                <n-input-number
-                  :value="typeDefaultNumber(type, 'small_font_size', 0)"
-                  :disabled="readonlyProfile"
-                  :show-button="false"
-                  @update:value="(v) => onField(['type_defaults', type, 'small_font_size'], Number(v || 0))"
-                />
-              </td>
-              <td>
-                <n-input-number
-                  :value="typeDefaultNumber(type, 'medium_font_size', 0)"
-                  :disabled="readonlyProfile"
-                  :show-button="false"
-                  @update:value="(v) => onField(['type_defaults', type, 'medium_font_size'], Number(v || 0))"
-                />
-              </td>
-              <td>
-                <n-input-number
-                  :value="typeDefaultNumber(type, 'large_font_size', 0)"
-                  :disabled="readonlyProfile"
-                  :show-button="false"
-                  @update:value="(v) => onField(['type_defaults', type, 'large_font_size'], Number(v || 0))"
-                />
-              </td>
-              <td>
-                <n-input-number
-                  :value="typeDefaultNumber(type, 'border_width', 0)"
-                  :disabled="readonlyProfile"
-                  :show-button="false"
-                  @update:value="(v) => onField(['type_defaults', type, 'border_width'], Number(v || 0))"
-                />
-              </td>
-              <td>
-                <n-input-number
-                  :value="typeDefaultNumber(type, 'radius', 0)"
-                  :disabled="readonlyProfile"
-                  :show-button="false"
-                  @update:value="(v) => onField(['type_defaults', type, 'radius'], Number(v || 0))"
-                />
-              </td>
-              <td>
-                <pure-color-input
-                  :value="typeDefaultColor(type, 'color', '#f8fafc')"
-                  :disabled="readonlyProfile"
-                  @update:value="(v) => onField(['type_defaults', type, 'color'], String(v || ''))"
-                />
-              </td>
-              <td>
-                <pure-color-input
-                  :value="typeDefaultColor(type, 'bg', '#0b1220')"
-                  :disabled="readonlyProfile"
-                  @update:value="(v) => onField(['type_defaults', type, 'bg'], String(v || ''))"
-                />
-              </td>
-              <td>
-                <pure-color-input
-                  :value="typeDefaultColor(type, 'border_color', '#475569')"
-                  :disabled="readonlyProfile"
-                  @update:value="(v) => onField(['type_defaults', type, 'border_color'], String(v || ''))"
-                />
-              </td>
-            </tr>
-          </tbody>
-        </n-table>
-
-        <n-divider style="margin: 8px 0" />
-        <n-grid cols="1 s:2" responsive="screen" :x-gap="8" :y-gap="8">
-          <n-grid-item>
-            <n-space vertical size="small">
-              <n-card size="small" embedded title="基础折线图默认">
-                <n-form size="small" label-placement="left" :label-width="84">
-                  <n-grid cols="1" :x-gap="6" :y-gap="2">
-                    <n-form-item-gi label="历史数据点数">
-                      <n-input-number
-                        :value="Number(typeDefaultAttr('simple_line_chart', 'history_points', config.default_history_points || 150))"
-                        :disabled="readonlyProfile"
-                        :show-button="false"
-                        @update:value="(v) => onField(['type_defaults', 'simple_line_chart', 'render_attrs_map', 'history_points'], Number(v || 0))"
-                      />
-                    </n-form-item-gi>
-                  </n-grid>
-                </n-form>
-              </n-card>
-
-              <n-card size="small" embedded title="复杂进度默认">
-                <n-form size="small" label-placement="left" :label-width="84">
-                  <n-grid cols="1 s:2" responsive="screen" :x-gap="6" :y-gap="2">
-                    <n-form-item-gi label="样式">
-                      <n-select
-                        :value="String(typeDefaultAttr('full_progress', 'progress_style', 'gradient'))"
-                        :options="progressStyleOptions"
-                        :disabled="readonlyProfile"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'progress_style'], String(v || 'gradient'))"
-                      />
-                    </n-form-item-gi>
-                    <n-form-item-gi label="分段数">
-                      <n-input-number
-                        :value="Number(typeDefaultAttr('full_progress', 'segments', 12))"
-                        :disabled="readonlyProfile"
-                        :show-button="false"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'segments'], Number(v || 0))"
-                      />
-                    </n-form-item-gi>
-                    <n-form-item-gi label="标题间距">
-                      <n-input-number
-                        :value="Number(typeDefaultAttr('full_progress', 'body_gap', 0))"
-                        :disabled="readonlyProfile"
-                        :show-button="false"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'body_gap'], Number(v || 0))"
-                      />
-                    </n-form-item-gi>
-                    <n-form-item-gi label="条高(0=铺满)">
-                      <n-input-number
-                        :value="Number(typeDefaultAttr('full_progress', 'bar_height', 0))"
-                        :disabled="readonlyProfile"
-                        :show-button="false"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'bar_height'], Number(v || 0))"
-                      />
-                    </n-form-item-gi>
-                    <n-form-item-gi label="条圆角">
-                      <n-input-number
-                        :value="Number(typeDefaultAttr('full_progress', 'bar_radius', 0))"
-                        :disabled="readonlyProfile"
-                        :show-button="false"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'bar_radius'], Number(v || 0))"
-                      />
-                    </n-form-item-gi>
-                    <n-form-item-gi label="轨道颜色" :span="2">
-                      <pure-color-input
-                        :value="String(typeDefaultAttr('full_progress', 'track_color', '#1f2937'))"
-                        :disabled="readonlyProfile"
-                        @update:value="(v) => onField(['type_defaults', 'full_progress', 'render_attrs_map', 'track_color'], String(v || ''))"
-                      />
-                    </n-form-item-gi>
-                  </n-grid>
-                </n-form>
-              </n-card>
-            </n-space>
-          </n-grid-item>
-
-          <n-grid-item>
-            <n-card size="small" embedded title="复杂图表默认">
-              <n-form size="small" label-placement="left" :label-width="84">
-                <n-grid cols="1 s:2" responsive="screen" :x-gap="6" :y-gap="2">
-                  <n-form-item-gi label="历史数据点数">
-                    <n-input-number
-                      :value="Number(typeDefaultAttr('full_chart', 'history_points', config.default_history_points || 150))"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'history_points'], Number(v || 0))"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="线宽">
-                    <n-input-number
-                      :value="Number(typeDefaultAttr('full_chart', 'line_width', 2))"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'line_width'], Number(v || 0))"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="标题间距">
-                    <n-input-number
-                      :value="Number(typeDefaultAttr('full_chart', 'body_gap', 4))"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'body_gap'], Number(v || 0))"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="标题分割线">
-                    <n-switch
-                      :value="!!typeDefaultAttr('full_chart', 'header_divider', true)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'header_divider'], !!v)"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="分段线开关">
-                    <n-switch
-                      :value="!!typeDefaultAttr('full_chart', 'show_segment_lines', typeDefaultAttr('full_chart', 'show_grid_lines', true))"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'show_segment_lines'], !!v)"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="填充区域">
-                    <n-switch
-                      :value="!!typeDefaultAttr('full_chart', 'fill_area', true)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'fill_area'], !!v)"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="显示均线">
-                    <n-switch
-                      :value="!!typeDefaultAttr('full_chart', 'show_avg_line', true)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'show_avg_line'], !!v)"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="线条颜色">
-                    <pure-color-input
-                      :value="String(typeDefaultAttr('full_chart', 'chart_color', '#38bdf8'))"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'chart_color'], String(v || ''))"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="图表区背景色">
-                    <pure-color-input
-                      :value="String(typeDefaultAttr('full_chart', 'chart_area_bg', ''))"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'chart_area_bg'], String(v || ''))"
-                    />
-                  </n-form-item-gi>
-                  <n-form-item-gi label="图表区边框色" :span="2">
-                    <pure-color-input
-                      :value="String(typeDefaultAttr('full_chart', 'chart_area_border_color', ''))"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['type_defaults', 'full_chart', 'render_attrs_map', 'chart_area_border_color'], String(v || ''))"
-                    />
-                  </n-form-item-gi>
-                </n-grid>
-              </n-form>
-            </n-card>
-          </n-grid-item>
-        </n-grid>
-      </n-card>
 
       <n-card title="采集器开关" size="small" style="margin-top: 8px">
         <n-table class="collector_table" size="small" striped>

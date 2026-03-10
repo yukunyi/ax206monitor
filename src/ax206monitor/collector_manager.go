@@ -341,9 +341,10 @@ func defaultMonitorQueueSize(workers int) int {
 }
 
 type CollectorManagerStats struct {
-	WorkerCount int `json:"worker_count"`
-	QueueSize   int `json:"queue_size"`
-	QueueLen    int `json:"queue_len"`
+	WorkerCount int  `json:"worker_count"`
+	QueueSize   int  `json:"queue_size"`
+	QueueLen    int  `json:"queue_len"`
+	Paused      bool `json:"paused"`
 
 	AutoTune          bool    `json:"auto_tune"`
 	AutoTuneIntervalS int     `json:"auto_tune_interval_sec"`
@@ -400,6 +401,7 @@ type CollectorManager struct {
 	requiredSig      string
 	modeFull         bool
 	previewMode      bool
+	paused           bool
 
 	missingRetryAttempts int
 	missingRetryNextAt   time.Time
@@ -947,7 +949,10 @@ func (m *CollectorManager) runEpochScheduler() {
 		active := func() []namedCollector {
 			m.mutex.Lock()
 			defer m.mutex.Unlock()
-			activeCollectors := m.snapshotActiveCollectorsLocked()
+			activeCollectors := []namedCollector{}
+			if !m.paused {
+				activeCollectors = m.snapshotActiveCollectorsLocked()
+			}
 			state := &collectorEpochState{
 				doneCh:     make(chan struct{}),
 				expected:   len(activeCollectors),
@@ -1176,6 +1181,27 @@ func (m *CollectorManager) SetPreviewMode(enabled bool) {
 	m.mutex.Unlock()
 }
 
+func (m *CollectorManager) SetPaused(paused bool) {
+	m.mutex.Lock()
+	changed := m.paused != paused
+	m.paused = paused
+	m.mutex.Unlock()
+	if !changed {
+		return
+	}
+	if paused {
+		logInfoModule("collect", "collector manager paused")
+		return
+	}
+	logInfoModule("collect", "collector manager resumed")
+}
+
+func (m *CollectorManager) IsPaused() bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.paused
+}
+
 func (m *CollectorManager) PreviewMode() bool {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
@@ -1234,6 +1260,7 @@ func (m *CollectorManager) Stats() CollectorManagerStats {
 		WorkerCount: len(m.workerChans),
 		QueueSize:   queueSize,
 		QueueLen:    queueLen,
+		Paused:      m.paused,
 
 		AutoTune:          false,
 		AutoTuneIntervalS: 0,
@@ -1320,6 +1347,7 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.system.hostname",
 		"go_native.system.resolution",
 		"go_native.system.refresh_rate",
+		"go_native.system.display",
 		"go_native.system.collect.max_ms",
 		"go_native.system.collect.avg_ms",
 		"go_native.system.render.max_ms",

@@ -86,6 +86,7 @@ type MonitorConfig struct {
 	AllowCustomStyle        bool                        `json:"allow_custom_style,omitempty"`
 	FontFamilies            []string                    `json:"font_families"`
 	OutputTypes             []string                    `json:"output_types"`
+	PauseCollectOnLock      bool                        `json:"pause_collect_on_lock,omitempty"`
 	RefreshInterval         int                         `json:"refresh_interval"`
 	CollectWarnMS           int                         `json:"collect_warn_ms,omitempty"`
 	RenderWaitMaxMS         int                         `json:"render_wait_max_ms,omitempty"`
@@ -104,6 +105,7 @@ type MonitorConfig struct {
 }
 
 type ItemConfig struct {
+	ID             string                 `json:"id,omitempty"`
 	Type           string                 `json:"type"`
 	EditUIName     string                 `json:"edit_ui_name,omitempty"`
 	CustomStyle    bool                   `json:"custom_style,omitempty"`
@@ -111,6 +113,9 @@ type ItemConfig struct {
 	Unit           string                 `json:"unit,omitempty"`
 	UnitColor      string                 `json:"unit_color,omitempty"`
 	UnitFontSize   int                    `json:"unit_font_size,omitempty"`
+	SmallFontSize  int                    `json:"small_font_size,omitempty"`
+	MediumFontSize int                    `json:"medium_font_size,omitempty"`
+	LargeFontSize  int                    `json:"large_font_size,omitempty"`
 	X              int                    `json:"x"`
 	Y              int                    `json:"y"`
 	Width          int                    `json:"width"`
@@ -513,6 +518,13 @@ func (config *MonitorConfig) GetRenderWaitMaxDuration() time.Duration {
 		waitMS = maxByTick
 	}
 	return time.Duration(waitMS) * time.Millisecond
+}
+
+func (config *MonitorConfig) IsPauseCollectOnLockEnabled() bool {
+	if config == nil {
+		return false
+	}
+	return config.PauseCollectOnLock
 }
 
 func (config *MonitorConfig) GetMonitorUpdateWorkers() int {

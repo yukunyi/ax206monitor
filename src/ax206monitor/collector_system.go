@@ -22,6 +22,7 @@ func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
 		c.setItem("go_native.system.hostname", NewCollectItem("go_native.system.hostname", "Host name", "", 0, 0, 0))
 		c.setItem("go_native.system.resolution", NewCollectItem("go_native.system.resolution", "Display resolution", "", 0, 0, 0))
 		c.setItem("go_native.system.refresh_rate", NewCollectItem("go_native.system.refresh_rate", "Display refresh rate", "", 0, 0, 0))
+		c.setItem("go_native.system.display", NewCollectItem("go_native.system.display", "Display mode", "", 0, 0, 0))
 		c.setItem("go_native.system.collect.max_ms", NewCollectItem("go_native.system.collect.max_ms", "Collect max duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.collect.avg_ms", NewCollectItem("go_native.system.collect.avg_ms", "Collect avg duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.render.max_ms", NewCollectItem("go_native.system.render.max_ms", "Render max duration", "ms", 0, 0, 0))
@@ -128,9 +129,10 @@ func updateSystemDisplayItems(c *GoNativeSystemCollector) {
 	if c == nil {
 		return
 	}
-	resolution, refreshRate, ok := getDisplayInfoSnapshot(30 * time.Second)
+	resolution, refreshRate, ok := getDisplayInfoSnapshot(2 * time.Minute)
 	resolutionItem := c.getItem("go_native.system.resolution")
 	refreshItem := c.getItem("go_native.system.refresh_rate")
+	displayItem := c.getItem("go_native.system.display")
 	if resolutionItem != nil {
 		if ok && strings.TrimSpace(resolution) != "" {
 			resolutionItem.SetValue(resolution)
@@ -147,4 +149,24 @@ func updateSystemDisplayItems(c *GoNativeSystemCollector) {
 			refreshItem.SetAvailable(false)
 		}
 	}
+	if displayItem != nil {
+		if ok {
+			displayItem.SetValue(composeDisplayModeValue(resolution, refreshRate))
+			displayItem.SetAvailable(true)
+		} else {
+			displayItem.SetAvailable(false)
+		}
+	}
+}
+
+func composeDisplayModeValue(resolution, refreshRate string) string {
+	resolution = strings.TrimSpace(resolution)
+	refreshRate = strings.TrimSpace(refreshRate)
+	if resolution == "" {
+		resolution = "-"
+	}
+	if refreshRate == "" {
+		refreshRate = "-"
+	}
+	return resolution + "@" + refreshRate
 }

@@ -6,6 +6,7 @@ const (
 	itemTypeSimpleValue    = "simple_value"
 	itemTypeSimpleProgress = "simple_progress"
 	itemTypeSimpleChart    = "simple_line_chart"
+	itemTypeSimpleLine     = "simple_line"
 	itemTypeSimpleLabel    = "simple_label"
 	itemTypeSimpleRect     = "simple_rect"
 	itemTypeSimpleCircle   = "simple_circle"
@@ -27,6 +28,7 @@ var simpleItemTypes = []string{
 	itemTypeSimpleValue,
 	itemTypeSimpleProgress,
 	itemTypeSimpleChart,
+	itemTypeSimpleLine,
 	itemTypeSimpleLabel,
 	itemTypeSimpleRect,
 	itemTypeSimpleCircle,
@@ -36,6 +38,7 @@ var simpleItemTypes = []string{
 var fullItemTypes = []string{
 	itemTypeFullChart,
 	itemTypeFullProgress,
+	itemTypeFullGauge,
 }
 
 var allItemTypes = append(append([]string{}, simpleItemTypes...), fullItemTypes...)
@@ -45,6 +48,8 @@ var legacyItemTypeAliases = map[string]string{
 	"value":        itemTypeSimpleValue,
 	"progress":     itemTypeSimpleProgress,
 	"line_chart":   itemTypeSimpleChart,
+	"line":         itemTypeSimpleLine,
+	"hline":        itemTypeSimpleLine,
 	"label":        itemTypeSimpleLabel,
 	"rect":         itemTypeSimpleRect,
 	"circle":       itemTypeSimpleCircle,
@@ -66,6 +71,7 @@ var rangeItemTypeSet = toItemTypeSet([]string{
 	itemTypeSimpleChart,
 	itemTypeFullChart,
 	itemTypeFullProgress,
+	itemTypeFullGauge,
 })
 
 var historyItemTypeSet = toItemTypeSet([]string{

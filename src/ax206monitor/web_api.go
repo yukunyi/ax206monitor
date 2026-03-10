@@ -4,11 +4,14 @@ import (
 	"ax206monitor/rtsssource"
 	"fmt"
 	"image"
+	"math"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/fogleman/gg"
 )
 
 const (
@@ -47,6 +50,7 @@ type WebAPI struct {
 	lastProbeCC   string
 	lastProbeLHM  string
 	lastProbeRTSS bool
+	lockMonitor   LockScreenMonitor
 
 	activityMu   sync.RWMutex
 	lastActivity time.Time
@@ -54,6 +58,11 @@ type WebAPI struct {
 	updatedAt    time.Time
 	realtimeConn int32
 	lastEpoch    int64
+
+	lockMu           sync.RWMutex
+	lockScreenActive bool
+	lockPauseEnabled bool
+	lockFrameReady   bool
 
 	outputChan chan webOutputFrame
 	outputWg   sync.WaitGroup
@@ -167,6 +176,25 @@ func (r *WebAPI) renderOnce(forceFull bool) (bool, error) {
 	if cfg == nil || registry == nil || renderManager == nil {
 		return false, nil
 	}
+	if r.shouldRenderLockScreen() {
+		img := r.renderLockScreenImage(cfg)
+		replaced, ok := enqueueLatestWebFrame(r.outputChan, webOutputFrame{
+			img:        img,
+			enqueuedAt: time.Now(),
+			modeFull:   modeFull,
+		})
+		if !ok {
+			logDebugModule("web", "output queue busy, skip locked frame")
+			return false, nil
+		}
+		if replaced {
+			logDebugModule("web", "output queue replaced stale frame")
+		}
+		r.setLockFrameReady(true)
+		r.setUpdatedAt(time.Now())
+		return true, nil
+	}
+	r.setLockFrameReady(false)
 
 	waitMax := cfg.GetRenderWaitMaxDuration()
 	currentEpoch := registry.CurrentEpoch()
@@ -250,6 +278,9 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	r.outputHasMem = outputHasMem
 	r.lastEpoch = 0
 	r.mu.Unlock()
+	r.setLockPauseEnabled(configCopy.IsPauseCollectOnLockEnabled())
+	r.updateLockMonitorState()
+	r.applyLockPolicy()
 
 	if oldOutputManager != nil && oldOutputManager != outputManager {
 		oldOutputManager.Close()
@@ -391,6 +422,9 @@ func (r *WebAPI) loop() {
 		}
 		cfg, _, _, _, _, _ := r.getRuntimeRefs()
 		if cfg == nil {
+			continue
+		}
+		if r.shouldRenderLockScreen() && r.isLockFrameReady() {
 			continue
 		}
 
@@ -550,6 +584,156 @@ func (r *WebAPI) Close() {
 	if oldOutputManager != nil {
 		oldOutputManager.Close()
 	}
+	r.lockMu.Lock()
+	monitor := r.lockMonitor
+	r.lockMonitor = nil
+	r.lockMu.Unlock()
+	if monitor != nil {
+		monitor.Close()
+	}
+}
+
+func (r *WebAPI) SetSystemLocked(locked bool) {
+	r.lockMu.Lock()
+	changed := r.lockScreenActive != locked
+	r.lockScreenActive = locked
+	if locked {
+		r.lockFrameReady = false
+	}
+	enabled := r.lockPauseEnabled
+	r.lockMu.Unlock()
+
+	r.applyLockPolicy()
+	if !changed {
+		return
+	}
+	if enabled && locked {
+		logInfoModule("main", "lock detected, pause collection and render lock screen")
+	} else if enabled {
+		logInfoModule("main", "unlock detected, resume collection")
+	}
+	go func() {
+		_, _ = r.renderOnce(true)
+	}()
+}
+
+func (r *WebAPI) setLockPauseEnabled(enabled bool) {
+	r.lockMu.Lock()
+	r.lockPauseEnabled = enabled
+	if !enabled {
+		r.lockFrameReady = false
+		r.lockScreenActive = false
+	}
+	r.lockMu.Unlock()
+}
+
+func (r *WebAPI) isLockPauseEnabled() bool {
+	r.lockMu.RLock()
+	defer r.lockMu.RUnlock()
+	return r.lockPauseEnabled
+}
+
+func (r *WebAPI) updateLockMonitorState() {
+	enabled := r.isLockPauseEnabled()
+	r.lockMu.RLock()
+	current := r.lockMonitor
+	r.lockMu.RUnlock()
+
+	if !enabled {
+		if current != nil {
+			current.Close()
+			r.lockMu.Lock()
+			if r.lockMonitor == current {
+				r.lockMonitor = nil
+			}
+			r.lockMu.Unlock()
+		}
+		return
+	}
+	if current != nil {
+		return
+	}
+	monitor, err := StartLockScreenMonitor(func(locked bool) {
+		r.SetSystemLocked(locked)
+	})
+	if err != nil {
+		logWarnModule("main", "lock screen monitor unavailable: %v", err)
+		return
+	}
+	if monitor == nil {
+		return
+	}
+	r.lockMu.Lock()
+	if r.lockPauseEnabled && r.lockMonitor == nil {
+		r.lockMonitor = monitor
+		monitor = nil
+	}
+	r.lockMu.Unlock()
+	if monitor != nil {
+		monitor.Close()
+	}
+}
+
+func (r *WebAPI) shouldRenderLockScreen() bool {
+	r.lockMu.RLock()
+	defer r.lockMu.RUnlock()
+	return r.lockPauseEnabled && r.lockScreenActive
+}
+
+func (r *WebAPI) setLockFrameReady(ready bool) {
+	r.lockMu.Lock()
+	r.lockFrameReady = ready
+	r.lockMu.Unlock()
+}
+
+func (r *WebAPI) isLockFrameReady() bool {
+	r.lockMu.RLock()
+	defer r.lockMu.RUnlock()
+	return r.lockFrameReady
+}
+
+func (r *WebAPI) applyLockPolicy() {
+	r.mu.RLock()
+	registry := r.registry
+	r.mu.RUnlock()
+	if registry == nil {
+		return
+	}
+	registry.SetPaused(r.shouldRenderLockScreen())
+}
+
+func (r *WebAPI) renderLockScreenImage(cfg *MonitorConfig) image.Image {
+	width := 480
+	height := 320
+	if cfg != nil {
+		if cfg.Width > 0 {
+			width = cfg.Width
+		}
+		if cfg.Height > 0 {
+			height = cfg.Height
+		}
+	}
+	dc := gg.NewContext(width, height)
+	bg := "#0b1220"
+	color := "#f8fafc"
+	if cfg != nil {
+		bg = cfg.GetDefaultBackgroundColor()
+		color = cfg.GetDefaultTextColor()
+	}
+	dc.SetColor(parseColor(bg))
+	dc.Clear()
+
+	fontSize := int(math.Round(math.Min(float64(width), float64(height)) * 0.16))
+	if fontSize < 24 {
+		fontSize = 24
+	}
+	if fontSize > 64 {
+		fontSize = 64
+	}
+	face := resolveFontFace(r.fontCache, fontSize)
+	dc.SetColor(parseColor(color))
+	drawMetricAnchoredText(dc, face, "已锁屏", float64(width)/2, float64(height)/2, 0.5)
+	return dc.Image()
 }
 
 func (r *WebAPI) getRuntimeRefs() (*MonitorConfig, []string, *CollectorManager, *RenderManager, *OutputManager, bool) {
@@ -628,6 +812,7 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 		"go_native.system.hostname":               "Host name",
 		"go_native.system.resolution":             "Display resolution",
 		"go_native.system.refresh_rate":           "Display refresh rate",
+		"go_native.system.display":                "Display mode",
 		"go_native.system.collect.max_ms":         "Collect max ms",
 		"go_native.system.collect.avg_ms":         "Collect avg ms",
 		"go_native.system.render.max_ms":          "Render max ms",
@@ -662,6 +847,7 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 		"alias.system.load":                       "System load",
 		"alias.system.resolution":                 "Display resolution",
 		"alias.system.refresh_rate":               "Display refresh rate",
+		"alias.system.display":                    "Display mode",
 		"alias.disk.temp":                         "Disk temperature",
 		"alias.fan.cpu":                           "CPU fan speed",
 		"alias.fan.gpu":                           "GPU fan speed",

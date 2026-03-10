@@ -8,6 +8,20 @@ VERSION="1.0.0"
 
 FRONTEND_DIR="frontend"
 EMBED_DIST_DIR="src/ax206monitor/webassets/webdist"
+DIST_DIR="${DIST_DIR:-dist}"
+BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
+SKIP_FRONTEND_BUILD="${SKIP_FRONTEND_BUILD:-0}"
+SKIP_GO_MOD_TIDY="${SKIP_GO_MOD_TIDY:-0}"
+
+has_build_target() {
+    local needle="$1"
+    for target in $BUILD_TARGETS; do
+        if [ "$target" = "$needle" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Check if Go is installed
 check_go() {
@@ -25,8 +39,12 @@ init_go_module() {
         echo "Initializing Go module..."
         go mod init ax206monitor
     fi
-    echo "Downloading dependencies..."
-    go mod tidy
+    if [ "$SKIP_GO_MOD_TIDY" = "1" ]; then
+        echo "Skipping dependency tidy"
+    else
+        echo "Downloading dependencies..."
+        go mod tidy
+    fi
     cd ../..
 }
 
@@ -62,8 +80,8 @@ build_frontend_assets() {
 # Clean previous build files
 clean_dist() {
     echo "Cleaning previous build files..."
-    mkdir -p dist
-    rm -rf dist/*
+    mkdir -p "$DIST_DIR"
+    rm -rf "$DIST_DIR"/*
 }
 
 # Compile for Linux
@@ -74,9 +92,9 @@ compile_linux() {
         -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
         -buildmode=exe \
-        -o ../../dist/ax206monitor-linux-amd64 .
+        -o ../../"$DIST_DIR"/ax206monitor-linux-amd64 .
     cd ../..
-    chmod +x dist/ax206monitor-linux-amd64
+    chmod +x "$DIST_DIR"/ax206monitor-linux-amd64
 }
 
 # Compile for Windows
@@ -96,7 +114,7 @@ compile_windows() {
     GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
         -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
-        -o ../../dist/ax206monitor-windows-amd64.exe .
+        -o ../../"$DIST_DIR"/ax206monitor-windows-amd64.exe .
     cd ../..
 }
 
@@ -127,12 +145,12 @@ validate_configs() {
 show_build_results() {
     echo ""
     echo "Compilation complete!"
-    echo "Output files in dist/ directory:"
-    ls -la dist/
+    echo "Output files in $DIST_DIR directory:"
+    ls -la "$DIST_DIR"/
     echo ""
     echo "Usage Instructions:"
-    echo "Linux: ./dist/ax206monitor-linux-amd64"
-    echo "Windows: dist/ax206monitor-windows-amd64.exe"
+    echo "Linux: ./$DIST_DIR/ax206monitor-linux-amd64"
+    echo "Windows: $DIST_DIR/ax206monitor-windows-amd64.exe"
     echo ""
     echo "Note: Ensure AX206 device is connected with proper USB permissions before running"
 }
@@ -141,8 +159,16 @@ show_build_results() {
 common_build() {
     check_go
     clean_dist
-    build_frontend_assets
+    if [ "$SKIP_FRONTEND_BUILD" = "1" ]; then
+        echo "Skipping frontend build (SKIP_FRONTEND_BUILD=1)"
+    else
+        build_frontend_assets
+    fi
     init_go_module
-    compile_linux
-    compile_windows
+    if has_build_target "linux"; then
+        compile_linux
+    fi
+    if has_build_target "windows"; then
+        compile_windows
+    fi
 }

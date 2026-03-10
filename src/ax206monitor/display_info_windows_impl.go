@@ -8,6 +8,10 @@ const (
 	smCXScreen = 0
 	smCYScreen = 1
 	vrRefresh  = 116
+	horzRes    = 8
+	vertRes    = 10
+	deskHorz   = 118
+	deskVert   = 117
 )
 
 var (
@@ -31,6 +35,21 @@ func detectPrimaryDisplayInfoWindowsImpl() (int, int, float64, bool) {
 		return int(width), int(height), 0, true
 	}
 	defer procReleaseDC.Call(0, hdc)
+
+	physicalWidth, _, _ := procGetDeviceCaps.Call(hdc, uintptr(deskHorz))
+	physicalHeight, _, _ := procGetDeviceCaps.Call(hdc, uintptr(deskVert))
+	if physicalWidth == 0 || physicalHeight == 0 {
+		logicalWidth, _, _ := procGetDeviceCaps.Call(hdc, uintptr(horzRes))
+		logicalHeight, _, _ := procGetDeviceCaps.Call(hdc, uintptr(vertRes))
+		if logicalWidth > 0 && logicalHeight > 0 {
+			physicalWidth = logicalWidth
+			physicalHeight = logicalHeight
+		}
+	}
+	if physicalWidth > 0 && physicalHeight > 0 {
+		width = physicalWidth
+		height = physicalHeight
+	}
 
 	refreshRaw, _, _ := procGetDeviceCaps.Call(hdc, uintptr(vrRefresh))
 	refresh := float64(refreshRaw)

@@ -29,6 +29,7 @@ func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderM
 	rm.RegisterRenderer(NewValueRenderer())
 	rm.RegisterRenderer(NewProgressRenderer())
 	rm.RegisterRenderer(NewLineChartRenderer())
+	rm.RegisterRenderer(NewSimpleLineRenderer())
 	rm.RegisterRenderer(NewLabelRenderer())
 	rm.RegisterRenderer(NewRectRenderer())
 	rm.RegisterRenderer(NewCircleRenderer())

@@ -22,7 +22,7 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Colle
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
 	value := monitor.GetValue()
-	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 	fontSize := resolveItemFontSize(item, config, 16)
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 

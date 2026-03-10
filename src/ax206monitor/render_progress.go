@@ -55,7 +55,7 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 		dc.Fill()
 	}
 
-	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 	fontSize := resolveItemFontSize(item, config, 14)
 	unitFontSize := resolveUnitFontSize(item, config, fontSize)
 	textColor := config.GetDefaultTextColor()

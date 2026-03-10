@@ -90,15 +90,34 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 	if labelText == "" {
 		labelText = strings.TrimSpace(item.Monitor)
 	}
-	valueText, unitText := FormatCollectValueParts(value, resolveUnitOverride(item))
+	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 	displayValue := strings.TrimSpace(valueText + " " + unitText)
 	if displayValue == "" {
 		displayValue = strings.TrimSpace(valueText)
 	}
+	lineColor := resolveMonitorColor(item, monitor, config)
+	textColor := resolveItemStaticColor(item, config)
 
 	contentPadding := getItemAttrFloatCfg(item, config, "content_padding", 1)
-	if contentPadding < 1 {
-		contentPadding = 1
+	if contentPadding < 0 {
+		contentPadding = 0
+	}
+	if r.itemType == itemTypeFullGauge {
+		bodyRect := fullRect{
+			x: float64(item.X) + contentPadding,
+			y: float64(item.Y) + contentPadding,
+			w: float64(item.Width) - contentPadding*2,
+			h: float64(item.Height) - contentPadding*2,
+		}
+		if bodyRect.w < 1 {
+			bodyRect.w = 1
+		}
+		if bodyRect.h < 1 {
+			bodyRect.h = 1
+		}
+		r.drawByType(dc, item, monitor, fontCache, value, numberValue, lineColor, textColor, bodyRect, config)
+		drawBaseItemBorder(dc, item, config, cardRadius)
+		return nil
 	}
 	defaultBodyGap := 4.0
 	if r.itemType == itemTypeFullProgress {
@@ -173,24 +192,21 @@ func (r *FullWidgetRenderer) Render(dc *gg.Context, item *ItemConfig, registry *
 		bodyRect.h = 1
 	}
 
-	lineColor := resolveMonitorColor(item, monitor, config)
-	textColor := resolveItemStaticColor(item, config)
-
 	r.drawHeader(dc, headerRect, headerBaselineY, labelFace, valueFace, labelText, displayValue, textColor, lineColor, item, config)
-	r.drawByType(dc, item, fontCache, value, numberValue, lineColor, textColor, bodyRect, config)
+	r.drawByType(dc, item, monitor, fontCache, value, numberValue, lineColor, textColor, bodyRect, config)
 
 	drawBaseItemBorder(dc, item, config, cardRadius)
 	return nil
 }
 
-func (r *FullWidgetRenderer) drawByType(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
+func (r *FullWidgetRenderer) drawByType(dc *gg.Context, item *ItemConfig, monitor *CollectItem, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	switch r.itemType {
 	case itemTypeFullChart:
 		r.drawFullChart(dc, item, fontCache, value, numberValue, resolveFullChartLineColor(item, config), body, config)
 	case itemTypeFullProgress:
 		r.drawFullProgress(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullGauge:
-		r.drawFullGauge(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
+		r.drawFullGauge(dc, item, monitor, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullRing:
 		r.drawFullRing(dc, item, fontCache, value, numberValue, lineColor, textColor, body, config)
 	case itemTypeFullMinMax:
@@ -338,6 +354,21 @@ func resolveFullChartLineColor(item *ItemConfig, config *MonitorConfig) string {
 	return "#38bdf8"
 }
 
+func resolveChartThresholdColor(value float64, thresholds []float64, colors []string, fallback string) string {
+	if len(thresholds) == 0 || len(colors) == 0 {
+		return fallback
+	}
+	for idx, threshold := range thresholds {
+		if value <= threshold {
+			if idx < len(colors) {
+				return colors[idx]
+			}
+			return colors[len(colors)-1]
+		}
+	}
+	return colors[len(colors)-1]
+}
+
 func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
 	_ = fontCache
 	points := getItemAttrIntCfg(item, config, "history_points", 90)
@@ -383,15 +414,24 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 		}
 	}
 
-	fillArea := getItemAttrBoolCfg(item, config, "fill_area", true)
 	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 2)
 	if lineWidth < 1 {
 		lineWidth = 1
 	}
+	enableThresholdColors := getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
+	thresholds := []float64{}
+	colors := []string{}
+	if enableThresholdColors {
+		thresholds = effectiveThresholds(item, minValue, maxValue, config)
+		colors = effectiveLevelColors(item, config)
+	}
 
-	firstX := 0.0
-	lastX := 0.0
-	validPoints := 0
+	type chartPoint struct {
+		x float64
+		y float64
+		v float64
+	}
+	pointsOnChart := make([]chartPoint, 0, len(history))
 	for idx, histValue := range history {
 		if !isFiniteHistoryValue(histValue) {
 			continue
@@ -402,33 +442,31 @@ func (r *FullWidgetRenderer) drawFullChart(dc *gg.Context, item *ItemConfig, fon
 		}
 		y := body.y + body.h - ((histValue-minValue)/(maxValue-minValue))*body.h
 		y = clampFloat64(y, body.y, body.y+body.h)
-		if validPoints == 0 {
-			firstX = x
-			dc.MoveTo(x, y)
-		} else {
-			dc.LineTo(x, y)
-		}
-		lastX = x
-		validPoints++
+		pointsOnChart = append(pointsOnChart, chartPoint{x: x, y: y, v: histValue})
 	}
-	if validPoints < 2 {
+	if len(pointsOnChart) < 2 {
 		return
 	}
-
-	if fillArea {
-		dc.LineTo(lastX, body.y+body.h)
-		dc.LineTo(firstX, body.y+body.h)
-		dc.ClosePath()
-		fill := gg.NewLinearGradient(body.x, body.y, body.x, body.y+body.h)
-		fill.AddColorStop(0, parseColor(applyAlpha(lineColor, 0.34)))
-		fill.AddColorStop(1, parseColor(applyAlpha(lineColor, 0.02)))
-		dc.SetFillStyle(fill)
-		dc.FillPreserve()
+	if enableThresholdColors && len(thresholds) > 0 && len(colors) > 0 {
+		dc.SetLineWidth(lineWidth)
+		for idx := 1; idx < len(pointsOnChart); idx++ {
+			p0 := pointsOnChart[idx-1]
+			p1 := pointsOnChart[idx]
+			segmentColor := resolveChartThresholdColor((p0.v+p1.v)/2, thresholds, colors, lineColor)
+			dc.SetColor(parseColor(segmentColor))
+			dc.DrawLine(p0.x, p0.y, p1.x, p1.y)
+			dc.Stroke()
+		}
+	} else {
+		dc.MoveTo(pointsOnChart[0].x, pointsOnChart[0].y)
+		for idx := 1; idx < len(pointsOnChart); idx++ {
+			p := pointsOnChart[idx]
+			dc.LineTo(p.x, p.y)
+		}
+		dc.SetLineWidth(lineWidth)
+		dc.SetColor(parseColor(lineColor))
+		dc.Stroke()
 	}
-
-	dc.SetLineWidth(lineWidth)
-	dc.SetColor(parseColor(lineColor))
-	dc.Stroke()
 
 	if getItemAttrBoolCfg(item, config, "show_avg_line", true) {
 		avg := historyAverage(history)
@@ -527,49 +565,136 @@ func (r *FullWidgetRenderer) drawFullProgress(dc *gg.Context, item *ItemConfig, 
 	_ = textColor
 }
 
-func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
+func (r *FullWidgetRenderer) drawFullGauge(dc *gg.Context, item *ItemConfig, monitor *CollectItem, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
 	minValue, maxValue := resolveRangeValue(item, value, 0, 100)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
-	cx := body.x + body.w/2
-	cy := body.y + body.h*0.95
-	radius := math.Min(body.w*0.42, body.h*0.86)
-	if radius < 16 {
-		radius = 16
+	padding := getItemAttrFloatCfg(item, config, "content_padding", 1)
+	if padding < 0 {
+		padding = 0
 	}
-	thickness := getItemAttrFloatCfg(item, config, "gauge_thickness", 9)
-	if thickness < 4 {
-		thickness = 4
+	x := body.x + padding
+	y := body.y + padding
+	w := body.w - padding*2
+	h := body.h - padding*2
+	if w <= 4 || h <= 4 {
+		return
+	}
+	cx := x + w/2
+	cy := y + h/2
+
+	radius := math.Min(w, h)/2 - 1
+	if radius < 8 {
+		return
+	}
+	thickness := getItemAttrFloatCfg(item, config, "gauge_thickness", 10)
+	if thickness < 2 {
+		thickness = 2
+	}
+	if thickness > radius*0.65 {
+		thickness = radius * 0.65
 	}
 
-	start := math.Pi
-	end := 2 * math.Pi
+	gapDegrees := getItemAttrFloatCfg(item, config, "gauge_gap_degrees", 76)
+	if gapDegrees < 20 {
+		gapDegrees = 20
+	}
+	if gapDegrees > 260 {
+		gapDegrees = 260
+	}
+	gapRad := gapDegrees * math.Pi / 180
+	sweep := 2*math.Pi - gapRad
+	if sweep < 0.2 {
+		sweep = 0.2
+	}
+	start := math.Pi/2 + gapRad/2
+	end := start + sweep
+
+	trackColor := getItemAttrColorCfg(item, config, "track_color", "#1f2937")
 	dc.SetLineWidth(thickness)
-	dc.SetColor(parseColor("#1f2937"))
+	dc.SetColor(parseColor(trackColor))
 	dc.DrawArc(cx, cy, radius, start, end)
 	dc.Stroke()
 
 	dc.SetColor(parseColor(lineColor))
-	dc.DrawArc(cx, cy, radius, start, start+(end-start)*progress)
+	dc.DrawArc(cx, cy, radius, start, start+sweep*progress)
 	dc.Stroke()
 
-	for i := 0; i <= 6; i++ {
-		ratio := float64(i) / 6
-		angle := start + (end-start)*ratio
-		x1 := cx + math.Cos(angle)*(radius-thickness-2)
-		y1 := cy + math.Sin(angle)*(radius-thickness-2)
-		x2 := cx + math.Cos(angle)*(radius+2)
-		y2 := cy + math.Sin(angle)*(radius+2)
-		dc.SetLineWidth(1)
-		dc.SetColor(parseColor(applyAlpha("#94a3b8", 0.55)))
-		dc.DrawLine(x1, y1, x2, y2)
-		dc.Stroke()
+	if progress > 0 {
+		endAngle := start + sweep*progress
+		endX := cx + math.Cos(endAngle)*radius
+		endY := cy + math.Sin(endAngle)*radius
+		dc.SetColor(parseColor(lineColor))
+		dc.DrawCircle(endX, endY, math.Max(1.5, thickness*0.16))
+		dc.Fill()
 	}
 
-	label := FormatCollectValue(value, true, resolveUnitOverride(item))
-	labelFace := resolveFontFace(fontCache, 12)
+	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
+	label := strings.TrimSpace(getItemAttrStringCfg(item, config, "title", ""))
+	if label == "" {
+		label = strings.TrimSpace(getItemAttrStringCfg(item, config, "label", ""))
+	}
+	if label == "" && monitor != nil {
+		label = strings.TrimSpace(monitor.GetLabel())
+	}
+	if label == "" {
+		label = strings.TrimSpace(item.Monitor)
+	}
+
+	valueSize := getItemAttrIntCfg(item, config, "value_font_size", 0)
+	if valueSize <= 0 {
+		valueSize = resolveItemFontSize(item, config, 16)
+	}
+	if valueSize < 8 {
+		valueSize = 8
+	}
+	labelSize := getItemAttrIntCfg(item, config, "label_font_size", 0)
+	if labelSize <= 0 {
+		labelSize = resolveLabelFontSize(item, config, 12)
+	}
+	if labelSize < 8 {
+		labelSize = 8
+	}
+	unitSize := resolveUnitFontSize(item, config, valueSize-3)
+	if unitSize < 8 {
+		unitSize = 8
+	}
+	textGap := getItemAttrFloatCfg(item, config, "gauge_text_gap", 4)
+	if textGap < 0 {
+		textGap = 0
+	}
+	valueFace := resolveFontFace(fontCache, valueSize)
+	labelFace := resolveFontFace(fontCache, labelSize)
+	unitFace := resolveFontFace(fontCache, unitSize)
+	valueHeight := measureFontHeight(valueFace)
+	labelHeight := measureFontHeight(labelFace)
+	topCenterY := cy - (labelHeight+textGap)/2
+	bottomCenterY := cy + (valueHeight+textGap)/2
+
+	valueColor := lineColor
+	unitColor := resolveUnitColor(item, config, valueColor)
 	dc.SetColor(parseColor(textColor))
-	drawMetricAnchoredText(dc, labelFace, label, cx, body.y+body.h*0.72, 0.5)
+	if strings.TrimSpace(unitText) == "" {
+		drawMetricAnchoredText(dc, valueFace, valueText, cx, topCenterY, 0.5)
+	} else {
+		dc.SetFontFace(valueFace)
+		valueWidth, _ := dc.MeasureString(valueText)
+		dc.SetFontFace(unitFace)
+		unitWidth, _ := dc.MeasureString(unitText)
+		gap := 2.0
+		total := valueWidth + unitWidth
+		if strings.TrimSpace(valueText) != "" {
+			total += gap
+		}
+		startX := cx - total/2
+		dc.SetColor(parseColor(valueColor))
+		drawMetricAnchoredText(dc, valueFace, valueText, startX, topCenterY, 0)
+		dc.SetColor(parseColor(unitColor))
+		drawMetricAnchoredText(dc, unitFace, unitText, startX+valueWidth+gap, topCenterY, 0)
+	}
+
+	dc.SetColor(parseColor(textColor))
+	drawMetricAnchoredText(dc, labelFace, label, cx, bottomCenterY, 0.5)
 }
 
 func (r *FullWidgetRenderer) drawFullRing(dc *gg.Context, item *ItemConfig, fontCache *FontCache, value *CollectValue, numberValue float64, lineColor string, textColor string, body fullRect, config *MonitorConfig) {
@@ -838,6 +963,9 @@ func (r *FullWidgetRenderer) appendHistory(item *ItemConfig, value float64, defa
 	}
 	points := getItemAttrIntCfg(item, config, "history_points", defaultPoints)
 	key := fmt.Sprintf("%s|%s|%d|%d|%d|%d", item.Type, item.Monitor, item.X, item.Y, item.Width, item.Height)
+	if item != nil && strings.TrimSpace(item.ID) != "" {
+		key = fmt.Sprintf("%s|id:%s|%s", item.Type, strings.TrimSpace(item.ID), strings.TrimSpace(item.Monitor))
+	}
 	return r.history.append(key, value, points)
 }
 

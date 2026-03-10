@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/fogleman/gg"
 )
@@ -53,8 +54,17 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	minVal, maxVal = resolveEffectiveMinMax(item, value, minVal, maxVal)
 
 	lineColor := resolveMonitorColor(item, monitor, config)
-	dc.SetColor(parseColor(lineColor))
-	dc.SetLineWidth(1.5)
+	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 1.5)
+	if lineWidth < 1 {
+		lineWidth = 1
+	}
+	enableThresholdColors := getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
+	thresholds := []float64{}
+	colors := []string{}
+	if enableThresholdColors {
+		thresholds = effectiveThresholds(item, minVal, maxVal, config)
+		colors = effectiveLevelColors(item, config)
+	}
 
 	padding := 2.0
 	chartX := float64(item.X) + padding
@@ -66,7 +76,12 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
-	drawnPoints := 0
+	type chartPoint struct {
+		x float64
+		y float64
+		v float64
+	}
+	pointsOnChart := make([]chartPoint, 0, len(history))
 	for idx, histValue := range history {
 		if !isFiniteHistoryValue(histValue) {
 			continue
@@ -76,18 +91,33 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 			x = chartX + float64(idx)*chartWidth/float64(len(history)-1)
 		}
 		y := chartY + chartHeight - (histValue-minVal)/(maxVal-minVal)*chartHeight
-		if drawnPoints == 0 {
-			dc.MoveTo(x, y)
-		} else {
-			dc.LineTo(x, y)
-		}
-		drawnPoints++
+		pointsOnChart = append(pointsOnChart, chartPoint{x: x, y: y, v: histValue})
 	}
-	if drawnPoints < 2 {
+	if len(pointsOnChart) < 2 {
 		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
-	dc.Stroke()
+
+	if enableThresholdColors && len(thresholds) > 0 && len(colors) > 0 {
+		dc.SetLineWidth(lineWidth)
+		for idx := 1; idx < len(pointsOnChart); idx++ {
+			p0 := pointsOnChart[idx-1]
+			p1 := pointsOnChart[idx]
+			segmentColor := resolveChartThresholdColor((p0.v+p1.v)/2, thresholds, colors, lineColor)
+			dc.SetColor(parseColor(segmentColor))
+			dc.DrawLine(p0.x, p0.y, p1.x, p1.y)
+			dc.Stroke()
+		}
+	} else {
+		dc.MoveTo(pointsOnChart[0].x, pointsOnChart[0].y)
+		for idx := 1; idx < len(pointsOnChart); idx++ {
+			p := pointsOnChart[idx]
+			dc.LineTo(p.x, p.y)
+		}
+		dc.SetColor(parseColor(lineColor))
+		dc.SetLineWidth(lineWidth)
+		dc.Stroke()
+	}
 
 	drawBaseItemBorder(dc, item, config, radius)
 	_ = fontCache
@@ -95,6 +125,9 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 }
 
 func (c *LineChartRenderer) getHistoryKey(item *ItemConfig) string {
+	if item != nil && strings.TrimSpace(item.ID) != "" {
+		return fmt.Sprintf("id:%s|%s", strings.TrimSpace(item.ID), strings.TrimSpace(item.Monitor))
+	}
 	return fmt.Sprintf("%s|%d|%d|%d|%d", item.Monitor, item.X, item.Y, item.Width, item.Height)
 }
 

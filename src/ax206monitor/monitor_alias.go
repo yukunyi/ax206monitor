@@ -104,6 +104,9 @@ var monitorAliasResolvers = map[string]func(items map[string]*CollectItem) strin
 	"alias.system.refresh_rate": func(items map[string]*CollectItem) string {
 		return resolveByExactKeys(items, "go_native.system.refresh_rate")
 	},
+	"alias.system.display": func(items map[string]*CollectItem) string {
+		return resolveByExactKeys(items, "go_native.system.display")
+	},
 	"alias.disk.temp": func(items map[string]*CollectItem) string {
 		return resolveByIndexedPrefix(items, "go_native.disk.", ".temp")
 	},

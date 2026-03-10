@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import TopBar from "./components/top_bar.vue";
 import BasicTab from "./components/basic_tab.vue";
 import ElementsTab from "./components/elements_tab.vue";
+import TypeDefaultsTab from "./components/type_defaults_tab.vue";
 import RuntimeTab from "./components/runtime_tab.vue";
 
 const state = reactive({
@@ -47,12 +48,14 @@ const DEFAULT_ITEM_TYPES = [
   "simple_value",
   "simple_progress",
   "simple_line_chart",
+  "simple_line",
   "simple_label",
   "simple_rect",
   "simple_circle",
   "label_text",
   "full_chart",
   "full_progress",
+  "full_gauge",
 ];
 
 const DEFAULT_COLLECTOR_ENABLED = {
@@ -74,10 +77,14 @@ const MONITOR_REQUIRED_TYPES = new Set([
   "label_text",
   "full_chart",
   "full_progress",
+  "full_gauge",
 ]);
 
 const ITEM_STYLE_FIELDS = new Set([
   "font_size",
+  "small_font_size",
+  "medium_font_size",
+  "large_font_size",
   "color",
   "bg",
   "unit_color",
@@ -105,8 +112,9 @@ const STYLE_RENDER_ATTR_FIELDS = new Set([
   "show_segment_lines",
   "show_grid_lines",
   "grid_lines",
-  "fill_area",
+  "enable_threshold_colors",
   "line_width",
+  "line_orientation",
   "show_avg_line",
   "chart_color",
   "chart_area_bg",
@@ -119,6 +127,8 @@ const STYLE_RENDER_ATTR_FIELDS = new Set([
   "segment_gap",
   "card_radius",
   "gauge_thickness",
+  "gauge_gap_degrees",
+  "gauge_text_gap",
   "ring_thickness",
   "main_font_size",
   "ticks",
@@ -130,17 +140,25 @@ const ITEM_TYPE_LABELS = {
   simple_value: "基础数值",
   simple_progress: "基础进度条",
   simple_line_chart: "基础折线图",
+  simple_line: "基础线条",
   simple_label: "基础标签",
   simple_rect: "基础矩形",
   simple_circle: "基础圆形",
   label_text: "标签数值",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
+  full_gauge: "复杂仪表盘",
 };
 
 const DEFAULT_TYPE_RENDER_ATTRS = {
   simple_line_chart: {
     history_points: 150,
+    line_width: 1.5,
+    enable_threshold_colors: false,
+  },
+  simple_line: {
+    line_orientation: "horizontal",
+    line_width: 1,
   },
   label_text: {
     content_padding: 3,
@@ -158,7 +176,7 @@ const DEFAULT_TYPE_RENDER_ATTRS = {
     show_segment_lines: true,
     show_grid_lines: true,
     grid_lines: 4,
-    fill_area: true,
+    enable_threshold_colors: false,
     line_width: 2,
     show_avg_line: true,
     chart_color: "#38bdf8",
@@ -180,6 +198,15 @@ const DEFAULT_TYPE_RENDER_ATTRS = {
     track_color: "#1f2937",
     segments: 12,
     segment_gap: 2,
+  },
+  full_gauge: {
+    content_padding: 1,
+    value_font_size: 16,
+    label_font_size: 14,
+    gauge_thickness: 10,
+    gauge_gap_degrees: 76,
+    gauge_text_gap: 4,
+    track_color: "#1f2937",
   },
 };
 
@@ -208,6 +235,7 @@ const ALIAS_LABELS = {
   "alias.system.load": "System load",
   "alias.system.resolution": "Display resolution",
   "alias.system.refresh_rate": "Display refresh rate",
+  "alias.system.display": "Display mode",
   "alias.disk.temp": "Disk temperature",
   "alias.fan.cpu": "CPU fan speed",
   "alias.fan.gpu": "GPU fan speed",
@@ -314,6 +342,7 @@ const visibleTabs = computed(() => {
   return [
     { key: "basic", label: "基础配置" },
     { key: "elements", label: "屏幕元素" },
+    { key: "type-defaults", label: "类型默认参数" },
     { key: "collection", label: "采集运行态" },
   ];
 });
@@ -332,8 +361,73 @@ const currentItem = computed(() => {
   return state.config.items[state.selectedIndex];
 });
 
+const undoStack = ref([]);
+const committedConfig = ref(null);
+const committedConfigJson = ref("");
+const canUndo = computed(() => undoStack.value.length > 0);
+
+let itemIdSeed = 1;
+
+function createItemId() {
+  const stamp = Date.now();
+  const seq = itemIdSeed++;
+  return `itm_${stamp}_${seq}`;
+}
+
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
+}
+
+function serializeConfig(config) {
+  if (!config || typeof config !== "object") return "";
+  try {
+    return JSON.stringify(config);
+  } catch (_) {
+    return "";
+  }
+}
+
+function clearUndoStack() {
+  undoStack.value = [];
+}
+
+function markCommittedFromCurrent() {
+  if (!state.config) {
+    committedConfig.value = null;
+    committedConfigJson.value = "";
+    clearUndoStack();
+    return;
+  }
+  committedConfig.value = deepClone(state.config);
+  committedConfigJson.value = serializeConfig(committedConfig.value);
+  clearUndoStack();
+}
+
+function normalizeSelection() {
+  if (!state.config?.items?.length) {
+    state.selectedIndex = -1;
+    return;
+  }
+  if (state.selectedIndex < 0 || state.selectedIndex >= state.config.items.length) {
+    state.selectedIndex = 0;
+  }
+}
+
+function pushUndoSnapshot(operation = "") {
+  if (!state.config || state.saving) return;
+  const encoded = serializeConfig(state.config);
+  if (!encoded) return;
+  const top = undoStack.value.length > 0 ? undoStack.value[undoStack.value.length - 1].encoded : "";
+  if (top === encoded) return;
+  undoStack.value.push({
+    operation,
+    encoded,
+    config: deepClone(state.config),
+  });
+  const maxDepth = 80;
+  if (undoStack.value.length > maxDepth) {
+    undoStack.value.splice(0, undoStack.value.length - maxDepth);
+  }
 }
 
 function normalizeThresholds(raw) {
@@ -417,6 +511,10 @@ function normalizeTypeDefaults(raw, config) {
       attrsBase.title_font_size = Number(config.default_label_font_size || attrsBase.title_font_size || 14);
       attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
       attrsBase.progress_style = normalizeProgressStyle(attrsInput.progress_style ?? attrsBase.progress_style);
+    }
+    if (type === "full_gauge") {
+      attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
+      attrsBase.label_font_size = Number(config.default_label_font_size || attrsBase.label_font_size || 14);
     }
     const smallFontSize = Number(input.small_font_size ?? input.unit_font_size ?? base.small_font_size ?? 0);
     const mediumFontSize = Number(input.medium_font_size ?? input.font_size ?? base.medium_font_size ?? 0);
@@ -544,14 +642,37 @@ function normalizeConfig(cfg) {
   config.default_unit_font_size = Number(config.default_unit_font_size || 12);
   config.font_families = Array.isArray(config.font_families) ? config.font_families : [];
   config.output_types = Array.isArray(config.output_types) ? config.output_types : ["memimg"];
+  config.pause_collect_on_lock = config.pause_collect_on_lock === true;
   config.type_defaults = normalizeTypeDefaults(config.type_defaults, config);
   config.items = Array.isArray(config.items) ? config.items : [];
+  const itemIdSet = new Set();
   config.items = config.items.map((item) => {
     const next = { ...(item || {}) };
+    next.id = String(next.id || "").trim() || createItemId();
+    if (itemIdSet.has(next.id)) {
+      next.id = createItemId();
+    }
+    itemIdSet.add(next.id);
     next.custom_style = config.allow_custom_style ? next.custom_style === true : false;
+    next.small_font_size = Math.max(0, Number(next.small_font_size || 0));
+    next.medium_font_size = Math.max(0, Number(next.medium_font_size || 0));
+    next.large_font_size = Math.max(0, Number(next.large_font_size || 0));
     if (String(next.type || "") === "full_progress") {
       const attrs = next.render_attrs_map && typeof next.render_attrs_map === "object" ? { ...next.render_attrs_map } : {};
       attrs.progress_style = normalizeProgressStyle(attrs.progress_style);
+      next.render_attrs_map = attrs;
+    }
+    if (String(next.type || "") === "full_gauge") {
+      const attrs = next.render_attrs_map && typeof next.render_attrs_map === "object" ? { ...next.render_attrs_map } : {};
+      if (attrs.gauge_gap_degrees !== undefined) {
+        attrs.gauge_gap_degrees = Math.max(20, Math.min(260, Number(attrs.gauge_gap_degrees || 0)));
+      }
+      if (attrs.gauge_thickness !== undefined) {
+        attrs.gauge_thickness = Math.max(2, Number(attrs.gauge_thickness || 0));
+      }
+      if (attrs.gauge_text_gap !== undefined) {
+        attrs.gauge_text_gap = Math.max(0, Number(attrs.gauge_text_gap || 0));
+      }
       next.render_attrs_map = attrs;
     }
     return next;
@@ -565,16 +686,22 @@ function normalizeConfig(cfg) {
 function createDefaultItem(type = "simple_value", monitor = "") {
   const selectedMonitor = String(monitor || "").trim();
   const defaultMonitor = selectedMonitor || String(monitorOptions.value[0]?.value || "");
+  const isSimpleLine = type === "simple_line";
+  const isFullGauge = type === "full_gauge";
   return {
+    id: createItemId(),
     type,
     edit_ui_name: "",
     custom_style: false,
     monitor: MONITOR_REQUIRED_TYPES.has(type) ? defaultMonitor : "",
     x: 10,
     y: 10,
-    width: 140,
-    height: 36,
+    width: isSimpleLine ? 160 : isFullGauge ? 150 : 140,
+    height: isSimpleLine ? 12 : isFullGauge ? 120 : 36,
     font_size: 0,
+    small_font_size: 0,
+    medium_font_size: 0,
+    large_font_size: 0,
     color: "",
     bg: "",
     unit: "auto",
@@ -589,6 +716,31 @@ function createDefaultItem(type = "simple_value", monitor = "") {
 function setDirty() {
   state.dirty = true;
   schedulePreviewSync();
+}
+
+function undoLastChange() {
+  if (readonlyProfile.value || state.saving || undoStack.value.length <= 0) return;
+  const last = undoStack.value.pop();
+  if (!last?.config) return;
+  state.config = normalizeConfig(last.config);
+  mergeConfigMonitors(state.config);
+  normalizeSelection();
+  const currentJson = serializeConfig(state.config);
+  state.dirty = currentJson !== committedConfigJson.value;
+  schedulePreviewSync();
+  setError("");
+}
+
+function restoreUnsavedChanges() {
+  if (readonlyProfile.value || state.saving || !state.dirty) return;
+  if (!committedConfig.value) return;
+  state.config = normalizeConfig(deepClone(committedConfig.value));
+  mergeConfigMonitors(state.config);
+  normalizeSelection();
+  state.dirty = false;
+  clearUndoStack();
+  syncPreview(true).catch(() => {});
+  setError("");
 }
 
 function setError(err) {
@@ -617,6 +769,7 @@ async function onImportFileChange(event) {
     if (!imported || typeof imported !== "object") {
       throw new Error("配置文件格式不正确");
     }
+    pushUndoSnapshot("import-config");
     state.config = normalizeConfig(imported);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
@@ -834,7 +987,7 @@ async function loadInitial() {
     state.editingProfile =
       profilesRes.active || metaRes.active_profile || state.profiles[0]?.name || "default";
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    state.dirty = false;
+    markCommittedFromCurrent();
     if (monitorCatalog.value.length === 0) {
       await refreshMonitorCatalog();
     }
@@ -861,6 +1014,7 @@ function patchByPath(target, path, value) {
 
 function onBasicChange({ path, value }) {
   if (!state.config || readonlyProfile.value) return;
+  pushUndoSnapshot("basic-change");
   patchByPath(state.config, path, value);
   if ((Array.isArray(path) ? path.join(".") : String(path)) === "allow_custom_style" && !value) {
     state.config.items = (state.config.items || []).map((item) => ({
@@ -875,6 +1029,7 @@ function onItemFieldChange({ field, value }) {
   if (ITEM_STYLE_FIELDS.has(field) && !(state.config.allow_custom_style && currentItem.value.custom_style === true)) {
     return;
   }
+  pushUndoSnapshot(`item-field:${field}`);
   if (field === "custom_style" && !state.config.allow_custom_style) {
     currentItem.value.custom_style = false;
     setDirty();
@@ -894,6 +1049,7 @@ function onItemFieldChange({ field, value }) {
 
 function onItemPatch({ index, patch }) {
   if (!state.config || readonlyProfile.value || !state.config.items[index]) return;
+  pushUndoSnapshot("item-patch");
   const item = state.config.items[index];
   if (!patch || typeof patch !== "object") return;
   const nextPatch = { ...patch };
@@ -922,6 +1078,7 @@ function onItemPatch({ index, patch }) {
 
 function addItem(payload = "simple_value") {
   if (!state.config || readonlyProfile.value) return;
+  pushUndoSnapshot("add-item");
   const inputType =
     typeof payload === "string" ? payload : String(payload?.type || "simple_value");
   const inputMonitor =
@@ -934,7 +1091,9 @@ function addItem(payload = "simple_value") {
 
 function cloneItem() {
   if (!state.config || readonlyProfile.value || !currentItem.value) return;
+  pushUndoSnapshot("clone-item");
   const item = deepClone(currentItem.value);
+  item.id = createItemId();
   item.x = Number(item.x || 0) + 8;
   item.y = Number(item.y || 0) + 8;
   state.config.items.push(item);
@@ -944,6 +1103,7 @@ function cloneItem() {
 
 function removeItem() {
   if (!state.config || readonlyProfile.value || state.selectedIndex < 0) return;
+  pushUndoSnapshot("remove-item");
   state.config.items.splice(state.selectedIndex, 1);
   if (state.selectedIndex >= state.config.items.length) {
     state.selectedIndex = state.config.items.length - 1;
@@ -953,6 +1113,7 @@ function removeItem() {
 
 function moveItem(step) {
   if (!state.config || readonlyProfile.value || state.selectedIndex < 0) return;
+  pushUndoSnapshot("move-item");
   const from = state.selectedIndex;
   const to = from + step;
   if (to < 0 || to >= state.config.items.length) return;
@@ -965,6 +1126,7 @@ function moveItem(step) {
 
 function addCustom() {
   if (!state.config || readonlyProfile.value) return;
+  pushUndoSnapshot("add-custom");
   state.config.custom_monitors.push({
     name: "",
     label: "",
@@ -980,12 +1142,14 @@ function addCustom() {
 
 function removeCustom(index) {
   if (!state.config || readonlyProfile.value) return;
+  pushUndoSnapshot("remove-custom");
   state.config.custom_monitors.splice(index, 1);
   setDirty();
 }
 
 function changeCustom({ index, field, value }) {
   if (!state.config || readonlyProfile.value || !state.config.custom_monitors[index]) return;
+  pushUndoSnapshot(`change-custom:${field}`);
   state.config.custom_monitors[index][field] = value;
   if (field === "name") mergeMonitorNames([value]);
   setDirty();
@@ -994,7 +1158,7 @@ function changeCustom({ index, field, value }) {
 async function switchProfile() {
   if (!state.editingProfile) return;
   if (state.dirty) {
-    setError("当前配置有未保存改动，请先保存应用");
+    setError("当前配置有未保存改动，请先保存");
     return;
   }
   try {
@@ -1006,7 +1170,7 @@ async function switchProfile() {
     state.config = normalizeConfig(res.config);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    state.dirty = false;
+    markCommittedFromCurrent();
     await refreshMonitorCatalog();
     await syncPreview();
     setError("");
@@ -1036,7 +1200,7 @@ async function saveConfig() {
     if (res?.meta?.active_profile) {
       state.meta = { ...(state.meta || {}), active_profile: res.meta.active_profile };
     }
-    state.dirty = false;
+    markCommittedFromCurrent();
     await syncPreview();
     setError("");
   } catch (err) {
@@ -1119,7 +1283,7 @@ async function renameProfile() {
       mergeConfigMonitors(state.config);
       await refreshMonitorCatalog();
     }
-    state.dirty = false;
+    markCommittedFromCurrent();
     profileDialog.show = false;
     setError("");
   } catch (err) {
@@ -1144,7 +1308,7 @@ async function deleteProfile() {
     state.config = normalizeConfig(loaded.config);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    state.dirty = false;
+    markCommittedFromCurrent();
     await refreshMonitorCatalog();
     await syncPreview();
     setError("");
@@ -1189,7 +1353,7 @@ async function setEditingProfile(name) {
   const nextProfile = String(name || "").trim();
   if (!nextProfile || nextProfile === state.editingProfile) return;
   if (state.dirty) {
-    setError("当前配置有未保存改动，请先保存应用");
+    setError("当前配置有未保存改动，请先保存");
     return;
   }
   try {
@@ -1202,7 +1366,7 @@ async function setEditingProfile(name) {
     } else if (state.selectedIndex < 0 || state.selectedIndex >= state.config.items.length) {
       state.selectedIndex = 0;
     }
-    state.dirty = false;
+    markCommittedFromCurrent();
     await refreshMonitorCatalog();
     await syncPreview(true);
     setError("");
@@ -1214,13 +1378,13 @@ async function setEditingProfile(name) {
 function switchTab(tab) {
   state.activeTab = tab;
   if (tab === "collection") requestRuntime().catch(() => {});
-  if (tab === "elements" || tab === "basic") {
+  if (tab === "elements" || tab === "basic" || tab === "type-defaults") {
     refreshMonitorCatalog().catch(() => {});
   }
 }
 
 watch(readonlyProfile, (readonly) => {
-  if (readonly && state.activeTab === "basic") {
+  if (readonly && (state.activeTab === "basic" || state.activeTab === "type-defaults")) {
     state.activeTab = "elements";
   }
 });
@@ -1265,9 +1429,12 @@ onBeforeUnmount(() => {
         :readonly-profile="readonlyProfile"
         :dirty="state.dirty"
         :saving="state.saving"
+        :can-undo="canUndo"
         @update:editing-profile="setEditingProfile"
         @switch-profile="switchProfile"
         @save="saveConfig"
+        @undo="undoLastChange"
+        @restore="restoreUnsavedChanges"
         @create-profile="openCreateProfile"
         @rename-profile="openRenameProfile"
         @delete-profile="deleteProfile"
@@ -1346,6 +1513,14 @@ onBeforeUnmount(() => {
               @change-item-field="onItemFieldChange"
               @change-zoom-auto="(v) => (state.zoomAuto = !!v)"
               @change-zoom="(v) => (state.zoom = Number(v || 100))"
+            />
+
+            <TypeDefaultsTab
+              v-else-if="state.activeTab === 'type-defaults' && !readonlyProfile"
+              :config="state.config"
+              :meta="state.meta"
+              :readonly-profile="readonlyProfile"
+              @change="onBasicChange"
             />
 
             <RuntimeTab v-else :snapshot="state.snapshot" />

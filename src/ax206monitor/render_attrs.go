@@ -37,7 +37,7 @@ var styleRenderAttrKeySet = map[string]struct{}{
 	"show_segment_lines":      {},
 	"show_grid_lines":         {},
 	"grid_lines":              {},
-	"fill_area":               {},
+	"enable_threshold_colors": {},
 	"line_width":              {},
 	"show_avg_line":           {},
 	"chart_color":             {},
@@ -51,11 +51,14 @@ var styleRenderAttrKeySet = map[string]struct{}{
 	"segment_gap":             {},
 	"card_radius":             {},
 	"gauge_thickness":         {},
+	"gauge_gap_degrees":       {},
+	"gauge_text_gap":          {},
 	"ring_thickness":          {},
 	"main_font_size":          {},
 	"ticks":                   {},
 	"cells":                   {},
 	"cell_gap":                {},
+	"line_orientation":        {},
 }
 
 func isStyleRenderAttrKey(key string) bool {

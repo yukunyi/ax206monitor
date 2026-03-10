@@ -808,6 +808,7 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		DefaultThresholds:       []float64{25, 50, 75, 100},
 		FontFamilies:            getDefaultFontFamilies(),
 		OutputTypes:             []string{outputTypeMemImg},
+		PauseCollectOnLock:      false,
 		RefreshInterval:         1000,
 		CollectWarnMS:           100,
 		RenderWaitMaxMS:         300,
@@ -1044,8 +1045,17 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	setCollectorOptionDefault(cfg, collectorCoolerControl, "url", defaultCoolerControlURL)
 	setCollectorOptionDefault(cfg, collectorLibreHardwareMonitor, "url", defaultLibreHardwareMonitorURL)
 
+	usedItemIDs := make(map[string]struct{}, len(cfg.Items))
 	for idx := range cfg.Items {
 		item := &cfg.Items[idx]
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			item.ID = generateItemID(idx)
+		}
+		if _, exists := usedItemIDs[item.ID]; exists {
+			item.ID = generateItemID(idx)
+		}
+		usedItemIDs[item.ID] = struct{}{}
 		item.Type = normalizeItemType(item.Type)
 		item.Monitor = normalizeMonitorAlias(item.Monitor)
 		item.EditUIName = defaultEditUIName(item.EditUIName, idx, item)
@@ -1069,6 +1079,15 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		}
 		if item.UnitFontSize < 0 {
 			item.UnitFontSize = 0
+		}
+		if item.SmallFontSize < 0 {
+			item.SmallFontSize = 0
+		}
+		if item.MediumFontSize < 0 {
+			item.MediumFontSize = 0
+		}
+		if item.LargeFontSize < 0 {
+			item.LargeFontSize = 0
 		}
 		if isBuiltinProfileName(cfg.Name) {
 			stripBuiltinItemStyleOverrides(item)
@@ -1258,6 +1277,11 @@ func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
 		defaults.RenderAttrsMap = map[string]interface{}{
 			"history_points": defaultHistoryPoints,
 		}
+	case itemTypeSimpleLine:
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"line_orientation": "horizontal",
+			"line_width":       1.0,
+		}
 	case itemTypeSimpleRect, itemTypeSimpleCircle:
 		defaults.Background = "#33415566"
 	case itemTypeLabelText:
@@ -1272,13 +1296,14 @@ func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
 			"title_font_size":         defaultLabelSize,
 			"value_font_size":         defaultValueSize,
 			"header_divider":          true,
+			"header_divider_width":    1,
 			"header_divider_offset":   3,
 			"header_divider_color":    "#94a3b840",
 			"history_points":          defaultHistoryPoints,
 			"show_segment_lines":      true,
 			"show_grid_lines":         true,
 			"grid_lines":              4,
-			"fill_area":               true,
+			"enable_threshold_colors": false,
 			"line_width":              2.0,
 			"show_avg_line":           true,
 			"chart_color":             "#38bdf8",
@@ -1293,13 +1318,26 @@ func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
 			"title_font_size":       defaultLabelSize,
 			"value_font_size":       defaultValueSize,
 			"header_divider":        true,
+			"header_divider_width":  1,
 			"header_divider_offset": 3,
 			"header_divider_color":  "#94a3b840",
 			"progress_style":        "gradient",
 			"bar_height":            0.0,
+			"bar_radius":            0.0,
 			"track_color":           "#1f2937",
 			"segments":              12,
 			"segment_gap":           2.0,
+		}
+	case itemTypeFullGauge:
+		defaults.Background = "#111827c8"
+		defaults.RenderAttrsMap = map[string]interface{}{
+			"content_padding":   1,
+			"value_font_size":   defaultValueSize,
+			"label_font_size":   defaultLabelSize,
+			"gauge_thickness":   10.0,
+			"gauge_gap_degrees": 76.0,
+			"gauge_text_gap":    4.0,
+			"track_color":       "#1f2937",
 		}
 	}
 
@@ -1325,6 +1363,9 @@ func stripBuiltinItemStyleOverrides(item *ItemConfig) {
 		return
 	}
 	item.FontSize = 0
+	item.SmallFontSize = 0
+	item.MediumFontSize = 0
+	item.LargeFontSize = 0
 	item.Color = ""
 	item.Background = ""
 	item.UnitColor = ""
@@ -1344,6 +1385,7 @@ func stripBuiltinItemStyleOverrides(item *ItemConfig) {
 		"meta_font_size":          {},
 		"title_font_size":         {},
 		"header_divider":          {},
+		"header_divider_width":    {},
 		"header_divider_offset":   {},
 		"header_divider_color":    {},
 		"history_points":          {},
@@ -1351,16 +1393,23 @@ func stripBuiltinItemStyleOverrides(item *ItemConfig) {
 		"show_grid_lines":         {},
 		"grid_lines":              {},
 		"fill_area":               {},
+		"enable_threshold_colors": {},
 		"line_width":              {},
+		"line_orientation":        {},
 		"show_avg_line":           {},
 		"chart_color":             {},
 		"chart_area_bg":           {},
 		"chart_area_border_color": {},
 		"progress_style":          {},
 		"bar_height":              {},
+		"bar_radius":              {},
 		"track_color":             {},
 		"segments":                {},
 		"segment_gap":             {},
+		"gauge_thickness":         {},
+		"gauge_gap_degrees":       {},
+		"gauge_text_gap":          {},
+		"ring_thickness":          {},
 	}
 	filtered := make(map[string]interface{}, len(item.RenderAttrsMap))
 	for key, value := range item.RenderAttrsMap {
@@ -1556,6 +1605,10 @@ func defaultEditUIName(current string, idx int, item *ItemConfig) string {
 		return strings.TrimSpace(current)
 	}
 	return ""
+}
+
+func generateItemID(idx int) string {
+	return fmt.Sprintf("itm_%d_%d", time.Now().UnixNano(), idx)
 }
 
 func normalizeItemType(itemType string) string {

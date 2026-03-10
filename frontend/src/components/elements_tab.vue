@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import PureColorInput from "./pure_color_input.vue";
+import StyleBaseForm from "./style_base_form.vue";
+import StyleTypeForm from "./style_type_form.vue";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -60,12 +61,14 @@ const TYPE_LABELS = {
   simple_value: "基础数值",
   simple_progress: "基础进度条",
   simple_line_chart: "基础折线图",
+  simple_line: "基础线条",
   simple_label: "基础标签",
   simple_rect: "基础矩形",
   simple_circle: "基础圆形",
   label_text: "标签数值",
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
+  full_gauge: "复杂仪表盘",
 };
 
 function typeLabel(type) {
@@ -78,12 +81,14 @@ const itemTypeOptions = computed(() => {
     "simple_value",
     "simple_progress",
     "simple_line_chart",
+    "simple_line",
     "simple_label",
     "simple_rect",
     "simple_circle",
     "label_text",
     "full_chart",
     "full_progress",
+    "full_gauge",
   ];
   const list = Array.isArray(props.meta?.item_types) && props.meta.item_types.length > 0 ? props.meta.item_types : fallback;
   return list
@@ -109,7 +114,8 @@ const selectedMonitorRequired = computed(() => {
     type === "simple_line_chart" ||
     type === "label_text" ||
     type === "full_chart" ||
-    type === "full_progress"
+    type === "full_progress" ||
+    type === "full_gauge"
   );
 });
 
@@ -121,26 +127,58 @@ const addMonitorRequired = computed(() => {
     type === "simple_line_chart" ||
     type === "label_text" ||
     type === "full_chart" ||
-    type === "full_progress"
+    type === "full_progress" ||
+    type === "full_gauge"
   );
 });
-
-const FULL_PROGRESS_STYLE_OPTIONS = [
-  { label: "渐变", value: "gradient" },
-  { label: "纯色", value: "solid" },
-  { label: "分段", value: "segmented" },
-  { label: "条纹", value: "stripes" },
-];
 
 const selectedType = computed(() => String(selectedItem.value?.type || ""));
 const selectedIsLabelText = computed(() => selectedType.value === "label_text");
 const selectedIsSimpleLabel = computed(() => selectedType.value === "simple_label");
-const selectedIsSimpleLine = computed(() => selectedType.value === "simple_line_chart");
-const selectedIsFullChart = computed(() => selectedType.value === "full_chart");
-const selectedIsFullProgress = computed(() => selectedType.value === "full_progress");
-const selectedHasTitle = computed(
-  () => selectedType.value === "full_chart" || selectedType.value === "full_progress",
+const selectedHasTypeStyle = computed(
+  () =>
+    selectedType.value === "simple_line_chart" ||
+    selectedType.value === "simple_line" ||
+    selectedType.value === "full_chart" ||
+    selectedType.value === "full_progress" ||
+    selectedType.value === "full_gauge",
 );
+const selectedHasTitle = computed(
+  () =>
+    selectedType.value === "full_chart" ||
+    selectedType.value === "full_progress" ||
+    selectedType.value === "full_gauge",
+);
+const selectedSupportsFormat = computed(() => {
+  const monitor = normalizeText(selectedItem.value?.monitor);
+  if (!monitor) return false;
+  return (
+    monitor === "alias.system.time" ||
+    monitor === "go_native.system.current_time" ||
+    monitor === "alias.system.display" ||
+    monitor === "go_native.system.display" ||
+    monitor === "alias.system.resolution" ||
+    monitor === "go_native.system.resolution" ||
+    monitor === "alias.system.refresh_rate" ||
+    monitor === "go_native.system.refresh_rate"
+  );
+});
+const selectedFormatPlaceholder = computed(() => {
+  const monitor = normalizeText(selectedItem.value?.monitor);
+  if (monitor === "alias.system.time" || monitor === "go_native.system.current_time") {
+    return "时间格式，例如 15:04:05 或 %H:%M:%S";
+  }
+  if (monitor === "alias.system.resolution" || monitor === "go_native.system.resolution") {
+    return "例如 {resolution} 或 {width}x{height}";
+  }
+  if (monitor === "alias.system.refresh_rate" || monitor === "go_native.system.refresh_rate") {
+    return "例如 {refresh_rate}";
+  }
+  if (monitor === "alias.system.display" || monitor === "go_native.system.display") {
+    return "例如 {resolution}@{refresh_rate}";
+  }
+  return "";
+});
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -157,11 +195,6 @@ function toOptionalNumber(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
   return n;
-}
-
-function colorValue(raw, fallback = "#f8fafc") {
-  const value = String(raw || "").trim();
-  return value || fallback;
 }
 
 function normalizeText(raw) {
@@ -262,6 +295,7 @@ function rectStyle(item, index) {
     width: `${toNumber(item.width, 10) * previewScale.value}px`,
     height: `${toNumber(item.height, 10) * previewScale.value}px`,
     borderColor: index === props.selectedIndex ? "#2080f0" : "rgba(255,255,255,0.35)",
+    zIndex: index === props.selectedIndex ? 20 : 2,
   };
 }
 
@@ -375,29 +409,6 @@ function renderAttrString(key, fallback = "") {
   return String(raw);
 }
 
-function renderAttrNumber(key, fallback = 0) {
-  const raw = renderAttrRaw(key);
-  if (raw === undefined || raw === null || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return n;
-}
-
-function renderAttrBool(key, fallback = false) {
-  const raw = renderAttrRaw(key);
-  if (raw === undefined || raw === null) return fallback;
-  if (typeof raw === "boolean") return raw;
-  if (typeof raw === "number") return raw !== 0;
-  const text = String(raw).trim().toLowerCase();
-  if (text === "1" || text === "true" || text === "yes" || text === "on") return true;
-  if (text === "0" || text === "false" || text === "no" || text === "off") return false;
-  return fallback;
-}
-
-function renderAttrColor(key, fallback = "#f8fafc") {
-  return colorValue(renderAttrString(key, ""), fallback);
-}
-
 function updateRenderAttr(key, value) {
   if (props.readonlyProfile || props.selectedIndex < 0) return;
   const item = selectedItem.value;
@@ -413,11 +424,8 @@ function updateRenderAttr(key, value) {
   });
 }
 
-function updateRenderAttrNumber(key, value, fallback = 0, min = null, max = null) {
-  let n = toNumber(value, fallback);
-  if (min !== null) n = Math.max(min, n);
-  if (max !== null) n = Math.min(max, n);
-  updateRenderAttr(key, n);
+function updateBaseStyleField(field, value) {
+  emit("change-item-field", { field, value });
 }
 
 function submitAdd() {
@@ -506,7 +514,7 @@ watch(
         <n-space vertical :size="2">
           <button
             v-for="(item, idx) in config.items"
-            :key="`${idx}_${item.edit_ui_name || item.type}`"
+            :key="item.id || `${idx}_${item.edit_ui_name || item.type}`"
             type="button"
             class="list_item"
             :class="{ active: idx === selectedIndex }"
@@ -566,7 +574,7 @@ watch(
           <img v-if="previewUrl" :src="previewUrl" alt="preview" class="preview_image" />
           <div
             v-for="(item, idx) in config.items"
-            :key="`${idx}_${item.type}`"
+            :key="item.id || `${idx}_${item.type}`"
             class="item_rect"
             :class="{ selected: idx === selectedIndex }"
             :style="rectStyle(item, idx)"
@@ -670,6 +678,13 @@ watch(
                 @update:value="(v) => emit('change-item-field', { field: 'unit', value: String(v || '') })"
               />
             </n-form-item-gi>
+            <n-form-item-gi v-if="selectedSupportsFormat" label="格式" :span="2">
+              <n-input
+                :value="renderAttrString('format', '')"
+                :placeholder="selectedFormatPlaceholder"
+                @update:value="(v) => updateRenderAttr('format', String(v || ''))"
+              />
+            </n-form-item-gi>
             <n-form-item-gi label="最小值">
               <n-input-number
                 clearable
@@ -698,253 +713,35 @@ watch(
                 @update:value="(v) => emit('change-item-field', { field: 'text', value: String(v || '') })"
               />
             </n-form-item-gi>
-            <template v-if="selectedCustomStyleEnabled">
-              <n-form-item-gi v-if="selectedIsSimpleLine" label="历史数据点数">
-                <n-input-number
-                  :value="renderAttrNumber('history_points', 150)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('history_points', v, 150, 10, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="字号">
-                <n-input-number
-                  :value="toNumber(selectedItem.font_size, 0)"
-                  :show-button="false"
-                  @update:value="(v) => emit('change-item-field', { field: 'font_size', value: toNumber(v, 0) })"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="前景色">
-                <pure-color-input
-                  :value="colorValue(selectedItem.color, '#f8fafc')"
-                  @update:value="(v) => emit('change-item-field', { field: 'color', value: String(v || '') })"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="背景色">
-                <pure-color-input
-                  :value="colorValue(selectedItem.bg, '#0b1220')"
-                  @update:value="(v) => emit('change-item-field', { field: 'bg', value: String(v || '') })"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="单位色">
-                <pure-color-input
-                  :value="colorValue(selectedItem.unit_color, '#f8fafc')"
-                  @update:value="(v) => emit('change-item-field', { field: 'unit_color', value: String(v || '') })"
-                />
-              </n-form-item-gi>
-            </template>
           </n-grid>
         </n-form>
 
-        <template v-if="selectedIsFullChart && selectedCustomStyleEnabled">
-          <n-divider style="margin: 8px 0" />
-          <n-text depth="3" style="display: block; margin-bottom: 6px">复杂图表配置</n-text>
-          <n-form label-placement="left" size="small" :label-width="84">
-            <n-grid cols="2" :x-gap="6" :y-gap="2">
-              <n-form-item-gi label="内边距">
-                <n-input-number
-                  :value="renderAttrNumber('content_padding', 1)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('content_padding', v, 1, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分隔偏移">
-                <n-input-number
-                  :value="renderAttrNumber('header_divider_offset', 3)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('header_divider_offset', v, 3, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="标题间距">
-                <n-input-number
-                  :value="renderAttrNumber('body_gap', 4)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('body_gap', v, 4, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="标题字号">
-                <n-input-number
-                  :value="renderAttrNumber('title_font_size', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('title_font_size', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="数值字号">
-                <n-input-number
-                  :value="renderAttrNumber('value_font_size', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('value_font_size', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="头部分隔线">
-                <n-switch
-                  :value="renderAttrBool('header_divider', true)"
-                  @update:value="(v) => updateRenderAttr('header_divider', !!v)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分隔线色">
-                <pure-color-input
-                  :value="renderAttrColor('header_divider_color', '#94a3b840')"
-                  @update:value="(v) => updateRenderAttr('header_divider_color', String(v || ''))"
-                />
-              </n-form-item-gi>
-
-              <n-form-item-gi label="历史数据点数">
-                <n-input-number
-                  :value="renderAttrNumber('history_points', 150)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('history_points', v, 150, 10, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="网格线数">
-                <n-input-number
-                  :value="renderAttrNumber('grid_lines', 4)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('grid_lines', v, 4, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分段线开关">
-                <n-switch
-                  :value="renderAttrBool('show_segment_lines', renderAttrBool('show_grid_lines', true))"
-                  @update:value="(v) => updateRenderAttr('show_segment_lines', !!v)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="填充区域">
-                <n-switch
-                  :value="renderAttrBool('fill_area', true)"
-                  @update:value="(v) => updateRenderAttr('fill_area', !!v)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="显示均线">
-                <n-switch
-                  :value="renderAttrBool('show_avg_line', true)"
-                  @update:value="(v) => updateRenderAttr('show_avg_line', !!v)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="线宽">
-                <n-input-number
-                  :value="renderAttrNumber('line_width', 2)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('line_width', v, 2, 1, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="图线颜色">
-                <pure-color-input
-                  :value="renderAttrColor('chart_color', '#20a0f0')"
-                  @update:value="(v) => updateRenderAttr('chart_color', String(v || ''))"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="图表区背景色">
-                <pure-color-input
-                  :value="renderAttrColor('chart_area_bg', '')"
-                  @update:value="(v) => updateRenderAttr('chart_area_bg', String(v || ''))"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="图表区边框色">
-                <pure-color-input
-                  :value="renderAttrColor('chart_area_border_color', '')"
-                  @update:value="(v) => updateRenderAttr('chart_area_border_color', String(v || ''))"
-                />
-              </n-form-item-gi>
-            </n-grid>
-          </n-form>
-        </template>
-
-        <template v-if="selectedIsFullProgress && selectedCustomStyleEnabled">
-          <n-divider style="margin: 8px 0" />
-          <n-text depth="3" style="display: block; margin-bottom: 6px">复杂进度配置</n-text>
-          <n-form label-placement="left" size="small" :label-width="84">
-            <n-grid cols="2" :x-gap="6" :y-gap="2">
-              <n-form-item-gi label="内边距">
-                <n-input-number
-                  :value="renderAttrNumber('content_padding', 1)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('content_padding', v, 1, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分隔偏移">
-                <n-input-number
-                  :value="renderAttrNumber('header_divider_offset', 3)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('header_divider_offset', v, 3, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="标题间距">
-                <n-input-number
-                  :value="renderAttrNumber('body_gap', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('body_gap', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="标题字号">
-                <n-input-number
-                  :value="renderAttrNumber('title_font_size', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('title_font_size', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="数值字号">
-                <n-input-number
-                  :value="renderAttrNumber('value_font_size', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('value_font_size', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="头部分隔线">
-                <n-switch
-                  :value="renderAttrBool('header_divider', true)"
-                  @update:value="(v) => updateRenderAttr('header_divider', !!v)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分隔线色">
-                <pure-color-input
-                  :value="renderAttrColor('header_divider_color', '#94a3b840')"
-                  @update:value="(v) => updateRenderAttr('header_divider_color', String(v || ''))"
-                />
-              </n-form-item-gi>
-
-              <n-form-item-gi label="进度样式" :span="2">
-                <n-select
-                  :value="renderAttrString('progress_style', 'gradient')"
-                  :options="FULL_PROGRESS_STYLE_OPTIONS"
-                  @update:value="(v) => updateRenderAttr('progress_style', String(v || 'gradient'))"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="条高">
-                <n-input-number
-                  :value="renderAttrNumber('bar_height', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('bar_height', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="条圆角">
-                <n-input-number
-                  :value="renderAttrNumber('bar_radius', 0)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('bar_radius', v, 0, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分段数量">
-                <n-input-number
-                  :value="renderAttrNumber('segments', 12)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('segments', v, 12, 4, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="分段间隔">
-                <n-input-number
-                  :value="renderAttrNumber('segment_gap', 2)"
-                  :show-button="false"
-                  @update:value="(v) => updateRenderAttrNumber('segment_gap', v, 2, 0, null)"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi label="轨道颜色">
-                <pure-color-input
-                  :value="renderAttrColor('track_color', '#1f2937')"
-                  @update:value="(v) => updateRenderAttr('track_color', String(v || ''))"
-                />
-              </n-form-item-gi>
-            </n-grid>
-          </n-form>
+        <template v-if="selectedCustomStyleEnabled">
+          <n-divider style="margin: 8px 0 6px" />
+          <div class="custom_style_grid" :class="{ single: !selectedHasTypeStyle }">
+            <n-card size="small" embedded title="基础样式" class="custom_style_card">
+              <style-base-form
+                :model="selectedItem"
+                :label-width="72"
+                @update-field="({ field, value }) => updateBaseStyleField(field, value)"
+              />
+            </n-card>
+            <n-card
+              v-if="selectedHasTypeStyle"
+              size="small"
+              embedded
+              title="类型样式"
+              class="custom_style_card"
+            >
+              <style-type-form
+                :type="selectedType"
+                :attrs="resolveRenderAttrs(selectedItem)"
+                :label-width="76"
+                :default-history-points="Number(config.default_history_points || 150)"
+                @update-attr="({ key, value }) => updateRenderAttr(key, value)"
+              />
+            </n-card>
+          </div>
         </template>
 
         <n-divider style="margin: 8px 0" />

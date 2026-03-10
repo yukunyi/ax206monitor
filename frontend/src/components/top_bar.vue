@@ -8,12 +8,15 @@ const props = defineProps({
   readonlyProfile: { type: Boolean, default: false },
   dirty: { type: Boolean, default: false },
   saving: { type: Boolean, default: false },
+  canUndo: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
   "update:editing-profile",
   "switch-profile",
   "save",
+  "undo",
+  "restore",
   "create-profile",
   "rename-profile",
   "delete-profile",
@@ -35,7 +38,7 @@ const canSetDefault = computed(
 const saveState = computed(() => {
   if (props.saving) return { type: "info", text: "保存中" };
   if (props.dirty) return { type: "warning", text: "未保存" };
-  return { type: "success", text: "已同步" };
+  return { type: "success", text: "已保存" };
 });
 
 function onProfileUpdate(value) {
@@ -78,12 +81,27 @@ function onProfileUpdate(value) {
         <n-button size="small" @click="emit('import-config')">导入</n-button>
         <n-button size="small" @click="emit('export-config')">导出</n-button>
         <n-button
+          size="small"
+          :disabled="readonlyProfile || !canUndo || saving"
+          @click="emit('undo')"
+        >
+          撤销
+        </n-button>
+        <n-button
+          v-if="dirty"
+          size="small"
+          :disabled="readonlyProfile || saving"
+          @click="emit('restore')"
+        >
+          恢复
+        </n-button>
+        <n-button
           type="primary"
           size="small"
           :disabled="readonlyProfile || !dirty || saving"
           @click="emit('save')"
         >
-          保存应用
+          保存
         </n-button>
         <n-tag size="small" :type="saveState.type">{{ saveState.text }}</n-tag>
       </n-space>
