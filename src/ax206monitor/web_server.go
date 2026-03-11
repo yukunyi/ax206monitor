@@ -38,17 +38,18 @@ type ConfigStore struct {
 }
 
 type WebMetaResponse struct {
-	ConfigPath           string   `json:"config_path"`
-	Platform             string   `json:"platform,omitempty"`
-	Monitors             []string `json:"monitors"`
-	Collectors           []string `json:"collectors,omitempty"`
-	ItemTypes            []string `json:"item_types"`
-	OutputTypes          []string `json:"output_types"`
-	FontFamilies         []string `json:"font_families"`
-	NetworkInterfaces    []string `json:"network_interfaces"`
-	CustomMonitorTypes   []string `json:"custom_monitor_types"`
-	CustomAggregateTypes []string `json:"custom_aggregate_types"`
-	ActiveProfile        string   `json:"active_profile,omitempty"`
+	ConfigPath           string         `json:"config_path"`
+	Platform             string         `json:"platform,omitempty"`
+	Monitors             []string       `json:"monitors"`
+	Collectors           []string       `json:"collectors,omitempty"`
+	ItemTypes            []string       `json:"item_types"`
+	StyleKeys            []StyleKeyMeta `json:"style_keys,omitempty"`
+	OutputTypes          []string       `json:"output_types"`
+	FontFamilies         []string       `json:"font_families"`
+	NetworkInterfaces    []string       `json:"network_interfaces"`
+	CustomMonitorTypes   []string       `json:"custom_monitor_types"`
+	CustomAggregateTypes []string       `json:"custom_aggregate_types"`
+	ActiveProfile        string         `json:"active_profile,omitempty"`
 }
 
 type WebConfigResponse struct {
@@ -674,18 +675,46 @@ func RunWebServer(options WebServerOptions) error {
 
 func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 	config := store.getConfig()
+	fontFamilies := collectFontFamilies(config)
+	styleKeys := WebStyleKeyMeta()
+	applyFontFamilyStyleKeyOptions(styleKeys, fontFamilies)
 	return WebMetaResponse{
 		ConfigPath:           store.path,
 		Platform:             goruntime.GOOS,
 		Monitors:             collectMonitorNames(config, store.runtime),
 		Collectors:           store.collectorNames(),
 		ItemTypes:            webItemTypes(),
+		StyleKeys:            styleKeys,
 		OutputTypes:          []string{outputTypeMemImg, outputTypeAX206USB},
-		FontFamilies:         collectFontFamilies(config),
+		FontFamilies:         fontFamilies,
 		NetworkInterfaces:    listNetworkInterfaces(),
 		CustomMonitorTypes:   []string{"file", "mixed", "coolercontrol", "librehardwaremonitor"},
 		CustomAggregateTypes: []string{"max", "min", "avg"},
 		ActiveProfile:        store.profiles.ActiveName(),
+	}
+}
+
+func applyFontFamilyStyleKeyOptions(styleKeys []StyleKeyMeta, fontFamilies []string) {
+	if len(styleKeys) == 0 {
+		return
+	}
+	options := make([]StyleOption, 0, len(fontFamilies))
+	for _, family := range fontFamilies {
+		trimmed := strings.TrimSpace(family)
+		if trimmed == "" {
+			continue
+		}
+		options = append(options, StyleOption{
+			Label: trimmed,
+			Value: trimmed,
+		})
+	}
+	for idx := range styleKeys {
+		if styleKeys[idx].Key != "font_family" {
+			continue
+		}
+		styleKeys[idx].Options = options
+		return
 	}
 }
 
@@ -750,28 +779,44 @@ func listNetworkInterfaces() []string {
 }
 
 func collectFontFamilies(config *MonitorConfig) []string {
-	familySet := make(map[string]struct{})
-	for _, name := range getDefaultFontFamilies() {
+	appendUnique := func(items []string, seen map[string]struct{}, name string) []string {
 		trimmed := strings.TrimSpace(name)
 		if trimmed == "" {
-			continue
+			return items
 		}
-		familySet[trimmed] = struct{}{}
+		if _, exists := seen[trimmed]; exists {
+			return items
+		}
+		seen[trimmed] = struct{}{}
+		return append(items, trimmed)
 	}
+
+	items := make([]string, 0, 16)
+	seen := make(map[string]struct{}, 16)
+
+	systemDefault := strings.TrimSpace(getDefaultFontName())
+	if systemDefault != "" {
+		items = appendUnique(items, seen, systemDefault)
+	}
+
 	if config != nil {
-		for _, name := range config.FontFamilies {
-			trimmed := strings.TrimSpace(name)
-			if trimmed == "" {
-				continue
-			}
-			familySet[trimmed] = struct{}{}
+		items = appendUnique(items, seen, config.GetDefaultFontName())
+	}
+
+	defaultCandidates := append([]string{}, getDefaultFontFamilies()...)
+	sort.Strings(defaultCandidates)
+	for _, name := range defaultCandidates {
+		items = appendUnique(items, seen, name)
+	}
+
+	if config != nil {
+		configCandidates := append([]string{}, config.FontFamilies...)
+		sort.Strings(configCandidates)
+		for _, name := range configCandidates {
+			items = appendUnique(items, seen, name)
 		}
 	}
-	items := make([]string, 0, len(familySet))
-	for name := range familySet {
-		items = append(items, name)
-	}
-	sort.Strings(items)
+
 	return items
 }
 
@@ -798,20 +843,14 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		Width:                   480,
 		Height:                  320,
 		DefaultFont:             getDefaultFontName(),
-		DefaultFontSize:         16,
-		DefaultValueFontSize:    18,
-		DefaultLabelFontSize:    16,
-		DefaultUnitFontSize:     14,
-		DefaultColor:            "#f8fafc",
-		DefaultBackground:       "#0b1220",
-		LevelColors:             []string{"#22c55e", "#eab308", "#f97316", "#ef4444"},
-		DefaultThresholds:       []float64{25, 50, 75, 100},
+		StyleBase:               map[string]interface{}{},
 		FontFamilies:            getDefaultFontFamilies(),
 		OutputTypes:             []string{outputTypeMemImg},
 		PauseCollectOnLock:      false,
 		RefreshInterval:         1000,
 		CollectWarnMS:           100,
 		RenderWaitMaxMS:         300,
+		AX206ReconnectMS:        3000,
 		HistorySize:             150,
 		DefaultHistoryPoints:    150,
 		NetworkInterface:        "",
@@ -866,7 +905,6 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.CollectorConfig == nil {
 		cfg.CollectorConfig = make(map[string]CollectorConfig)
 	}
-	migrateLegacyCollectorConfig(cfg)
 	builtinCooler, builtinLibre, builtinRTSS := builtinCollectorDefaults(cfg.Name)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeCPU, true)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeMemory, true)
@@ -960,60 +998,25 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.RenderWaitMaxMS > cfg.RefreshInterval {
 		cfg.RenderWaitMaxMS = cfg.RefreshInterval
 	}
+	if cfg.AX206ReconnectMS <= 0 {
+		cfg.AX206ReconnectMS = 3000
+	}
+	if cfg.AX206ReconnectMS < 100 {
+		cfg.AX206ReconnectMS = 100
+	}
+	if cfg.AX206ReconnectMS > 60000 {
+		cfg.AX206ReconnectMS = 60000
+	}
 	if cfg.MonitorUpdateWorkers < 0 {
 		cfg.MonitorUpdateWorkers = 0
 	}
 	if cfg.MonitorUpdateQueueSize < 0 {
 		cfg.MonitorUpdateQueueSize = 0
 	}
-	if cfg.MonitorAutoTuneInterval < 0 {
-		cfg.MonitorAutoTuneInterval = 0
-	}
-	if cfg.MonitorAutoTuneSlowRate < 0 {
-		cfg.MonitorAutoTuneSlowRate = 0
-	}
-	if cfg.MonitorAutoTuneStable < 0 {
-		cfg.MonitorAutoTuneStable = 0
-	}
-	if cfg.MonitorAutoTuneMaxScale < 0 {
-		cfg.MonitorAutoTuneMaxScale = 0
-	}
 	if strings.TrimSpace(cfg.DefaultFont) == "" {
 		cfg.DefaultFont = getDefaultFontName()
 	}
 	sanitizeFontConfig(cfg)
-	if cfg.DefaultFontSize <= 0 {
-		cfg.DefaultFontSize = 16
-	}
-	if cfg.DefaultValueFontSize <= 0 {
-		cfg.DefaultValueFontSize = cfg.GetDefaultFontSize() + 2
-	}
-	if cfg.DefaultValueFontSize < 8 {
-		cfg.DefaultValueFontSize = 8
-	}
-	if cfg.DefaultLabelFontSize <= 0 {
-		cfg.DefaultLabelFontSize = cfg.GetDefaultFontSize()
-	}
-	if cfg.DefaultLabelFontSize < 8 {
-		cfg.DefaultLabelFontSize = 8
-	}
-	if cfg.DefaultUnitFontSize <= 0 {
-		cfg.DefaultUnitFontSize = cfg.GetDefaultLabelFontSize() - 2
-	}
-	if cfg.DefaultUnitFontSize < 8 {
-		cfg.DefaultUnitFontSize = 8
-	}
-	if strings.TrimSpace(cfg.DefaultColor) == "" {
-		cfg.DefaultColor = "#f8fafc"
-	}
-	if strings.TrimSpace(cfg.DefaultBackground) == "" {
-		cfg.DefaultBackground = "#0b1220"
-	}
-	cfg.LevelColors = normalizeLevelColors(cfg.LevelColors, []string{"#22c55e", "#eab308", "#f97316", "#ef4444"})
-	cfg.DefaultThresholds = normalizeThresholds(cfg.DefaultThresholds, 0, 100)
-	if len(cfg.DefaultThresholds) != 4 {
-		cfg.DefaultThresholds = []float64{25, 50, 75, 100}
-	}
 	cfg.OutputTypes = normalizeOutputTypes(cfg.OutputTypes)
 	cfg.NetworkInterface = strings.TrimSpace(cfg.NetworkInterface)
 	if strings.EqualFold(cfg.NetworkInterface, "auto") {
@@ -1042,6 +1045,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.HistorySize = cfg.DefaultHistoryPoints
 	}
 	ensureTypeDefaults(cfg)
+	normalizeStyleConfiguration(cfg)
 	setCollectorOptionDefault(cfg, collectorCoolerControl, "url", defaultCoolerControlURL)
 	setCollectorOptionDefault(cfg, collectorLibreHardwareMonitor, "url", defaultLibreHardwareMonitorURL)
 
@@ -1074,43 +1078,13 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 			}
 		} else {
 			item.Unit = ""
-			item.UnitColor = ""
-			item.UnitFontSize = 0
-		}
-		if item.UnitFontSize < 0 {
-			item.UnitFontSize = 0
-		}
-		if item.SmallFontSize < 0 {
-			item.SmallFontSize = 0
-		}
-		if item.MediumFontSize < 0 {
-			item.MediumFontSize = 0
-		}
-		if item.LargeFontSize < 0 {
-			item.LargeFontSize = 0
-		}
-		if isBuiltinProfileName(cfg.Name) {
-			stripBuiltinItemStyleOverrides(item)
-		}
-		if item.Type == itemTypeSimpleChart {
-			item.History = true
-			if item.PointSize < 0 {
-				item.PointSize = 0
-			}
-		} else {
-			item.History = false
-			item.PointSize = 0
 		}
 		if !isRangeItemType(item.Type) {
 			item.Max = 0
 			item.MaxValue = nil
 			item.MinValue = nil
 		}
-		if strings.TrimSpace(item.Background) == "" {
-			item.Background = ""
-		}
-		item.LevelColors = normalizeLevelColors(item.LevelColors, nil)
-		item.Thresholds = normalizeThresholds(item.Thresholds, 0, 100)
+		normalizeItemStyleConfiguration(cfg, item)
 	}
 
 	for idx := range cfg.CustomMonitors {
@@ -1145,317 +1119,10 @@ func ensureTypeDefaults(cfg *MonitorConfig) {
 	}
 }
 
-func normalizeTypeDefaultsEntry(cfg *MonitorConfig, itemType string, entry ItemTypeDefaults) ItemTypeDefaults {
-	base := defaultTypeDefaults(cfg, itemType)
-
-	if entry.FontSize < 0 {
-		entry.FontSize = 0
-	}
-	if entry.SmallFontSize < 0 {
-		entry.SmallFontSize = 0
-	}
-	if entry.MediumFontSize < 0 {
-		entry.MediumFontSize = 0
-	}
-	if entry.LargeFontSize < 0 {
-		entry.LargeFontSize = 0
-	}
-	if entry.UnitFontSize < 0 {
-		entry.UnitFontSize = 0
-	}
-	if entry.SmallFontSize == 0 && entry.UnitFontSize > 0 {
-		entry.SmallFontSize = entry.UnitFontSize
-	}
-	if entry.MediumFontSize == 0 && entry.FontSize > 0 {
-		entry.MediumFontSize = entry.FontSize
-	}
-	if entry.LargeFontSize == 0 && entry.FontSize > 0 {
-		entry.LargeFontSize = entry.FontSize
-	}
-	if entry.PointSize < 0 {
-		entry.PointSize = 0
-	}
-	if isHistoryItemType(itemType) {
-		if entry.PointSize == 0 {
-			entry.PointSize = base.PointSize
-		}
-		if entry.PointSize < 10 {
-			entry.PointSize = 10
-		}
-	} else {
-		entry.PointSize = 0
-	}
-	if itemType == itemTypeSimpleChart {
-		if entry.RenderAttrsMap == nil {
-			entry.RenderAttrsMap = map[string]interface{}{}
-		}
-		historyPoints := entry.PointSize
-		if historyPoints <= 0 {
-			if raw, exists := entry.RenderAttrsMap["history_points"]; exists && raw != nil {
-				switch typed := raw.(type) {
-				case int:
-					historyPoints = typed
-				case int32:
-					historyPoints = int(typed)
-				case int64:
-					historyPoints = int(typed)
-				case float32:
-					historyPoints = int(typed)
-				case float64:
-					historyPoints = int(typed)
-				}
-			}
-		}
-		if historyPoints <= 0 {
-			historyPoints = base.PointSize
-		}
-		if historyPoints < 10 {
-			historyPoints = 10
-		}
-		entry.PointSize = historyPoints
-		entry.RenderAttrsMap["history_points"] = historyPoints
-	}
-	if entry.BorderWidth < 0 {
-		entry.BorderWidth = 0
-	}
-	if entry.Radius < 0 {
-		entry.Radius = 0
-	}
-	if strings.TrimSpace(entry.Color) == "" {
-		entry.Color = base.Color
-	}
-	if strings.TrimSpace(entry.Background) == "" {
-		entry.Background = base.Background
-	}
-	if strings.TrimSpace(entry.UnitColor) == "" {
-		entry.UnitColor = base.UnitColor
-	}
-	if strings.TrimSpace(entry.BorderColor) == "" {
-		entry.BorderColor = base.BorderColor
-	}
-	entry.FontSize = 0
-	entry.UnitFontSize = 0
-
-	entry.RenderAttrsMap = mergeDefaultRenderAttrs(base.RenderAttrsMap, entry.RenderAttrsMap)
+func normalizeTypeDefaultsEntry(_ *MonitorConfig, itemType string, entry ItemTypeDefaults) ItemTypeDefaults {
+	entry.Style = normalizeStyleMap(entry.Style, styleScopeType, itemType)
+	entry.RenderAttrsMap = stripStyleKeysFromRenderAttrs(entry.RenderAttrsMap)
 	return entry
-}
-
-func defaultTypeDefaults(cfg *MonitorConfig, itemType string) ItemTypeDefaults {
-	defaultColor := "#f8fafc"
-	defaultValueSize := 16
-	defaultLabelSize := 14
-	defaultHistoryPoints := 150
-	if cfg != nil {
-		defaultColor = cfg.GetDefaultTextColor()
-		defaultValueSize = cfg.GetDefaultValueFontSize()
-		defaultLabelSize = cfg.GetDefaultLabelFontSize()
-		defaultHistoryPoints = cfg.GetDefaultHistoryPoints()
-	}
-
-	defaults := ItemTypeDefaults{
-		FontSize:       0,
-		SmallFontSize:  0,
-		MediumFontSize: 0,
-		LargeFontSize:  0,
-		Color:          defaultColor,
-		Background:     "",
-		UnitColor:      defaultColor,
-		UnitFontSize:   0,
-		PointSize:      0,
-		BorderColor:    "#475569",
-		BorderWidth:    0,
-		Radius:         0,
-		RenderAttrsMap: map[string]interface{}{},
-	}
-
-	if isHistoryItemType(itemType) {
-		defaults.PointSize = defaultHistoryPoints
-	}
-
-	switch itemType {
-	case itemTypeSimpleChart:
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"history_points": defaultHistoryPoints,
-		}
-	case itemTypeSimpleLine:
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"line_orientation": "horizontal",
-			"line_width":       1.0,
-		}
-	case itemTypeSimpleRect, itemTypeSimpleCircle:
-		defaults.Background = "#33415566"
-	case itemTypeLabelText:
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"content_padding": 3,
-		}
-	case itemTypeFullChart:
-		defaults.Background = "#111827c8"
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"content_padding":         1,
-			"body_gap":                4,
-			"title_font_size":         defaultLabelSize,
-			"value_font_size":         defaultValueSize,
-			"header_divider":          true,
-			"header_divider_width":    1,
-			"header_divider_offset":   3,
-			"header_divider_color":    "#94a3b840",
-			"history_points":          defaultHistoryPoints,
-			"show_segment_lines":      true,
-			"show_grid_lines":         true,
-			"grid_lines":              4,
-			"enable_threshold_colors": false,
-			"line_width":              2.0,
-			"show_avg_line":           true,
-			"chart_color":             "#38bdf8",
-			"chart_area_bg":           "",
-			"chart_area_border_color": "",
-		}
-	case itemTypeFullProgress:
-		defaults.Background = "#111827c8"
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"content_padding":       1,
-			"body_gap":              0,
-			"title_font_size":       defaultLabelSize,
-			"value_font_size":       defaultValueSize,
-			"header_divider":        true,
-			"header_divider_width":  1,
-			"header_divider_offset": 3,
-			"header_divider_color":  "#94a3b840",
-			"progress_style":        "gradient",
-			"bar_height":            0.0,
-			"bar_radius":            0.0,
-			"track_color":           "#1f2937",
-			"segments":              12,
-			"segment_gap":           2.0,
-		}
-	case itemTypeFullGauge:
-		defaults.Background = "#111827c8"
-		defaults.RenderAttrsMap = map[string]interface{}{
-			"content_padding":   1,
-			"value_font_size":   defaultValueSize,
-			"label_font_size":   defaultLabelSize,
-			"gauge_thickness":   10.0,
-			"gauge_gap_degrees": 76.0,
-			"gauge_text_gap":    4.0,
-			"track_color":       "#1f2937",
-		}
-	}
-
-	return defaults
-}
-
-func mergeDefaultRenderAttrs(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
-	if len(base) == 0 && len(overrides) == 0 {
-		return map[string]interface{}{}
-	}
-	merged := make(map[string]interface{}, len(base)+len(overrides))
-	for key, value := range base {
-		merged[key] = value
-	}
-	for key, value := range overrides {
-		merged[key] = value
-	}
-	return merged
-}
-
-func stripBuiltinItemStyleOverrides(item *ItemConfig) {
-	if item == nil {
-		return
-	}
-	item.FontSize = 0
-	item.SmallFontSize = 0
-	item.MediumFontSize = 0
-	item.LargeFontSize = 0
-	item.Color = ""
-	item.Background = ""
-	item.UnitColor = ""
-	item.UnitFontSize = 0
-	item.BorderColor = ""
-	item.BorderWidth = 0
-	item.Radius = 0
-	item.PointSize = 0
-	if len(item.RenderAttrsMap) == 0 {
-		return
-	}
-	styleKeys := map[string]struct{}{
-		"content_padding":         {},
-		"body_gap":                {},
-		"value_font_size":         {},
-		"label_font_size":         {},
-		"meta_font_size":          {},
-		"title_font_size":         {},
-		"header_divider":          {},
-		"header_divider_width":    {},
-		"header_divider_offset":   {},
-		"header_divider_color":    {},
-		"history_points":          {},
-		"show_segment_lines":      {},
-		"show_grid_lines":         {},
-		"grid_lines":              {},
-		"fill_area":               {},
-		"enable_threshold_colors": {},
-		"line_width":              {},
-		"line_orientation":        {},
-		"show_avg_line":           {},
-		"chart_color":             {},
-		"chart_area_bg":           {},
-		"chart_area_border_color": {},
-		"progress_style":          {},
-		"bar_height":              {},
-		"bar_radius":              {},
-		"track_color":             {},
-		"segments":                {},
-		"segment_gap":             {},
-		"gauge_thickness":         {},
-		"gauge_gap_degrees":       {},
-		"gauge_text_gap":          {},
-		"ring_thickness":          {},
-	}
-	filtered := make(map[string]interface{}, len(item.RenderAttrsMap))
-	for key, value := range item.RenderAttrsMap {
-		if _, remove := styleKeys[key]; remove {
-			continue
-		}
-		filtered[key] = value
-	}
-	item.RenderAttrsMap = filtered
-}
-
-func migrateLegacyCollectorConfig(cfg *MonitorConfig) {
-	if cfg == nil || cfg.CollectorConfig == nil {
-		return
-	}
-	migrateCollectorConfigKey(cfg, legacyCollectorCoolerControl, collectorCoolerControl)
-	migrateCollectorConfigKey(cfg, legacyCollectorLibreHardwareMonitor, collectorLibreHardwareMonitor)
-	migrateCollectorConfigKey(cfg, legacyCollectorRTSS, collectorRTSS)
-}
-
-func migrateCollectorConfigKey(cfg *MonitorConfig, oldKey, newKey string) {
-	if cfg == nil || cfg.CollectorConfig == nil {
-		return
-	}
-	oldEntry, oldExists := cfg.CollectorConfig[oldKey]
-	newEntry, newExists := cfg.CollectorConfig[newKey]
-	if !oldExists {
-		return
-	}
-	if !newExists {
-		cfg.CollectorConfig[newKey] = oldEntry
-	} else {
-		if newEntry.Enabled == nil {
-			newEntry.Enabled = oldEntry.Enabled
-		}
-		if newEntry.Options == nil {
-			newEntry.Options = map[string]interface{}{}
-		}
-		for key, value := range oldEntry.Options {
-			if _, exists := newEntry.Options[key]; !exists {
-				newEntry.Options[key] = value
-			}
-		}
-		cfg.CollectorConfig[newKey] = newEntry
-	}
-	delete(cfg.CollectorConfig, oldKey)
 }
 
 func enforceCollectorPlatformSupport(cfg *MonitorConfig) {

@@ -12,16 +12,9 @@ const (
 	itemTypeSimpleCircle   = "simple_circle"
 	itemTypeLabelText      = "label_text"
 
-	itemTypeFullChart     = "full_chart"
-	itemTypeFullProgress  = "full_progress"
-	itemTypeFullGauge     = "full_gauge"
-	itemTypeFullRing      = "full_ring"
-	itemTypeFullMinMax    = "full_minmax"
-	itemTypeFullDelta     = "full_delta"
-	itemTypeFullStatus    = "full_status"
-	itemTypeFullMeterH    = "full_meter_h"
-	itemTypeFullMeterV    = "full_meter_v"
-	itemTypeFullHeatStrip = "full_heat_strip"
+	itemTypeFullChart    = "full_chart"
+	itemTypeFullProgress = "full_progress"
+	itemTypeFullGauge    = "full_gauge"
 )
 
 var simpleItemTypes = []string{
@@ -43,21 +36,7 @@ var fullItemTypes = []string{
 
 var allItemTypes = append(append([]string{}, simpleItemTypes...), fullItemTypes...)
 var allItemTypeSet = toItemTypeSet(allItemTypes)
-
-var legacyItemTypeAliases = map[string]string{
-	"value":        itemTypeSimpleValue,
-	"progress":     itemTypeSimpleProgress,
-	"line_chart":   itemTypeSimpleChart,
-	"line":         itemTypeSimpleLine,
-	"hline":        itemTypeSimpleLine,
-	"label":        itemTypeSimpleLabel,
-	"rect":         itemTypeSimpleRect,
-	"circle":       itemTypeSimpleCircle,
-	"linechart":    itemTypeSimpleChart,
-	"simple_value": itemTypeSimpleValue,
-	"simple_label": itemTypeSimpleLabel,
-	"labeltext":    itemTypeLabelText,
-}
+var fullItemTypeSet = toItemTypeSet(fullItemTypes)
 
 var collectorBoundItemTypeSet = toItemTypeSet(append([]string{
 	itemTypeSimpleValue,
@@ -101,9 +80,6 @@ func normalizeItemTypeName(itemType string) string {
 	if trimmed == "" {
 		return itemTypeSimpleValue
 	}
-	if mapped, ok := legacyItemTypeAliases[trimmed]; ok {
-		return mapped
-	}
 	if _, ok := allItemTypeSet[trimmed]; ok {
 		return trimmed
 	}
@@ -131,5 +107,6 @@ func isShapeItemType(itemType string) bool {
 }
 
 func isFullItemType(itemType string) bool {
-	return strings.HasPrefix(itemType, "full_")
+	_, ok := fullItemTypeSet[itemType]
+	return ok
 }

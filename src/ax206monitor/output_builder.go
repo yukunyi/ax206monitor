@@ -23,6 +23,7 @@ func buildOutputManager(cfg *MonitorConfig, forceMemImg bool) (*OutputManager, [
 	var types []string
 	if cfg != nil {
 		types = cfg.OutputTypes
+		output.SetAX206ReconnectInterval(cfg.GetAX206ReconnectDuration())
 	}
 	return output.BuildManager(types, forceMemImg)
 }

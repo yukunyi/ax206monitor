@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from "vue";
-import PureColorInput from "./pure_color_input.vue";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -41,10 +40,6 @@ const collectorNames = computed(() => {
     .filter((name) => !!name && collectorSupportedOnPlatform(name))
     .sort();
 });
-
-const fontOptions = computed(() =>
-  (props.meta.font_families || []).map((font) => ({ label: font, value: font })),
-);
 
 const monitorSelectOptions = computed(() => props.monitorOptions || []);
 const outputTypeOptions = computed(() => {
@@ -99,21 +94,12 @@ function collectorOption(name, key) {
   return String(collectorEntry(name).options?.[key] || "");
 }
 
-function thresholdValue(index) {
-  const list = Array.isArray(props.config.default_thresholds) ? props.config.default_thresholds : [];
-  return Number(list[index] ?? [25, 50, 75, 100][index]);
-}
-
-function levelColorValue(index) {
-  const list = Array.isArray(props.config.level_colors) ? props.config.level_colors : [];
-  return String(list[index] || ["#22c55e", "#eab308", "#f97316", "#ef4444"][index]);
-}
 </script>
 
 <template>
   <section class="layout_single basic_tab">
     <div class="basic_inner">
-      <n-grid cols="1 s:2" responsive="screen" :x-gap="8" :y-gap="6">
+      <n-grid cols="1" :x-gap="8" :y-gap="6">
         <n-grid-item>
           <n-card title="画布配置" size="small">
             <n-form label-placement="left" :label-width="112" size="small">
@@ -166,6 +152,14 @@ function levelColorValue(index) {
                     @update:value="(v) => onField('render_wait_max_ms', Number(v || 0))"
                   />
                 </n-form-item-gi>
+                <n-form-item-gi label="AX206重连间隔(ms)">
+                  <n-input-number
+                    :value="config.ax206_reconnect_ms"
+                    :disabled="readonlyProfile"
+                    :show-button="false"
+                    @update:value="(v) => onField('ax206_reconnect_ms', Number(v || 0))"
+                  />
+                </n-form-item-gi>
                 <n-form-item-gi label="允许元素样式定制">
                   <n-switch
                     :value="config.allow_custom_style === true"
@@ -197,123 +191,6 @@ function levelColorValue(index) {
                       />
                     </n-space>
                   </n-checkbox-group>
-                </n-form-item-gi>
-              </n-grid>
-            </n-form>
-          </n-card>
-        </n-grid-item>
-
-        <n-grid-item>
-          <n-card title="字体与颜色" size="small">
-            <n-form label-placement="left" :label-width="112" size="small">
-              <n-grid cols="1 s:2" responsive="screen" :x-gap="8" :y-gap="2">
-                <n-form-item-gi label="默认字体" :span="2">
-                  <n-select
-                    :value="config.default_font"
-                    :options="fontOptions"
-                    filterable
-                    :disabled="readonlyProfile"
-                    @update:value="(v) => onField('default_font', String(v || ''))"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="默认字号(px)">
-                  <n-input-number
-                    :value="config.default_font_size"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('default_font_size', Number(v || 0))"
-                  />
-                </n-form-item-gi>
-                <n-form-item-gi label="字体大小(px)" :span="2">
-                  <n-space size="small" :wrap="false" class="basic_inline_row">
-                    <n-input-number
-                      :value="config.default_unit_font_size"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      placeholder="小"
-                      @update:value="(v) => onField('default_unit_font_size', Number(v || 0))"
-                    />
-                    <n-input-number
-                      :value="config.default_label_font_size"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      placeholder="中"
-                      @update:value="(v) => onField('default_label_font_size', Number(v || 0))"
-                    />
-                    <n-input-number
-                      :value="config.default_value_font_size"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      placeholder="大"
-                      @update:value="(v) => onField('default_value_font_size', Number(v || 0))"
-                    />
-                  </n-space>
-                </n-form-item-gi>
-                <n-form-item-gi label="默认颜色" :span="2">
-                  <n-space size="small" :wrap="false" class="basic_inline_row">
-                    <pure-color-input
-                      :value="String(config.default_color || '#f8fafc')"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField('default_color', String(v || ''))"
-                    />
-                    <pure-color-input
-                      :value="String(config.default_background || '#0b1220')"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField('default_background', String(v || ''))"
-                    />
-                  </n-space>
-                </n-form-item-gi>
-                <n-form-item-gi label="默认阈值" :span="2">
-                  <n-space size="small" :wrap="false" class="basic_inline_row">
-                    <n-input-number
-                      :value="thresholdValue(0)"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['default_thresholds', 0], Number(v || 0))"
-                    />
-                    <n-input-number
-                      :value="thresholdValue(1)"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['default_thresholds', 1], Number(v || 0))"
-                    />
-                    <n-input-number
-                      :value="thresholdValue(2)"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['default_thresholds', 2], Number(v || 0))"
-                    />
-                    <n-input-number
-                      :value="thresholdValue(3)"
-                      :disabled="readonlyProfile"
-                      :show-button="false"
-                      @update:value="(v) => onField(['default_thresholds', 3], Number(v || 0))"
-                    />
-                  </n-space>
-                </n-form-item-gi>
-                <n-form-item-gi label="等级颜色" :span="2">
-                  <n-space size="small" :wrap="false" class="basic_inline_row">
-                    <pure-color-input
-                      :value="levelColorValue(0)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['level_colors', 0], String(v || ''))"
-                    />
-                    <pure-color-input
-                      :value="levelColorValue(1)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['level_colors', 1], String(v || ''))"
-                    />
-                    <pure-color-input
-                      :value="levelColorValue(2)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['level_colors', 2], String(v || ''))"
-                    />
-                    <pure-color-input
-                      :value="levelColorValue(3)"
-                      :disabled="readonlyProfile"
-                      @update:value="(v) => onField(['level_colors', 3], String(v || ''))"
-                    />
-                  </n-space>
                 </n-form-item-gi>
               </n-grid>
             </n-form>
@@ -495,6 +372,7 @@ function levelColorValue(index) {
           </n-card>
         </n-space>
       </n-card>
+
     </div>
   </section>
 </template>

@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import StyleBaseForm from "./style_base_form.vue";
-import StyleTypeForm from "./style_type_form.vue";
+import StyleManagerForm from "./style_manager_form.vue";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -135,14 +134,6 @@ const addMonitorRequired = computed(() => {
 const selectedType = computed(() => String(selectedItem.value?.type || ""));
 const selectedIsLabelText = computed(() => selectedType.value === "label_text");
 const selectedIsSimpleLabel = computed(() => selectedType.value === "simple_label");
-const selectedHasTypeStyle = computed(
-  () =>
-    selectedType.value === "simple_line_chart" ||
-    selectedType.value === "simple_line" ||
-    selectedType.value === "full_chart" ||
-    selectedType.value === "full_progress" ||
-    selectedType.value === "full_gauge",
-);
 const selectedHasTitle = computed(
   () =>
     selectedType.value === "full_chart" ||
@@ -220,9 +211,7 @@ function fallbackItemName(item) {
   const monitorLabel = monitorDisplayLabel(item.monitor);
   if (monitorLabel) return monitorLabel;
   const rawLabel =
-    normalizeText(item.render_attrs_map?.label) ||
-    normalizeText(item.renderAttrsMap?.label) ||
-    normalizeText(item.label);
+    normalizeText(item.render_attrs_map?.label);
   if (rawLabel) return rawLabel;
   const text = normalizeText(item.text);
   if (text) return text;
@@ -393,8 +382,13 @@ function resolveRenderAttrs(item) {
   if (!item || typeof item !== "object") return {};
   const map = item.render_attrs_map;
   if (map && typeof map === "object") return map;
-  const legacyMap = item.renderAttrsMap;
-  if (legacyMap && typeof legacyMap === "object") return legacyMap;
+  return {};
+}
+
+function resolveItemStyle(item) {
+  if (!item || typeof item !== "object") return {};
+  const map = item.style;
+  if (map && typeof map === "object") return map;
   return {};
 }
 
@@ -424,8 +418,32 @@ function updateRenderAttr(key, value) {
   });
 }
 
-function updateBaseStyleField(field, value) {
-  emit("change-item-field", { field, value });
+function updateItemStyle(payload) {
+  if (props.readonlyProfile || props.selectedIndex < 0) return;
+  const item = selectedItem.value;
+  if (!item) return;
+  const key = String(payload?.key || "").trim();
+  if (!key) return;
+  const next = { ...resolveItemStyle(item) };
+  next[key] = payload.value;
+  emit("patch-item", {
+    index: props.selectedIndex,
+    patch: { style: next },
+  });
+}
+
+function removeItemStyle(payload) {
+  if (props.readonlyProfile || props.selectedIndex < 0) return;
+  const item = selectedItem.value;
+  if (!item) return;
+  const key = String(payload?.key || "").trim();
+  if (!key) return;
+  const next = { ...resolveItemStyle(item) };
+  delete next[key];
+  emit("patch-item", {
+    index: props.selectedIndex,
+    patch: { style: next },
+  });
 }
 
 function submitAdd() {
@@ -718,30 +736,17 @@ watch(
 
         <template v-if="selectedCustomStyleEnabled">
           <n-divider style="margin: 8px 0 6px" />
-          <div class="custom_style_grid" :class="{ single: !selectedHasTypeStyle }">
-            <n-card size="small" embedded title="基础样式" class="custom_style_card">
-              <style-base-form
-                :model="selectedItem"
-                :label-width="72"
-                @update-field="({ field, value }) => updateBaseStyleField(field, value)"
-              />
-            </n-card>
-            <n-card
-              v-if="selectedHasTypeStyle"
-              size="small"
-              embedded
-              title="类型样式"
-              class="custom_style_card"
-            >
-              <style-type-form
-                :type="selectedType"
-                :attrs="resolveRenderAttrs(selectedItem)"
-                :label-width="76"
-                :default-history-points="Number(config.default_history_points || 150)"
-                @update-attr="({ key, value }) => updateRenderAttr(key, value)"
-              />
-            </n-card>
-          </div>
+          <style-manager-form
+            scope="item"
+            :item-type="selectedType"
+            :model="resolveItemStyle(selectedItem)"
+            :style-keys="meta.style_keys || []"
+            :label-width="92"
+            :cols="1"
+            :disabled="readonlyProfile"
+            @update-style="updateItemStyle"
+            @remove-style="removeItemStyle"
+          />
         </template>
 
         <n-divider style="margin: 8px 0" />

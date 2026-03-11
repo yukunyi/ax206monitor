@@ -1356,6 +1356,7 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.system.output.avg_ms",
 		"go_native.system.output.memimg.max_ms",
 		"go_native.system.output.memimg.avg_ms",
+		"go_native.system.output.ax206usb.last_ms",
 		"go_native.system.output.ax206usb.max_ms",
 		"go_native.system.output.ax206usb.avg_ms",
 	}

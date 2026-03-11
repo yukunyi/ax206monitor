@@ -120,28 +120,6 @@ func drawRoundedBackground(dc *gg.Context, x, y, width, height int, bgColor stri
 	dc.Fill()
 }
 
-func drawItemBorder(dc *gg.Context, item *ItemConfig) {
-	if item.BorderWidth <= 0 {
-		return
-	}
-	borderColor := item.BorderColor
-	if borderColor == "" {
-		borderColor = "#475569"
-	}
-	radius := float64(item.Radius)
-	if radius < 0 {
-		radius = 0
-	}
-	dc.SetColor(parseColor(borderColor))
-	dc.SetLineWidth(item.BorderWidth)
-	if radius > 0 {
-		dc.DrawRoundedRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height), radius)
-	} else {
-		dc.DrawRectangle(float64(item.X), float64(item.Y), float64(item.Width), float64(item.Height))
-	}
-	dc.Stroke()
-}
-
 func drawCenteredText(dc *gg.Context, text string, x, y, width, height int, fontSize int, textColor string, fontCache *FontCache) {
 	if text == "" {
 		return
@@ -227,27 +205,20 @@ func canUseItemCustomStyle(item *ItemConfig, config *MonitorConfig) bool {
 }
 
 func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) {
-		if item.LargeFontSize > 0 {
-			return item.LargeFontSize
-		}
-		if item.FontSize > 0 {
-			return item.FontSize
-		}
+	size := resolveStyleInt(item, config, "large_font_size", 0)
+	if size > 0 {
+		return size
 	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.LargeFontSize > 0 {
-			return defaults.LargeFontSize
-		}
-		if defaults := config.GetTypeDefaults(item.Type); defaults.FontSize > 0 {
-			return defaults.FontSize
-		}
+	if fallback > 0 {
+		return fallback
 	}
-	if config != nil && config.GetDefaultValueFontSize() > 0 {
-		return config.GetDefaultValueFontSize()
-	}
-	if config != nil && config.GetDefaultFontSize() > 0 {
-		return config.GetDefaultFontSize()
+	return 16
+}
+
+func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
+	size := resolveStyleInt(item, config, "medium_font_size", 0)
+	if size > 0 {
+		return size
 	}
 	if fallback > 0 {
 		return fallback
@@ -255,25 +226,10 @@ func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) 
 	return 14
 }
 
-func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) {
-		if item.MediumFontSize > 0 {
-			return item.MediumFontSize
-		}
-		if item.FontSize > 0 {
-			return item.FontSize
-		}
-	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.MediumFontSize > 0 {
-			return defaults.MediumFontSize
-		}
-		if defaults := config.GetTypeDefaults(item.Type); defaults.FontSize > 0 {
-			return defaults.FontSize
-		}
-	}
-	if config != nil && config.GetDefaultLabelFontSize() > 0 {
-		return config.GetDefaultLabelFontSize()
+func resolveUnitFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
+	size := resolveStyleInt(item, config, "small_font_size", 0)
+	if size > 0 {
+		return size
 	}
 	if fallback > 0 {
 		return fallback
@@ -281,73 +237,22 @@ func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int)
 	return 12
 }
 
-func resolveUnitFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if canUseItemCustomStyle(item, config) {
-		if item.SmallFontSize > 0 {
-			return item.SmallFontSize
-		}
-		if item.UnitFontSize > 0 {
-			return item.UnitFontSize
-		}
-	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.SmallFontSize > 0 {
-			return defaults.SmallFontSize
-		}
-		if defaults := config.GetTypeDefaults(item.Type); defaults.UnitFontSize > 0 {
-			return defaults.UnitFontSize
-		}
-	}
-	if config != nil && config.GetDefaultUnitFontSize() > 0 {
-		return config.GetDefaultUnitFontSize()
-	}
-	if fallback > 0 {
-		return fallback
-	}
-	return 10
-}
-
 func resolveItemBackground(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
 		return ""
 	}
-	if canUseItemCustomStyle(item, config) && strings.TrimSpace(item.Background) != "" {
-		return strings.TrimSpace(item.Background)
+	bg := strings.TrimSpace(resolveStyleColor(item, config, "bg", "rgba(0,0,0,0)"))
+	if bg == "rgba(0,0,0,0)" {
+		return ""
 	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); strings.TrimSpace(defaults.Background) != "" {
-			return strings.TrimSpace(defaults.Background)
-		}
-	}
-	if item != nil && isShapeItemType(item.Type) {
-		return "#33415566"
-	}
-	if item != nil && isFullItemType(item.Type) {
-		return "#111827c8"
-	}
-	_ = config
-	return ""
+	return bg
 }
 
 func resolveItemStaticColor(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
-		if config != nil {
-			return config.GetDefaultTextColor()
-		}
 		return "#f8fafc"
 	}
-	if canUseItemCustomStyle(item, config) && strings.TrimSpace(item.Color) != "" {
-		return strings.TrimSpace(item.Color)
-	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); strings.TrimSpace(defaults.Color) != "" {
-			return strings.TrimSpace(defaults.Color)
-		}
-	}
-	if config != nil {
-		return config.GetDefaultTextColor()
-	}
-	return "#f8fafc"
+	return resolveStyleColor(item, config, "color", "#f8fafc")
 }
 
 func resolveUnitOverride(item *ItemConfig) string {
@@ -362,9 +267,6 @@ func resolveUnitOverride(item *ItemConfig) string {
 }
 
 func resolveMonitorColor(item *ItemConfig, monitor *CollectItem, config *MonitorConfig) string {
-	if canUseItemCustomStyle(item, config) && strings.TrimSpace(item.Color) != "" {
-		return strings.TrimSpace(item.Color)
-	}
 	if monitor == nil {
 		return resolveItemStaticColor(item, config)
 	}
@@ -461,18 +363,9 @@ func isTemperatureMetric(item *ItemConfig, monitorValue *CollectValue) bool {
 }
 
 func resolveUnitColor(item *ItemConfig, config *MonitorConfig, fallback string) string {
-	if item == nil {
-		if strings.TrimSpace(fallback) != "" {
-			return strings.TrimSpace(fallback)
-		}
-		return "#f8fafc"
-	}
-	if canUseItemCustomStyle(item, config) && strings.TrimSpace(item.UnitColor) != "" {
-		return strings.TrimSpace(item.UnitColor)
-	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); strings.TrimSpace(defaults.UnitColor) != "" {
-			return strings.TrimSpace(defaults.UnitColor)
+	if item != nil {
+		if color := strings.TrimSpace(resolveStyleColor(item, config, "unit_color", "")); color != "" {
+			return color
 		}
 	}
 	if strings.TrimSpace(fallback) != "" {
@@ -485,30 +378,18 @@ func resolveItemBorderWidth(item *ItemConfig, config *MonitorConfig) float64 {
 	if item == nil {
 		return 0
 	}
-	if canUseItemCustomStyle(item, config) && item.BorderWidth > 0 {
-		return item.BorderWidth
+	width := resolveStyleFloat(item, config, "border_width", 0)
+	if width < 0 {
+		width = 0
 	}
-	if config != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.BorderWidth > 0 {
-			return defaults.BorderWidth
-		}
-	}
-	return 0
+	return width
 }
 
 func resolveItemBorderColor(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
 		return "#475569"
 	}
-	if canUseItemCustomStyle(item, config) && strings.TrimSpace(item.BorderColor) != "" {
-		return strings.TrimSpace(item.BorderColor)
-	}
-	if config != nil {
-		if defaults := config.GetTypeDefaults(item.Type); strings.TrimSpace(defaults.BorderColor) != "" {
-			return strings.TrimSpace(defaults.BorderColor)
-		}
-	}
-	return "#475569"
+	return resolveStyleColor(item, config, "border_color", "#475569")
 }
 
 func resolveItemRadius(item *ItemConfig, config *MonitorConfig, fallback int) float64 {
@@ -518,13 +399,9 @@ func resolveItemRadius(item *ItemConfig, config *MonitorConfig, fallback int) fl
 		}
 		return float64(fallback)
 	}
-	if canUseItemCustomStyle(item, config) && item.Radius > 0 {
-		return float64(item.Radius)
-	}
-	if config != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.Radius > 0 {
-			return float64(defaults.Radius)
-		}
+	radius := resolveStyleInt(item, config, "radius", 0)
+	if radius > 0 {
+		return float64(radius)
 	}
 	if fallback < 0 {
 		return 0
@@ -533,34 +410,12 @@ func resolveItemRadius(item *ItemConfig, config *MonitorConfig, fallback int) fl
 }
 
 func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	if item != nil {
-		attrPoints := getItemAttrIntCfg(item, config, "history_points", 0)
-		if attrPoints > 0 {
-			if attrPoints < 10 {
-				return 10
-			}
-			return attrPoints
-		}
-	}
-	if canUseItemCustomStyle(item, config) && item != nil && item.PointSize > 0 {
-		if item.PointSize < 10 {
+	points := resolveStyleInt(item, config, "history_points", 0)
+	if points > 0 {
+		if points < 10 {
 			return 10
 		}
-		return item.PointSize
-	}
-	if config != nil && item != nil {
-		if defaults := config.GetTypeDefaults(item.Type); defaults.PointSize > 0 {
-			if defaults.PointSize < 10 {
-				return 10
-			}
-			return defaults.PointSize
-		}
-	}
-	if config != nil {
-		points := config.GetDefaultHistoryPoints()
-		if points > 0 {
-			return points
-		}
+		return points
 	}
 	if fallback < 10 {
 		return 10
@@ -569,42 +424,21 @@ func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback 
 }
 
 func effectiveLevelColors(item *ItemConfig, config *MonitorConfig) []string {
-	candidate := make([]string, 0, 4)
-	if canUseItemCustomStyle(item, config) {
-		for _, color := range item.LevelColors {
-			trimmed := strings.TrimSpace(color)
-			if trimmed != "" {
-				candidate = append(candidate, trimmed)
-			}
-		}
+	colors := resolveStyleLevelColors(item, config)
+	for len(colors) < 4 {
+		colors = append(colors, colors[len(colors)-1])
 	}
-	if len(candidate) == 0 && config != nil {
-		candidate = append(candidate, config.GetLevelColors()...)
+	if len(colors) > 4 {
+		colors = colors[:4]
 	}
-	if len(candidate) == 0 {
-		candidate = append(candidate, defaultLevelColors()...)
-	}
-	for len(candidate) < 4 {
-		candidate = append(candidate, candidate[len(candidate)-1])
-	}
-	if len(candidate) > 4 {
-		candidate = candidate[:4]
-	}
-	return candidate
+	return colors
 }
 
 func effectiveThresholds(item *ItemConfig, minValue, maxValue float64, config *MonitorConfig) []float64 {
-	if canUseItemCustomStyle(item, config) {
-		thresholds := normalizeThresholds(item.Thresholds, minValue, maxValue)
-		if len(thresholds) == 4 {
-			return thresholds
-		}
-	}
-	if config != nil {
-		thresholds := normalizeThresholds(config.DefaultThresholds, minValue, maxValue)
-		if len(thresholds) == 4 {
-			return thresholds
-		}
+	percentages := resolveStyleThresholdsPercent(item, config)
+	thresholds := normalizeThresholds(percentages, minValue, maxValue)
+	if len(thresholds) == 4 {
+		return thresholds
 	}
 	return buildAverageThresholds(minValue, maxValue)
 }

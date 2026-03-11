@@ -22,50 +22,6 @@ func getItemAttr(item *ItemConfig, key string) (interface{}, bool) {
 	return value, exists
 }
 
-var styleRenderAttrKeySet = map[string]struct{}{
-	"content_padding":         {},
-	"value_font_size":         {},
-	"label_font_size":         {},
-	"meta_font_size":          {},
-	"title_font_size":         {},
-	"header_divider":          {},
-	"header_divider_width":    {},
-	"header_divider_offset":   {},
-	"header_divider_color":    {},
-	"body_gap":                {},
-	"history_points":          {},
-	"show_segment_lines":      {},
-	"show_grid_lines":         {},
-	"grid_lines":              {},
-	"enable_threshold_colors": {},
-	"line_width":              {},
-	"show_avg_line":           {},
-	"chart_color":             {},
-	"chart_area_bg":           {},
-	"chart_area_border_color": {},
-	"progress_style":          {},
-	"bar_height":              {},
-	"bar_radius":              {},
-	"track_color":             {},
-	"segments":                {},
-	"segment_gap":             {},
-	"card_radius":             {},
-	"gauge_thickness":         {},
-	"gauge_gap_degrees":       {},
-	"gauge_text_gap":          {},
-	"ring_thickness":          {},
-	"main_font_size":          {},
-	"ticks":                   {},
-	"cells":                   {},
-	"cell_gap":                {},
-	"line_orientation":        {},
-}
-
-func isStyleRenderAttrKey(key string) bool {
-	_, exists := styleRenderAttrKeySet[key]
-	return exists
-}
-
 func getTypeDefaultAttr(config *MonitorConfig, itemType, key string) (interface{}, bool) {
 	if config == nil {
 		return nil, false
@@ -79,10 +35,16 @@ func getTypeDefaultAttr(config *MonitorConfig, itemType, key string) (interface{
 }
 
 func getItemAttrWithDefaults(item *ItemConfig, config *MonitorConfig, key string) (interface{}, bool) {
-	if value, exists := getItemAttr(item, key); exists {
-		if !isStyleRenderAttrKey(key) || canUseItemCustomStyle(item, config) {
+	if isStyleRenderAttrKey(key) {
+		if value, exists := resolveStyleRaw(item, config, key); exists {
 			return value, true
 		}
+		if item != nil {
+			return nil, false
+		}
+	}
+	if value, exists := getItemAttr(item, key); exists {
+		return value, true
 	}
 	if item == nil {
 		return nil, false

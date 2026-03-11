@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -85,70 +83,8 @@ func detectPrimaryDisplayInfoWindows() (int, int, float64, bool) {
 }
 
 func detectPrimaryDisplayInfoLinux() (int, int, float64, bool) {
-	if width, height, refresh, ok := detectDisplayByXrandr(); ok {
-		return width, height, refresh, true
-	}
 	if width, height, ok := detectDisplayByDRMMode(); ok {
 		return width, height, 0, true
-	}
-	return 0, 0, 0, false
-}
-
-func detectDisplayByXrandr() (int, int, float64, bool) {
-	if _, err := exec.LookPath("xrandr"); err != nil {
-		return 0, 0, 0, false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "xrandr", "--current")
-	output, err := cmd.Output()
-	if err != nil || len(output) == 0 {
-		return 0, 0, 0, false
-	}
-
-	lines := strings.Split(string(output), "\n")
-	onConnected := false
-	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, " connected") {
-			onConnected = true
-			continue
-		}
-		if !onConnected {
-			continue
-		}
-		if strings.HasPrefix(line, "Screen ") || strings.Contains(line, " disconnected") {
-			onConnected = false
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		dims := strings.SplitN(fields[0], "x", 2)
-		if len(dims) != 2 {
-			continue
-		}
-		width, errW := strconv.Atoi(dims[0])
-		height, errH := strconv.Atoi(dims[1])
-		if errW != nil || errH != nil || width <= 0 || height <= 0 {
-			continue
-		}
-		refresh := 0.0
-		for _, token := range fields[1:] {
-			if !strings.Contains(token, "*") {
-				continue
-			}
-			token = strings.Trim(token, "+*")
-			if val, err := strconv.ParseFloat(token, 64); err == nil && val > 0 {
-				refresh = val
-				break
-			}
-		}
-		return width, height, refresh, true
 	}
 	return 0, 0, 0, false
 }
@@ -199,12 +135,4 @@ func formatDisplayRefresh(refresh float64) string {
 		return itoa(int(refresh+0.5)) + "Hz"
 	}
 	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(refresh, 'f', 2, 64), "0"), ".") + "Hz"
-}
-
-func parseFloat64(raw string) float64 {
-	val, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil {
-		return 0
-	}
-	return val
 }

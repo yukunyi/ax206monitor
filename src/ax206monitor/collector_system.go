@@ -31,6 +31,7 @@ func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
 		c.setItem("go_native.system.output.avg_ms", NewCollectItem("go_native.system.output.avg_ms", "Output avg duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.output.memimg.max_ms", NewCollectItem("go_native.system.output.memimg.max_ms", "Output memimg max duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.output.memimg.avg_ms", NewCollectItem("go_native.system.output.memimg.avg_ms", "Output memimg avg duration", "ms", 0, 0, 0))
+		c.setItem("go_native.system.output.ax206usb.last_ms", NewCollectItem("go_native.system.output.ax206usb.last_ms", "AX206 refresh duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.output.ax206usb.max_ms", NewCollectItem("go_native.system.output.ax206usb.max_ms", "Output ax206usb max duration", "ms", 0, 0, 0))
 		c.setItem("go_native.system.output.ax206usb.avg_ms", NewCollectItem("go_native.system.output.ax206usb.avg_ms", "Output ax206usb avg duration", "ms", 0, 0, 0))
 	}
@@ -90,7 +91,7 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 	setSystemMetricItem(c.getItem("go_native.system.output.avg_ms"), stats.OutputAvgMS)
 
 	setOutputTypeMetric(c, "memimg", stats.OutputStats)
-	setOutputTypeMetric(c, "ax206usb", stats.OutputStats)
+	setAX206DeviceOutputMetrics(c, GetAX206DeviceFrameRuntimeStats())
 	return err
 }
 
@@ -106,23 +107,76 @@ func setOutputTypeMetric(c *GoNativeSystemCollector, typeName string, stats map[
 	if c == nil {
 		return
 	}
+	lastKey := "go_native.system.output." + strings.ToLower(typeName) + ".last_ms"
 	maxKey := "go_native.system.output." + strings.ToLower(typeName) + ".max_ms"
 	avgKey := "go_native.system.output." + strings.ToLower(typeName) + ".avg_ms"
+	lastItem := c.getItem(lastKey)
 	maxItem := c.getItem(maxKey)
 	avgItem := c.getItem(avgKey)
-	if maxItem == nil || avgItem == nil {
+	if lastItem == nil && maxItem == nil && avgItem == nil {
 		return
 	}
 	entry, ok := stats[typeName]
 	if !ok {
-		maxItem.SetAvailable(false)
-		avgItem.SetAvailable(false)
+		if lastItem != nil {
+			lastItem.SetAvailable(false)
+		}
+		if maxItem != nil {
+			maxItem.SetAvailable(false)
+		}
+		if avgItem != nil {
+			avgItem.SetAvailable(false)
+		}
 		return
 	}
-	maxItem.SetValue(entry.MaxMS)
-	maxItem.SetAvailable(true)
-	avgItem.SetValue(entry.AvgMS)
-	avgItem.SetAvailable(true)
+	if lastItem != nil {
+		lastItem.SetValue(entry.LastMS)
+		lastItem.SetAvailable(true)
+	}
+	if maxItem != nil {
+		maxItem.SetValue(entry.MaxMS)
+		maxItem.SetAvailable(true)
+	}
+	if avgItem != nil {
+		avgItem.SetValue(entry.AvgMS)
+		avgItem.SetAvailable(true)
+	}
+}
+
+func setAX206DeviceOutputMetrics(c *GoNativeSystemCollector, stats AX206DeviceFrameRuntimeStats) {
+	if c == nil {
+		return
+	}
+	lastItem := c.getItem("go_native.system.output.ax206usb.last_ms")
+	maxItem := c.getItem("go_native.system.output.ax206usb.max_ms")
+	avgItem := c.getItem("go_native.system.output.ax206usb.avg_ms")
+	if lastItem == nil && maxItem == nil && avgItem == nil {
+		return
+	}
+	if stats.Calls <= 0 {
+		if lastItem != nil {
+			lastItem.SetAvailable(false)
+		}
+		if maxItem != nil {
+			maxItem.SetAvailable(false)
+		}
+		if avgItem != nil {
+			avgItem.SetAvailable(false)
+		}
+		return
+	}
+	if lastItem != nil {
+		lastItem.SetValue(stats.LastMS)
+		lastItem.SetAvailable(true)
+	}
+	if maxItem != nil {
+		maxItem.SetValue(stats.MaxMS)
+		maxItem.SetAvailable(true)
+	}
+	if avgItem != nil {
+		avgItem.SetValue(stats.AvgMS)
+		avgItem.SetAvailable(true)
+	}
 }
 
 func updateSystemDisplayItems(c *GoNativeSystemCollector) {

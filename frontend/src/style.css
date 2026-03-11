@@ -370,6 +370,21 @@ body {
   width: 116px;
 }
 
+.basic_tab .basic_color_row {
+  align-items: center;
+}
+
+.basic_tab .basic_color_item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.basic_tab .basic_color_item .n-text {
+  min-width: 38px;
+  font-size: 12px;
+}
+
 .basic_tab .collector_table .n-input {
   width: min(100%, 320px);
 }
@@ -383,10 +398,53 @@ body {
   vertical-align: middle;
 }
 
+.global_defaults_modal .n-card {
+  max-height: 86vh;
+}
+
+.global_defaults_table_wrap {
+  max-height: min(72vh, 680px);
+  overflow: auto;
+}
+
+.global_defaults_value {
+  white-space: normal;
+  word-break: break-all;
+}
+
+.global_defaults_value_inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.global_defaults_swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.global_defaults_swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.85);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.22) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.22) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.22) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.22) 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
+}
+
 .type_defaults_tab .type_default_groups {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.type_defaults_tab .default_style_card {
+  margin-bottom: 8px;
 }
 
 .type_defaults_tab .type_default_flat {
@@ -588,6 +646,49 @@ body {
   margin-bottom: 0;
 }
 
+.style_manager_form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.style_manager_add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.style_manager_add .style_manager_add_select,
+.style_manager_add .style_manager_add_select .n-base-selection {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.style_field_row {
+  width: 100%;
+}
+
+.style_field_row > *:first-child {
+  flex: 1;
+}
+
+.style_field_row .n-input,
+.style_field_row .n-input-number,
+.style_field_row .n-base-selection {
+  width: 100%;
+  max-width: none;
+}
+
+.array_inputs {
+  width: 100%;
+}
+
+.array_inputs > * {
+  flex: 1;
+}
+
 .nudge_cross {
   display: flex;
   flex-direction: column;
@@ -657,6 +758,41 @@ body {
 
 .runtime_meta > .n-card-content {
   overflow: auto;
+}
+
+.runtime_sys_list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.runtime_sys_row {
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 6px;
+  padding: 5px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.runtime_sys_name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--ui-text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime_sys_value {
+  font-size: 13px;
+  line-height: 1.2;
+  color: #f3f4f6;
+  white-space: nowrap;
 }
 
 .runtime_values .n-card-content {

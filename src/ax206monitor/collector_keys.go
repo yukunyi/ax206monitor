@@ -13,10 +13,6 @@ const (
 	collectorCoolerControl        = "coolercontrol"
 	collectorLibreHardwareMonitor = "librehardwaremonitor"
 	collectorRTSS                 = "rtss"
-
-	legacyCollectorCoolerControl        = "external.coolercontrol"
-	legacyCollectorLibreHardwareMonitor = "external.librehardwaremonitor"
-	legacyCollectorRTSS                 = "external.rtss"
 )
 
 func isCollectorSupportedOnCurrentPlatform(name string) bool {

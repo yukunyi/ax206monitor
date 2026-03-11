@@ -6,6 +6,7 @@ import BasicTab from "./components/basic_tab.vue";
 import ElementsTab from "./components/elements_tab.vue";
 import TypeDefaultsTab from "./components/type_defaults_tab.vue";
 import RuntimeTab from "./components/runtime_tab.vue";
+import { normalizeStyleKeys } from "./style_keys";
 
 const state = reactive({
   loading: true,
@@ -80,62 +81,6 @@ const MONITOR_REQUIRED_TYPES = new Set([
   "full_gauge",
 ]);
 
-const ITEM_STYLE_FIELDS = new Set([
-  "font_size",
-  "small_font_size",
-  "medium_font_size",
-  "large_font_size",
-  "color",
-  "bg",
-  "unit_color",
-  "unit_font_size",
-  "border_width",
-  "border_color",
-  "radius",
-  "point_size",
-  "thresholds",
-  "level_colors",
-]);
-
-const STYLE_RENDER_ATTR_FIELDS = new Set([
-  "content_padding",
-  "value_font_size",
-  "label_font_size",
-  "meta_font_size",
-  "title_font_size",
-  "header_divider",
-  "header_divider_width",
-  "header_divider_offset",
-  "header_divider_color",
-  "body_gap",
-  "history_points",
-  "show_segment_lines",
-  "show_grid_lines",
-  "grid_lines",
-  "enable_threshold_colors",
-  "line_width",
-  "line_orientation",
-  "show_avg_line",
-  "chart_color",
-  "chart_area_bg",
-  "chart_area_border_color",
-  "progress_style",
-  "bar_height",
-  "bar_radius",
-  "track_color",
-  "segments",
-  "segment_gap",
-  "card_radius",
-  "gauge_thickness",
-  "gauge_gap_degrees",
-  "gauge_text_gap",
-  "ring_thickness",
-  "main_font_size",
-  "ticks",
-  "cells",
-  "cell_gap",
-]);
-
 const ITEM_TYPE_LABELS = {
   simple_value: "基础数值",
   simple_progress: "基础进度条",
@@ -148,66 +93,6 @@ const ITEM_TYPE_LABELS = {
   full_chart: "复杂图表",
   full_progress: "复杂进度条",
   full_gauge: "复杂仪表盘",
-};
-
-const DEFAULT_TYPE_RENDER_ATTRS = {
-  simple_line_chart: {
-    history_points: 150,
-    line_width: 1.5,
-    enable_threshold_colors: false,
-  },
-  simple_line: {
-    line_orientation: "horizontal",
-    line_width: 1,
-  },
-  label_text: {
-    content_padding: 3,
-  },
-  full_chart: {
-    content_padding: 1,
-    body_gap: 4,
-    title_font_size: 14,
-    value_font_size: 16,
-    header_divider: true,
-    header_divider_width: 1,
-    header_divider_offset: 3,
-    header_divider_color: "#94a3b840",
-    history_points: 150,
-    show_segment_lines: true,
-    show_grid_lines: true,
-    grid_lines: 4,
-    enable_threshold_colors: false,
-    line_width: 2,
-    show_avg_line: true,
-    chart_color: "#38bdf8",
-    chart_area_bg: "",
-    chart_area_border_color: "",
-  },
-  full_progress: {
-    content_padding: 1,
-    body_gap: 0,
-    title_font_size: 14,
-    value_font_size: 16,
-    header_divider: true,
-    header_divider_width: 1,
-    header_divider_offset: 3,
-    header_divider_color: "#94a3b840",
-    progress_style: "gradient",
-    bar_height: 0,
-    bar_radius: 0,
-    track_color: "#1f2937",
-    segments: 12,
-    segment_gap: 2,
-  },
-  full_gauge: {
-    content_padding: 1,
-    value_font_size: 16,
-    label_font_size: 14,
-    gauge_thickness: 10,
-    gauge_gap_degrees: 76,
-    gauge_text_gap: 4,
-    track_color: "#1f2937",
-  },
 };
 
 const ALIAS_LABELS = {
@@ -342,7 +227,7 @@ const visibleTabs = computed(() => {
   return [
     { key: "basic", label: "基础配置" },
     { key: "elements", label: "屏幕元素" },
-    { key: "type-defaults", label: "类型默认参数" },
+    { key: "type-defaults", label: "样式管理" },
     { key: "collection", label: "采集运行态" },
   ];
 });
@@ -430,109 +315,52 @@ function pushUndoSnapshot(operation = "") {
   }
 }
 
-function normalizeThresholds(raw) {
-  const source = Array.isArray(raw) ? raw : [];
-  const fallback = [25, 50, 75, 100];
-  const result = [];
-  for (let i = 0; i < 4; i += 1) {
-    const n = Number(source[i]);
-    result.push(Number.isFinite(n) ? n : fallback[i]);
-  }
+function buildStyleKeySet(styleKeys) {
+  const set = new Set();
+  normalizeStyleKeys(styleKeys).forEach((meta) => {
+    if (meta.key) set.add(meta.key);
+  });
+  return set;
+}
+
+function normalizeStyleMap(raw, styleKeySet) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const result = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const name = String(key || "").trim();
+    if (!name || !styleKeySet.has(name)) return;
+    result[name] = value;
+  });
   return result;
 }
 
-function normalizeLevelColors(raw) {
-  const source = Array.isArray(raw) ? raw : [];
-  const fallback = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-  const result = [];
-  for (let i = 0; i < 4; i += 1) {
-    const text = String(source[i] || "").trim();
-    result.push(text || fallback[i]);
-  }
+function normalizeRenderAttrs(raw, styleKeySet) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const result = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const name = String(key || "").trim();
+    if (!name || styleKeySet.has(name)) return;
+    result[name] = value;
+  });
   return result;
 }
 
-function normalizeProgressStyle(raw) {
-  const value = String(raw || "").trim().toLowerCase();
-  if (value === "solid" || value === "segmented" || value === "stripes") {
-    return value;
-  }
-  return "gradient";
-}
-
-function defaultTypeStyle(type, config) {
-  const kind = String(type || "").trim();
-  const isShape = kind === "simple_rect" || kind === "simple_circle";
-  const isFull = kind.startsWith("full_");
-  const isHistory = kind === "simple_line_chart";
-  return {
-    font_size: 0,
-    small_font_size: 0,
-    medium_font_size: 0,
-    large_font_size: 0,
-    color: String(config.default_color || "#f8fafc"),
-    bg: isShape ? "#33415566" : isFull ? "#111827c8" : "",
-    unit_color: String(config.default_color || "#f8fafc"),
-    unit_font_size: 0,
-    point_size: isHistory ? Math.max(10, Number(config.default_history_points || 150)) : 0,
-    border_color: "#475569",
-    border_width: 0,
-    radius: 0,
-    render_attrs_map: {},
-  };
-}
-
-function normalizeTypeDefaults(raw, config) {
+function normalizeTypeDefaults(raw, styleKeySet) {
   const source = raw && typeof raw === "object" ? raw : {};
   const result = {};
   DEFAULT_ITEM_TYPES.forEach((type) => {
-    const base = defaultTypeStyle(type, config);
     const input = source[type] && typeof source[type] === "object" ? source[type] : {};
-    const attrsInput =
-      input.render_attrs_map && typeof input.render_attrs_map === "object" ? input.render_attrs_map : {};
-    const attrsBase = {
-      ...(DEFAULT_TYPE_RENDER_ATTRS[type] || {}),
-    };
-    if (type === "full_chart") {
-      attrsBase.title_font_size = Number(config.default_label_font_size || attrsBase.title_font_size || 14);
-      attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
-      attrsBase.history_points = Math.max(10, Number(config.default_history_points || attrsBase.history_points || 150));
-    }
-    if (type === "simple_line_chart") {
-      const rawHistory =
-        attrsInput.history_points ??
-        input.point_size ??
-        config.default_history_points ??
-        attrsBase.history_points ??
-        150;
-      attrsBase.history_points = Math.max(10, Number(rawHistory || 0));
-    }
-    if (type === "full_progress") {
-      attrsBase.title_font_size = Number(config.default_label_font_size || attrsBase.title_font_size || 14);
-      attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
-      attrsBase.progress_style = normalizeProgressStyle(attrsInput.progress_style ?? attrsBase.progress_style);
-    }
-    if (type === "full_gauge") {
-      attrsBase.value_font_size = Number(config.default_value_font_size || attrsBase.value_font_size || 16);
-      attrsBase.label_font_size = Number(config.default_label_font_size || attrsBase.label_font_size || 14);
-    }
-    const smallFontSize = Number(input.small_font_size ?? input.unit_font_size ?? base.small_font_size ?? 0);
-    const mediumFontSize = Number(input.medium_font_size ?? input.font_size ?? base.medium_font_size ?? 0);
-    const largeFontSize = Number(input.large_font_size ?? input.font_size ?? base.large_font_size ?? 0);
     result[type] = {
-      font_size: 0,
-      small_font_size: Math.max(0, Number.isFinite(smallFontSize) ? smallFontSize : 0),
-      medium_font_size: Math.max(0, Number.isFinite(mediumFontSize) ? mediumFontSize : 0),
-      large_font_size: Math.max(0, Number.isFinite(largeFontSize) ? largeFontSize : 0),
-      color: String(input.color ?? base.color ?? ""),
-      bg: String(input.bg ?? base.bg ?? ""),
-      unit_color: String(input.unit_color ?? base.unit_color ?? ""),
-      unit_font_size: 0,
-      point_size: Math.max(0, Number(input.point_size ?? base.point_size ?? 0)),
-      border_color: String(input.border_color ?? base.border_color ?? ""),
-      border_width: Math.max(0, Number(input.border_width ?? base.border_width ?? 0)),
-      radius: Math.max(0, Number(input.radius ?? base.radius ?? 0)),
-      render_attrs_map: { ...attrsBase, ...attrsInput },
+      render_attrs_map: normalizeRenderAttrs(input.render_attrs_map, styleKeySet),
+      style: normalizeStyleMap(input.style, styleKeySet),
+    };
+  });
+  Object.keys(source).forEach((type) => {
+    if (result[type]) return;
+    const input = source[type] && typeof source[type] === "object" ? source[type] : {};
+    result[type] = {
+      render_attrs_map: normalizeRenderAttrs(input.render_attrs_map, styleKeySet),
+      style: normalizeStyleMap(input.style, styleKeySet),
     };
   });
   return result;
@@ -614,7 +442,8 @@ function ensureCollectorEntry(config, collectorName) {
   }
 }
 
-function normalizeConfig(cfg) {
+function normalizeConfig(cfg, styleKeysRaw = []) {
+  const styleKeySet = buildStyleKeySet(styleKeysRaw);
   const config = deepClone(cfg || {});
   config.name = String(config.name || "web");
   config.width = Math.max(10, Number(config.width || 480));
@@ -623,27 +452,16 @@ function normalizeConfig(cfg) {
   config.refresh_interval = Math.max(100, Number(config.refresh_interval || 1000));
   config.collect_warn_ms = Math.max(10, Number(config.collect_warn_ms || 100));
   config.render_wait_max_ms = Math.max(0, Number(config.render_wait_max_ms || 300));
+  config.ax206_reconnect_ms = Math.min(60000, Math.max(100, Number(config.ax206_reconnect_ms || 3000)));
   config.history_size = Math.max(10, Number(config.history_size || 180));
   config.default_history_points = Math.max(10, Number(config.default_history_points || 150));
-  config.monitor_auto_tune = false;
-  config.monitor_auto_tune_interval_sec = 0;
-  config.monitor_auto_tune_slow_rate = 0;
-  config.monitor_auto_tune_stable_runs = 0;
-  config.monitor_auto_tune_max_scale = 0;
   config.default_font = String(config.default_font || "");
-  config.default_color = String(config.default_color || "#f8fafc");
-  config.default_background = String(config.default_background || "#0b1220");
-  config.default_thresholds = normalizeThresholds(config.default_thresholds);
-  config.level_colors = normalizeLevelColors(config.level_colors);
+  config.style_base = normalizeStyleMap(config.style_base, styleKeySet);
   config.allow_custom_style = config.allow_custom_style === true;
-  config.default_font_size = Number(config.default_font_size || 14);
-  config.default_value_font_size = Number(config.default_value_font_size || 16);
-  config.default_label_font_size = Number(config.default_label_font_size || 14);
-  config.default_unit_font_size = Number(config.default_unit_font_size || 12);
   config.font_families = Array.isArray(config.font_families) ? config.font_families : [];
   config.output_types = Array.isArray(config.output_types) ? config.output_types : ["memimg"];
   config.pause_collect_on_lock = config.pause_collect_on_lock === true;
-  config.type_defaults = normalizeTypeDefaults(config.type_defaults, config);
+  config.type_defaults = normalizeTypeDefaults(config.type_defaults, styleKeySet);
   config.items = Array.isArray(config.items) ? config.items : [];
   const itemIdSet = new Set();
   config.items = config.items.map((item) => {
@@ -654,27 +472,8 @@ function normalizeConfig(cfg) {
     }
     itemIdSet.add(next.id);
     next.custom_style = config.allow_custom_style ? next.custom_style === true : false;
-    next.small_font_size = Math.max(0, Number(next.small_font_size || 0));
-    next.medium_font_size = Math.max(0, Number(next.medium_font_size || 0));
-    next.large_font_size = Math.max(0, Number(next.large_font_size || 0));
-    if (String(next.type || "") === "full_progress") {
-      const attrs = next.render_attrs_map && typeof next.render_attrs_map === "object" ? { ...next.render_attrs_map } : {};
-      attrs.progress_style = normalizeProgressStyle(attrs.progress_style);
-      next.render_attrs_map = attrs;
-    }
-    if (String(next.type || "") === "full_gauge") {
-      const attrs = next.render_attrs_map && typeof next.render_attrs_map === "object" ? { ...next.render_attrs_map } : {};
-      if (attrs.gauge_gap_degrees !== undefined) {
-        attrs.gauge_gap_degrees = Math.max(20, Math.min(260, Number(attrs.gauge_gap_degrees || 0)));
-      }
-      if (attrs.gauge_thickness !== undefined) {
-        attrs.gauge_thickness = Math.max(2, Number(attrs.gauge_thickness || 0));
-      }
-      if (attrs.gauge_text_gap !== undefined) {
-        attrs.gauge_text_gap = Math.max(0, Number(attrs.gauge_text_gap || 0));
-      }
-      next.render_attrs_map = attrs;
-    }
+    next.style = normalizeStyleMap(next.style, styleKeySet);
+    next.render_attrs_map = normalizeRenderAttrs(next.render_attrs_map, styleKeySet);
     return next;
   });
   config.custom_monitors = Array.isArray(config.custom_monitors) ? config.custom_monitors : [];
@@ -698,18 +497,9 @@ function createDefaultItem(type = "simple_value", monitor = "") {
     y: 10,
     width: isSimpleLine ? 160 : isFullGauge ? 150 : 140,
     height: isSimpleLine ? 12 : isFullGauge ? 120 : 36,
-    font_size: 0,
-    small_font_size: 0,
-    medium_font_size: 0,
-    large_font_size: 0,
-    color: "",
-    bg: "",
     unit: "auto",
-    unit_color: "",
-    unit_font_size: 0,
-    border_width: 0,
-    radius: 0,
-    point_size: 0,
+    style: {},
+    render_attrs_map: {},
   };
 }
 
@@ -722,7 +512,7 @@ function undoLastChange() {
   if (readonlyProfile.value || state.saving || undoStack.value.length <= 0) return;
   const last = undoStack.value.pop();
   if (!last?.config) return;
-  state.config = normalizeConfig(last.config);
+  state.config = normalizeConfig(last.config, state.meta?.style_keys || []);
   mergeConfigMonitors(state.config);
   normalizeSelection();
   const currentJson = serializeConfig(state.config);
@@ -734,7 +524,7 @@ function undoLastChange() {
 function restoreUnsavedChanges() {
   if (readonlyProfile.value || state.saving || !state.dirty) return;
   if (!committedConfig.value) return;
-  state.config = normalizeConfig(deepClone(committedConfig.value));
+  state.config = normalizeConfig(deepClone(committedConfig.value), state.meta?.style_keys || []);
   mergeConfigMonitors(state.config);
   normalizeSelection();
   state.dirty = false;
@@ -770,7 +560,7 @@ async function onImportFileChange(event) {
       throw new Error("配置文件格式不正确");
     }
     pushUndoSnapshot("import-config");
-    state.config = normalizeConfig(imported);
+    state.config = normalizeConfig(imported, state.meta?.style_keys || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     setDirty();
@@ -975,7 +765,7 @@ async function loadInitial() {
     ]);
 
     state.meta = metaRes;
-    state.config = normalizeConfig(configRes.config);
+    state.config = normalizeConfig(configRes.config, metaRes?.style_keys || []);
     state.profiles = profilesRes.items || [];
     state.collectors = collectorsRes.items || [];
     if (snapshotRes && typeof snapshotRes === "object") {
@@ -1008,7 +798,12 @@ function patchByPath(target, path, value) {
     if (!cur[key] || typeof cur[key] !== "object") cur[key] = {};
     cur = cur[key];
   }
-  cur[parts[parts.length - 1]] = value;
+  const leaf = parts[parts.length - 1];
+  if (value === undefined) {
+    delete cur[leaf];
+  } else {
+    cur[leaf] = value;
+  }
   setDirty();
 }
 
@@ -1026,9 +821,6 @@ function onBasicChange({ path, value }) {
 
 function onItemFieldChange({ field, value }) {
   if (!state.config || readonlyProfile.value || !currentItem.value) return;
-  if (ITEM_STYLE_FIELDS.has(field) && !(state.config.allow_custom_style && currentItem.value.custom_style === true)) {
-    return;
-  }
   pushUndoSnapshot(`item-field:${field}`);
   if (field === "custom_style" && !state.config.allow_custom_style) {
     currentItem.value.custom_style = false;
@@ -1053,24 +845,15 @@ function onItemPatch({ index, patch }) {
   const item = state.config.items[index];
   if (!patch || typeof patch !== "object") return;
   const nextPatch = { ...patch };
+  const styleKeySet = buildStyleKeySet(state.meta?.style_keys || []);
+  if ("style" in nextPatch) {
+    nextPatch.style = normalizeStyleMap(nextPatch.style, styleKeySet);
+  }
+  if ("render_attrs_map" in nextPatch) {
+    nextPatch.render_attrs_map = normalizeRenderAttrs(nextPatch.render_attrs_map, styleKeySet);
+  }
   if (!(state.config.allow_custom_style && item.custom_style === true)) {
-    ITEM_STYLE_FIELDS.forEach((key) => {
-      if (key in nextPatch) delete nextPatch[key];
-    });
-    const attrs = nextPatch.render_attrs_map;
-    if (attrs && typeof attrs === "object") {
-      const filtered = {};
-      Object.entries(attrs).forEach(([key, val]) => {
-        if (!STYLE_RENDER_ATTR_FIELDS.has(String(key))) {
-          filtered[key] = val;
-        }
-      });
-      if (Object.keys(filtered).length > 0) {
-        nextPatch.render_attrs_map = filtered;
-      } else {
-        delete nextPatch.render_attrs_map;
-      }
-    }
+    delete nextPatch.style;
   }
   Object.assign(item, nextPatch);
   setDirty();
@@ -1167,7 +950,7 @@ async function switchProfile() {
       body: JSON.stringify({ name: state.editingProfile }),
     });
     state.meta = { ...(state.meta || {}), active_profile: res.active || state.editingProfile };
-    state.config = normalizeConfig(res.config);
+    state.config = normalizeConfig(res.config, state.meta?.style_keys || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     markCommittedFromCurrent();
@@ -1279,7 +1062,7 @@ async function renameProfile() {
     if (res.active) state.meta = { ...(state.meta || {}), active_profile: res.active };
     state.editingProfile = newName;
     if (res.config) {
-      state.config = normalizeConfig(res.config);
+      state.config = normalizeConfig(res.config, state.meta?.style_keys || []);
       mergeConfigMonitors(state.config);
       await refreshMonitorCatalog();
     }
@@ -1305,7 +1088,7 @@ async function deleteProfile() {
     const loaded = await api(`/api/profiles/${encodeURIComponent(state.editingProfile)}`).catch(() =>
       api("/api/config"),
     );
-    state.config = normalizeConfig(loaded.config);
+    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     markCommittedFromCurrent();
@@ -1359,7 +1142,7 @@ async function setEditingProfile(name) {
   try {
     const loaded = await api(`/api/profiles/${encodeURIComponent(nextProfile)}`);
     state.editingProfile = nextProfile;
-    state.config = normalizeConfig(loaded.config);
+    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || []);
     mergeConfigMonitors(state.config);
     if (state.config.items.length <= 0) {
       state.selectedIndex = -1;

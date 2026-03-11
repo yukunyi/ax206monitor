@@ -1,20 +1,18 @@
 package main
 
 import (
-	"fmt"
 	"math"
-	"strings"
 
 	"github.com/fogleman/gg"
 )
 
 type LineChartRenderer struct {
-	history map[string][]float64
+	history *renderHistoryStore
 }
 
 func NewLineChartRenderer() *LineChartRenderer {
 	return &LineChartRenderer{
-		history: make(map[string][]float64),
+		history: newRenderHistoryStore(),
 	}
 }
 
@@ -37,17 +35,14 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
-	historySize := resolveItemHistoryPoints(item, config, 60)
-
-	historyKey := c.getHistoryKey(item)
-	c.updateHistory(historyKey, val, historySize)
-	history := c.history[historyKey]
+	history := appendRenderHistory(c.history, item, itemTypeSimpleChart, val, 60, config)
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	minVal, maxVal, ok := c.getMinMax(history)
-	if !ok {
+	minVal := historyMin(history)
+	maxVal := historyMax(history)
+	if maxVal <= minVal {
 		drawBaseItemBorder(dc, item, config, radius)
 		return nil
 	}
@@ -123,30 +118,6 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	_ = fontCache
 	return nil
 }
-
-func (c *LineChartRenderer) getHistoryKey(item *ItemConfig) string {
-	if item != nil && strings.TrimSpace(item.ID) != "" {
-		return fmt.Sprintf("id:%s|%s", strings.TrimSpace(item.ID), strings.TrimSpace(item.Monitor))
-	}
-	return fmt.Sprintf("%s|%d|%d|%d|%d", item.Monitor, item.X, item.Y, item.Width, item.Height)
-}
-
-func (c *LineChartRenderer) updateHistory(key string, value float64, historySize int) {
-	history := c.history[key]
-	if len(history) != historySize {
-		history = resizeChartHistory(history, historySize)
-	}
-	if len(history) == 0 {
-		history = make([]float64, historySize)
-		for idx := range history {
-			history[idx] = math.NaN()
-		}
-	}
-	copy(history, history[1:])
-	history[len(history)-1] = value
-	c.history[key] = history
-}
-
 func resizeChartHistory(old []float64, historySize int) []float64 {
 	if historySize < 1 {
 		return []float64{}
@@ -168,31 +139,4 @@ func resizeChartHistory(old []float64, historySize int) []float64 {
 
 func isFiniteHistoryValue(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func (c *LineChartRenderer) getMinMax(values []float64) (float64, float64, bool) {
-	if len(values) == 0 {
-		return 0, 1, false
-	}
-	minValue := 0.0
-	maxValue := 0.0
-	valid := false
-	for _, value := range values {
-		if !isFiniteHistoryValue(value) {
-			continue
-		}
-		if !valid {
-			minValue = value
-			maxValue = value
-			valid = true
-			continue
-		}
-		if value < minValue {
-			minValue = value
-		}
-		if value > maxValue {
-			maxValue = value
-		}
-	}
-	return minValue, maxValue, valid
 }

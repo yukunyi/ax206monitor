@@ -35,10 +35,10 @@ func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderM
 	rm.RegisterRenderer(NewCircleRenderer())
 	rm.RegisterRenderer(NewLabelTextRenderer(itemTypeLabelText))
 
-	fullHistory := newFullHistoryStore()
-	for _, itemType := range fullItemTypes {
-		rm.RegisterRenderer(NewFullWidgetRenderer(itemType, fullHistory))
-	}
+	fullHistory := newRenderHistoryStore()
+	rm.RegisterRenderer(NewFullChartRenderer(fullHistory))
+	rm.RegisterRenderer(NewFullProgressRenderer())
+	rm.RegisterRenderer(NewFullGaugeRenderer())
 
 	return rm
 }

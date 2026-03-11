@@ -47,18 +47,7 @@ type CollectorConfig struct {
 }
 
 type ItemTypeDefaults struct {
-	FontSize       int                    `json:"font_size,omitempty"`
-	SmallFontSize  int                    `json:"small_font_size,omitempty"`
-	MediumFontSize int                    `json:"medium_font_size,omitempty"`
-	LargeFontSize  int                    `json:"large_font_size,omitempty"`
-	Color          string                 `json:"color,omitempty"`
-	Background     string                 `json:"bg,omitempty"`
-	UnitColor      string                 `json:"unit_color,omitempty"`
-	UnitFontSize   int                    `json:"unit_font_size,omitempty"`
-	PointSize      int                    `json:"point_size,omitempty"`
-	BorderColor    string                 `json:"border_color,omitempty"`
-	BorderWidth    float64                `json:"border_width,omitempty"`
-	Radius         int                    `json:"radius,omitempty"`
+	Style          map[string]interface{} `json:"style,omitempty"`
 	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
 }
 
@@ -69,20 +58,8 @@ type MonitorConfig struct {
 	LayoutPadding           int                         `json:"layout_padding,omitempty"`
 	MonitorUpdateWorkers    int                         `json:"monitor_update_workers,omitempty"`
 	MonitorUpdateQueueSize  int                         `json:"monitor_update_queue_size,omitempty"`
-	MonitorAutoTune         *bool                       `json:"monitor_auto_tune,omitempty"`
-	MonitorAutoTuneInterval int                         `json:"monitor_auto_tune_interval_sec,omitempty"`
-	MonitorAutoTuneSlowRate float64                     `json:"monitor_auto_tune_slow_rate,omitempty"`
-	MonitorAutoTuneStable   int                         `json:"monitor_auto_tune_stable_runs,omitempty"`
-	MonitorAutoTuneMaxScale int                         `json:"monitor_auto_tune_max_scale,omitempty"`
 	DefaultFont             string                      `json:"default_font,omitempty"`
-	DefaultFontSize         int                         `json:"default_font_size,omitempty"`
-	DefaultValueFontSize    int                         `json:"default_value_font_size,omitempty"`
-	DefaultLabelFontSize    int                         `json:"default_label_font_size,omitempty"`
-	DefaultUnitFontSize     int                         `json:"default_unit_font_size,omitempty"`
-	DefaultColor            string                      `json:"default_color,omitempty"`
-	DefaultBackground       string                      `json:"default_background,omitempty"`
-	LevelColors             []string                    `json:"level_colors,omitempty"`
-	DefaultThresholds       []float64                   `json:"default_thresholds,omitempty"`
+	StyleBase               map[string]interface{}      `json:"style_base,omitempty"`
 	AllowCustomStyle        bool                        `json:"allow_custom_style,omitempty"`
 	FontFamilies            []string                    `json:"font_families"`
 	OutputTypes             []string                    `json:"output_types"`
@@ -90,6 +67,7 @@ type MonitorConfig struct {
 	RefreshInterval         int                         `json:"refresh_interval"`
 	CollectWarnMS           int                         `json:"collect_warn_ms,omitempty"`
 	RenderWaitMaxMS         int                         `json:"render_wait_max_ms,omitempty"`
+	AX206ReconnectMS        int                         `json:"ax206_reconnect_ms,omitempty"`
 	HistorySize             int                         `json:"history_size,omitempty"`
 	DefaultHistoryPoints    int                         `json:"default_history_points,omitempty"`
 	NetworkInterface        string                      `json:"network_interface,omitempty"`
@@ -111,70 +89,16 @@ type ItemConfig struct {
 	CustomStyle    bool                   `json:"custom_style,omitempty"`
 	Monitor        string                 `json:"monitor,omitempty"`
 	Unit           string                 `json:"unit,omitempty"`
-	UnitColor      string                 `json:"unit_color,omitempty"`
-	UnitFontSize   int                    `json:"unit_font_size,omitempty"`
-	SmallFontSize  int                    `json:"small_font_size,omitempty"`
-	MediumFontSize int                    `json:"medium_font_size,omitempty"`
-	LargeFontSize  int                    `json:"large_font_size,omitempty"`
 	X              int                    `json:"x"`
 	Y              int                    `json:"y"`
 	Width          int                    `json:"width"`
 	Height         int                    `json:"height"`
-	FontSize       int                    `json:"font_size,omitempty"`
-	Color          string                 `json:"color,omitempty"`
-	Background     string                 `json:"bg,omitempty"`
-	History        bool                   `json:"history,omitempty"`
-	PointSize      int                    `json:"point_size,omitempty"`
 	Max            float64                `json:"max,omitempty"`
 	MaxValue       *float64               `json:"max_value,omitempty"`
 	MinValue       *float64               `json:"min_value,omitempty"`
 	Text           string                 `json:"text,omitempty"`
-	Thresholds     []float64              `json:"thresholds,omitempty"`
-	LevelColors    []string               `json:"level_colors,omitempty"`
-	BorderColor    string                 `json:"border_color,omitempty"`
-	BorderWidth    float64                `json:"border_width,omitempty"`
-	Radius         int                    `json:"radius,omitempty"`
+	Style          map[string]interface{} `json:"style,omitempty"`
 	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
-}
-
-func (item *ItemConfig) UnmarshalJSON(data []byte) error {
-	type alias ItemConfig
-	var decoded alias
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*item = ItemConfig(decoded)
-
-	raw := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-
-	mergeAttrs := func(key string) {
-		payload, exists := raw[key]
-		if !exists {
-			return
-		}
-		attrs := make(map[string]interface{})
-		if err := json.Unmarshal(payload, &attrs); err != nil {
-			return
-		}
-		if len(attrs) == 0 {
-			return
-		}
-		if item.RenderAttrsMap == nil {
-			item.RenderAttrsMap = make(map[string]interface{}, len(attrs))
-		}
-		for attrKey, attrValue := range attrs {
-			if _, exists := item.RenderAttrsMap[attrKey]; !exists {
-				item.RenderAttrsMap[attrKey] = attrValue
-			}
-		}
-	}
-
-	mergeAttrs("render_attrs_map")
-	mergeAttrs("renderAttrsMap")
-	return nil
 }
 
 type ConfigManager struct {
@@ -276,11 +200,10 @@ func getDefaultFontName() string {
 	return families[0]
 }
 
-func defaultLevelColors() []string {
-	return []string{"#22c55e", "#eab308", "#f97316", "#ef4444"}
-}
-
 func (config *MonitorConfig) GetDefaultFontName() string {
+	if styleFont := strings.TrimSpace(resolveStyleString(nil, config, "font_family", "")); styleFont != "" {
+		return styleFont
+	}
 	if strings.TrimSpace(config.DefaultFont) != "" {
 		return strings.TrimSpace(config.DefaultFont)
 	}
@@ -291,43 +214,35 @@ func (config *MonitorConfig) GetDefaultFontName() string {
 }
 
 func (config *MonitorConfig) GetDefaultFontSize() int {
-	if config.DefaultFontSize > 0 {
-		return config.DefaultFontSize
+	size := resolveStyleInt(nil, config, "medium_font_size", 0)
+	if size > 0 {
+		return size
 	}
 	return 16
 }
 
 func (config *MonitorConfig) GetDefaultValueFontSize() int {
-	if config.DefaultValueFontSize > 0 {
-		return config.DefaultValueFontSize
+	size := resolveStyleInt(nil, config, "large_font_size", 0)
+	if size > 0 {
+		return size
 	}
-	base := config.GetDefaultFontSize()
-	if base <= 0 {
-		base = 16
-	}
-	return base + 2
+	return 18
 }
 
 func (config *MonitorConfig) GetDefaultLabelFontSize() int {
-	if config.DefaultLabelFontSize > 0 {
-		return config.DefaultLabelFontSize
+	size := resolveStyleInt(nil, config, "medium_font_size", 0)
+	if size > 0 {
+		return size
 	}
-	base := config.GetDefaultFontSize()
-	if base <= 0 {
-		base = 16
-	}
-	return base
+	return 16
 }
 
 func (config *MonitorConfig) GetDefaultUnitFontSize() int {
-	if config.DefaultUnitFontSize > 0 {
-		return config.DefaultUnitFontSize
+	size := resolveStyleInt(nil, config, "small_font_size", 0)
+	if size > 0 {
+		return size
 	}
-	base := config.GetDefaultLabelFontSize() - 2
-	if base < 8 {
-		base = 8
-	}
-	return base
+	return 14
 }
 
 func (config *MonitorConfig) GetDefaultHistoryPoints() int {
@@ -348,16 +263,13 @@ func (config *MonitorConfig) GetDefaultHistoryPoints() int {
 }
 
 func (config *MonitorConfig) GetDefaultTextColor() string {
-	if strings.TrimSpace(config.DefaultColor) != "" {
-		return strings.TrimSpace(config.DefaultColor)
+	if color := strings.TrimSpace(resolveStyleColor(nil, config, "color", "")); color != "" {
+		return color
 	}
 	return "#f8fafc"
 }
 
 func (config *MonitorConfig) GetDefaultBackgroundColor() string {
-	if strings.TrimSpace(config.DefaultBackground) != "" {
-		return strings.TrimSpace(config.DefaultBackground)
-	}
 	return "#0b1220"
 }
 
@@ -379,61 +291,40 @@ func (config *MonitorConfig) GetTypeDefaults(itemType string) ItemTypeDefaults {
 	return defaults
 }
 
-func (config *MonitorConfig) GetLevelColors() []string {
-	colors := make([]string, 0, 4)
-	for _, color := range config.LevelColors {
-		trimmed := strings.TrimSpace(color)
-		if trimmed != "" {
-			colors = append(colors, trimmed)
-		}
-	}
-	if len(colors) == 0 {
-		colors = append(colors, defaultLevelColors()...)
-	}
-	for len(colors) < 4 {
-		colors = append(colors, colors[len(colors)-1])
-	}
-	if len(colors) > 4 {
-		colors = colors[:4]
-	}
-	return colors
-}
-
-func (config *MonitorConfig) GetResolvedThresholds(minValue, maxValue float64) []float64 {
-	thresholds := normalizeThresholds(config.DefaultThresholds, minValue, maxValue)
-	if len(thresholds) == 4 {
-		return thresholds
-	}
-	return buildAverageThresholds(minValue, maxValue)
-}
-
 func normalizeThresholds(raw []float64, minValue, maxValue float64) []float64 {
-	thresholds := make([]float64, 0, 4)
+	percentages := make([]float64, 0, 4)
 	for _, value := range raw {
-		thresholds = append(thresholds, value)
-		if len(thresholds) == 4 {
+		if value < 0 {
+			value = 0
+		}
+		if value > 100 {
+			value = 100
+		}
+		percentages = append(percentages, value)
+		if len(percentages) == 4 {
 			break
 		}
 	}
-	if len(thresholds) == 0 {
+	if len(percentages) == 0 {
 		return nil
 	}
-	for len(thresholds) < 4 {
-		thresholds = append(thresholds, thresholds[len(thresholds)-1])
+	for len(percentages) < 4 {
+		percentages = append(percentages, percentages[len(percentages)-1])
 	}
-	sort.Float64s(thresholds)
+	sort.Float64s(percentages)
 
-	if maxValue > minValue {
-		if thresholds[0] < minValue {
-			thresholds[0] = minValue
-		}
-		for i := 1; i < len(thresholds); i++ {
-			if thresholds[i] < thresholds[i-1] {
-				thresholds[i] = thresholds[i-1]
-			}
-		}
-		if thresholds[3] > maxValue {
-			thresholds[3] = maxValue
+	if maxValue <= minValue {
+		minValue = 0
+		maxValue = 100
+	}
+	span := maxValue - minValue
+	thresholds := make([]float64, 4)
+	for i := 0; i < 4; i++ {
+		thresholds[i] = minValue + span*(percentages[i]/100.0)
+	}
+	for i := 1; i < len(thresholds); i++ {
+		if thresholds[i] < thresholds[i-1] {
+			thresholds[i] = thresholds[i-1]
 		}
 	}
 	return thresholds
@@ -520,6 +411,20 @@ func (config *MonitorConfig) GetRenderWaitMaxDuration() time.Duration {
 	return time.Duration(waitMS) * time.Millisecond
 }
 
+func (config *MonitorConfig) GetAX206ReconnectDuration() time.Duration {
+	reconnectMS := config.AX206ReconnectMS
+	if reconnectMS <= 0 {
+		reconnectMS = 3000
+	}
+	if reconnectMS < 100 {
+		reconnectMS = 100
+	}
+	if reconnectMS > 60000 {
+		reconnectMS = 60000
+	}
+	return time.Duration(reconnectMS) * time.Millisecond
+}
+
 func (config *MonitorConfig) IsPauseCollectOnLockEnabled() bool {
 	if config == nil {
 		return false
@@ -553,26 +458,6 @@ func (config *MonitorConfig) GetMonitorUpdateQueueSize(workers int) int {
 		queueSize = 4096
 	}
 	return queueSize
-}
-
-func (config *MonitorConfig) GetMonitorAutoTune() bool {
-	return false
-}
-
-func (config *MonitorConfig) GetMonitorAutoTuneInterval() time.Duration {
-	return 0
-}
-
-func (config *MonitorConfig) GetMonitorAutoTuneSlowRate() float64 {
-	return 0
-}
-
-func (config *MonitorConfig) GetMonitorAutoTuneStableRuns() int {
-	return 0
-}
-
-func (config *MonitorConfig) GetMonitorAutoTuneMaxScale() int {
-	return 0
 }
 
 func (config *MonitorConfig) GetCoolerControlURL() string {

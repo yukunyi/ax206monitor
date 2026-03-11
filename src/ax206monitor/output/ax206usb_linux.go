@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"sync"
-	"time"
 
 	"github.com/google/gousb"
 )
@@ -108,25 +106,6 @@ func (p *ImageRGB565) PixRect() []byte {
 		py += dxb
 	}
 	return data
-}
-
-func NewRGB565Image(src image.Image) *ImageRGB565 {
-	bounds := src.Bounds()
-	w, h := bounds.Dx(), bounds.Dy()
-
-	img := &ImageRGB565{
-		Pix:    make([]uint8, w*h*2),
-		Stride: w * 2,
-		Rect:   image.Rect(0, 0, w, h),
-	}
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			img.Set(x-bounds.Min.X, y-bounds.Min.Y, src.At(x, y))
-		}
-	}
-
-	return img
 }
 
 type AX206USB struct {
@@ -409,107 +388,4 @@ func (ax206 *AX206USB) scsiRead(cmd []byte, blockLen int) ([]byte, error) {
 	}
 
 	return data[:n], nil
-}
-
-type AX206USBOutputHandler struct {
-	device    *AX206USB
-	mutex     sync.Mutex
-	lastError time.Time
-}
-
-func NewAX206USBOutputHandler() (*AX206USBOutputHandler, error) {
-	handler := &AX206USBOutputHandler{}
-
-	// Try to connect immediately but don't fail if device not available
-	handler.tryConnect()
-
-	return handler, nil
-}
-
-func (h *AX206USBOutputHandler) tryConnect() {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	// Close existing device if any
-	if h.device != nil {
-		h.device.Close()
-		h.device = nil
-	}
-
-	// Try to create new device
-	device, err := NewAX206USB()
-	if err != nil {
-		// Only log errors occasionally to avoid spam
-		if time.Since(h.lastError) > 10*time.Second {
-			logWarnModule("ax206usb", "Device not available: %v", err)
-			h.lastError = time.Now()
-		}
-		return
-	}
-
-	// Test device with brightness command
-	if err := device.Brightness(7); err != nil {
-		logWarnModule("ax206usb", "Device test failed: %v", err)
-		device.Close()
-		return
-	}
-
-	h.device = device
-	logInfoModule("ax206usb", "Connected")
-}
-
-func (h *AX206USBOutputHandler) GetType() string {
-	return "ax206usb"
-}
-
-func (h *AX206USBOutputHandler) Output(img image.Image) error {
-	// Get current device (non-blocking read)
-	h.mutex.Lock()
-	device := h.device
-	h.mutex.Unlock()
-
-	// If no device, try to connect
-	if device == nil {
-		h.tryConnect()
-		h.mutex.Lock()
-		device = h.device
-		h.mutex.Unlock()
-
-		if device == nil {
-			return fmt.Errorf("device not available")
-		}
-	}
-
-	// Convert image
-	rgb565Img := NewRGB565Image(img)
-
-	// Try to send image
-	if err := device.Blit(rgb565Img); err != nil {
-		logErrorModule("ax206usb", "Transfer failed: %v", err)
-
-		// Disconnect device on error
-		h.mutex.Lock()
-		if h.device != nil {
-			h.device.Close()
-			h.device = nil
-		}
-		h.mutex.Unlock()
-
-		return err
-	}
-
-	return nil
-}
-
-func (h *AX206USBOutputHandler) Close() error {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	if h.device != nil {
-		logInfoModule("ax206usb", "Disconnecting")
-		h.device.Close()
-		h.device = nil
-	}
-
-	return nil
 }

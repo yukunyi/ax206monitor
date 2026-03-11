@@ -24,6 +24,14 @@ type OutputRuntimeStats struct {
 	Handlers map[string]OutputHandlerRuntimeStats `json:"handlers"`
 }
 
+type AX206DeviceFrameRuntimeStats struct {
+	Calls  int64 `json:"calls"`
+	Errors int64 `json:"errors"`
+	LastMS int64 `json:"last_ms"`
+	MaxMS  int64 `json:"max_ms"`
+	AvgMS  int64 `json:"avg_ms"`
+}
+
 type outputRuntimeAccumulator struct {
 	calls   int64
 	errors  int64
@@ -36,6 +44,7 @@ var (
 	outputRuntimeMu     sync.RWMutex
 	outputRuntimeTotal  outputRuntimeAccumulator
 	outputRuntimeByType = make(map[string]*outputRuntimeAccumulator)
+	ax206DeviceRuntime  outputRuntimeAccumulator
 )
 
 func recordOutputRuntime(typeName string, duration time.Duration, err error) {
@@ -129,5 +138,37 @@ func GetRuntimeStats() OutputRuntimeStats {
 		MaxMS:    toMillis(outputRuntimeTotal.maxNS),
 		AvgMS:    avgMillis(outputRuntimeTotal.totalNS, outputRuntimeTotal.calls),
 		Handlers: handlers,
+	}
+}
+
+func recordAX206DeviceFrameRuntime(duration time.Duration, err error) {
+	if duration < 0 {
+		duration = 0
+	}
+	durationNS := duration.Nanoseconds()
+
+	outputRuntimeMu.Lock()
+	defer outputRuntimeMu.Unlock()
+
+	ax206DeviceRuntime.calls++
+	ax206DeviceRuntime.lastNS = durationNS
+	ax206DeviceRuntime.totalNS += durationNS
+	if durationNS > ax206DeviceRuntime.maxNS {
+		ax206DeviceRuntime.maxNS = durationNS
+	}
+	if err != nil {
+		ax206DeviceRuntime.errors++
+	}
+}
+
+func GetAX206DeviceFrameRuntimeStats() AX206DeviceFrameRuntimeStats {
+	outputRuntimeMu.RLock()
+	defer outputRuntimeMu.RUnlock()
+	return AX206DeviceFrameRuntimeStats{
+		Calls:  ax206DeviceRuntime.calls,
+		Errors: ax206DeviceRuntime.errors,
+		LastMS: toMillis(ax206DeviceRuntime.lastNS),
+		MaxMS:  toMillis(ax206DeviceRuntime.maxNS),
+		AvgMS:  avgMillis(ax206DeviceRuntime.totalNS, ax206DeviceRuntime.calls),
 	}
 }

@@ -11,18 +11,44 @@ const emit = defineEmits(["update:value"]);
 const draft = ref(String(props.value || ""));
 
 const PRESET_COLORS = [
+  "rgba(0,0,0,0)",
+  "#f8fafc",
   "#ffffff",
+  "#e2e8f0",
+  "#cbd5e1",
+  "#94a3b8",
   "#000000",
+  "#0f172a",
+  "#1e293b",
+  "#334155",
+  "#64748b",
   "#ef4444",
+  "#dc2626",
   "#f97316",
+  "#ea580c",
+  "#f59e0b",
   "#eab308",
+  "#84cc16",
   "#22c55e",
+  "#16a34a",
+  "#10b981",
+  "#14b8a6",
   "#06b6d4",
+  "#0ea5e9",
   "#3b82f6",
+  "#2563eb",
+  "#6366f1",
   "#8b5cf6",
+  "#7c3aed",
+  "#a855f7",
   "#ec4899",
+  "#d946ef",
+  "#f43f5e",
   "rgba(255,255,255,0.85)",
+  "rgba(255,255,255,0.4)",
+  "rgba(255,255,255,0.15)",
   "rgba(0,0,0,0.6)",
+  "rgba(0,0,0,0.35)",
 ];
 
 watch(
@@ -38,9 +64,9 @@ const previewColor = computed(() => {
 });
 
 const nativeColorValue = computed(() => {
-  const rgb = parseToRGB(props.value);
-  if (!rgb) return "#f8fafc";
-  return toHex6(rgb.r, rgb.g, rgb.b);
+  const rgba = parseToRGBA(props.value);
+  if (!rgba) return "#f8fafc";
+  return toHex6(rgba.r, rgba.g, rgba.b);
 });
 
 function toHex6(r, g, b) {
@@ -52,7 +78,7 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function parseToRGB(raw) {
+function parseToRGBA(raw) {
   const input = String(raw || "").trim();
   if (!input) return null;
 
@@ -60,16 +86,20 @@ function parseToRGB(raw) {
   if (hexMatch) {
     const hex = hexMatch[1];
     if (hex.length === 3 || hex.length === 4) {
+      const alpha = hex.length === 4 ? parseInt(hex[3] + hex[3], 16) / 255 : 1;
       return {
         r: parseInt(hex[0] + hex[0], 16),
         g: parseInt(hex[1] + hex[1], 16),
         b: parseInt(hex[2] + hex[2], 16),
+        a: clamp(alpha, 0, 1),
       };
     }
+    const alpha = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
     return {
       r: parseInt(hex.slice(0, 2), 16),
       g: parseInt(hex.slice(2, 4), 16),
       b: parseInt(hex.slice(4, 6), 16),
+      a: clamp(alpha, 0, 1),
     };
   }
 
@@ -81,11 +111,20 @@ function parseToRGB(raw) {
   const g = Number(parts[1]);
   const b = Number(parts[2]);
   if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return null;
+  const a = parts.length >= 4 ? Number(parts[3]) : 1;
+  if (!Number.isFinite(a)) return null;
   return {
     r: clamp(r, 0, 255),
     g: clamp(g, 0, 255),
     b: clamp(b, 0, 255),
+    a: clamp(a, 0, 1),
   };
+}
+
+function isTransparentColor(raw) {
+  const rgba = parseToRGBA(raw);
+  if (!rgba) return false;
+  return rgba.a <= 0.001;
 }
 
 function normalizeColorValue(raw) {
@@ -162,8 +201,9 @@ function onNativeColorInput(event) {
         <button
           type="button"
           class="pure_color_trigger"
+          :class="{ transparent: isTransparentColor(previewColor) }"
           :disabled="disabled"
-          :style="{ background: previewColor }"
+          :style="{ backgroundColor: previewColor }"
         />
       </template>
       <div class="pure_color_panel" @click.stop>
@@ -173,7 +213,9 @@ function onNativeColorInput(event) {
             :key="color"
             type="button"
             class="pure_color_preset"
-            :style="{ background: color }"
+            :class="{ transparent: isTransparentColor(color) }"
+            :style="{ backgroundColor: color }"
+            :title="color"
             @click="onPreset(color)"
           />
         </div>
@@ -218,6 +260,22 @@ function onNativeColorInput(event) {
   border: 1px solid #64748b;
   cursor: pointer;
   padding: 0;
+  background-image:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.38) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.38) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.38) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.38) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+.pure_color_trigger.transparent::after,
+.pure_color_preset.transparent::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, transparent 45%, rgba(239, 68, 68, 0.9) 45%, rgba(239, 68, 68, 0.9) 55%, transparent 55%);
 }
 
 .pure_color_input.disabled .pure_color_trigger {
@@ -238,18 +296,26 @@ function onNativeColorInput(event) {
 
 .pure_color_presets {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 6px;
   margin-bottom: 8px;
 }
 
 .pure_color_preset {
+  position: relative;
   width: 22px;
   height: 22px;
   border-radius: 5px;
   border: 1px solid #64748b;
   cursor: pointer;
   padding: 0;
+  background-image:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.38) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.38) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.38) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.38) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
 }
 
 .pure_color_tools {
