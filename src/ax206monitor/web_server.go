@@ -38,18 +38,19 @@ type ConfigStore struct {
 }
 
 type WebMetaResponse struct {
-	ConfigPath           string         `json:"config_path"`
-	Platform             string         `json:"platform,omitempty"`
-	Monitors             []string       `json:"monitors"`
-	Collectors           []string       `json:"collectors,omitempty"`
-	ItemTypes            []string       `json:"item_types"`
-	StyleKeys            []StyleKeyMeta `json:"style_keys,omitempty"`
-	OutputTypes          []string       `json:"output_types"`
-	FontFamilies         []string       `json:"font_families"`
-	NetworkInterfaces    []string       `json:"network_interfaces"`
-	CustomMonitorTypes   []string       `json:"custom_monitor_types"`
-	CustomAggregateTypes []string       `json:"custom_aggregate_types"`
-	ActiveProfile        string         `json:"active_profile,omitempty"`
+	ConfigPath           string            `json:"config_path"`
+	Platform             string            `json:"platform,omitempty"`
+	Monitors             []string          `json:"monitors"`
+	MonitorAliasLabels   map[string]string `json:"monitor_alias_labels,omitempty"`
+	Collectors           []string          `json:"collectors,omitempty"`
+	ItemTypes            []string          `json:"item_types"`
+	StyleKeys            []StyleKeyMeta    `json:"style_keys,omitempty"`
+	OutputTypes          []string          `json:"output_types"`
+	FontFamilies         []string          `json:"font_families"`
+	NetworkInterfaces    []string          `json:"network_interfaces"`
+	CustomMonitorTypes   []string          `json:"custom_monitor_types"`
+	CustomAggregateTypes []string          `json:"custom_aggregate_types"`
+	ActiveProfile        string            `json:"active_profile,omitempty"`
 }
 
 type WebConfigResponse struct {
@@ -682,10 +683,11 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 		ConfigPath:           store.path,
 		Platform:             goruntime.GOOS,
 		Monitors:             collectMonitorNames(config, store.runtime),
+		MonitorAliasLabels:   monitorAliasLabels(),
 		Collectors:           store.collectorNames(),
 		ItemTypes:            webItemTypes(),
 		StyleKeys:            styleKeys,
-		OutputTypes:          []string{outputTypeMemImg, outputTypeAX206USB},
+		OutputTypes:          getSupportedOutputTypes(),
 		FontFamilies:         fontFamilies,
 		NetworkInterfaces:    listNetworkInterfaces(),
 		CustomMonitorTypes:   []string{"file", "mixed", "coolercontrol", "librehardwaremonitor"},
@@ -845,12 +847,12 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		DefaultFont:             getDefaultFontName(),
 		StyleBase:               map[string]interface{}{},
 		FontFamilies:            getDefaultFontFamilies(),
-		OutputTypes:             []string{outputTypeMemImg},
+		Outputs:                 getDefaultOutputConfigs(),
+		OutputTypes:             getDefaultOutputTypes(),
 		PauseCollectOnLock:      false,
 		RefreshInterval:         1000,
 		CollectWarnMS:           100,
 		RenderWaitMaxMS:         300,
-		AX206ReconnectMS:        3000,
 		HistorySize:             150,
 		DefaultHistoryPoints:    150,
 		NetworkInterface:        "",
@@ -998,15 +1000,6 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.RenderWaitMaxMS > cfg.RefreshInterval {
 		cfg.RenderWaitMaxMS = cfg.RefreshInterval
 	}
-	if cfg.AX206ReconnectMS <= 0 {
-		cfg.AX206ReconnectMS = 3000
-	}
-	if cfg.AX206ReconnectMS < 100 {
-		cfg.AX206ReconnectMS = 100
-	}
-	if cfg.AX206ReconnectMS > 60000 {
-		cfg.AX206ReconnectMS = 60000
-	}
 	if cfg.MonitorUpdateWorkers < 0 {
 		cfg.MonitorUpdateWorkers = 0
 	}
@@ -1017,7 +1010,14 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.DefaultFont = getDefaultFontName()
 	}
 	sanitizeFontConfig(cfg)
-	cfg.OutputTypes = normalizeOutputTypes(cfg.OutputTypes)
+	if len(cfg.Outputs) == 0 {
+		if len(cfg.OutputTypes) > 0 {
+			cfg.Outputs = outputConfigsFromTypes(cfg.OutputTypes)
+		}
+	}
+	outputSummary := describeOutputConfigs(normalizeOutputConfigs(cfg.Outputs))
+	cfg.Outputs = outputSummary.Configs
+	cfg.OutputTypes = outputSummary.Types
 	cfg.NetworkInterface = strings.TrimSpace(cfg.NetworkInterface)
 	if strings.EqualFold(cfg.NetworkInterface, "auto") {
 		cfg.NetworkInterface = ""
@@ -1085,6 +1085,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 			item.MinValue = nil
 		}
 		normalizeItemStyleConfiguration(cfg, item)
+		prepareRenderItemRuntime(cfg, item)
 	}
 
 	for idx := range cfg.CustomMonitors {

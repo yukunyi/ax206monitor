@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -101,11 +100,7 @@ func main() {
 		logInfo("Dumping all monitor values for %d seconds...", *dumpSecondsFlag)
 
 		// build stable, sorted name list
-		names := make([]string, 0)
-		for n := range registry.GetAll() {
-			names = append(names, n)
-		}
-		sort.Strings(names)
+		names := registry.AllNames()
 
 		lastEpoch := int64(0)
 		for frame := 0; time.Now().Before(end); frame++ {
@@ -167,7 +162,7 @@ func main() {
 		return cfg, nil
 	})
 
-	outputTypes := resolveOutputTypes(config, false)
+	outputTypes := resolveOutputConfigSummaryFromList(config.Outputs, false).Types
 	webProcessController := NewWebServerProcess(*portFlag, webDevEnabled, devViteURL)
 	if webDevEnabled {
 		if err := webProcessController.Start(); err != nil {
@@ -313,12 +308,8 @@ func listAllMonitors() {
 	_, _, _ = registry.WaitForNextEpoch(0, 500*time.Millisecond)
 
 	// Collect and sort monitor names
-	var names []string
 	items := registry.GetAll()
-	for name := range items {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := registry.AllNames()
 
 	fmt.Println("\n=== System Information ===")
 	printSystemInfo()

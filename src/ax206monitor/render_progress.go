@@ -14,14 +14,9 @@ func (p *ProgressRenderer) GetType() string {
 	return itemTypeSimpleProgress
 }
 
-func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	monitor := registry.Get(item.Monitor)
-	if monitor == nil || !monitor.IsAvailable() {
-		return nil
-	}
-
-	value := monitor.GetValue()
-	if value == nil {
+func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	monitor, value, ok := frame.AvailableItemValue(item)
+	if !ok {
 		return nil
 	}
 	val, ok := tryGetFloat64(value.Value)
@@ -56,8 +51,8 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, registry *Co
 	}
 
 	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
-	fontSize := resolveItemFontSize(item, config, 14)
-	unitFontSize := resolveUnitFontSize(item, config, fontSize)
+	_, fontSize := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
+	_, unitFontSize := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 	textColor := config.GetDefaultTextColor()
 	unitColor := resolveUnitColor(item, config, textColor)
 	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, textColor, unitFontSize, unitColor, fontCache)

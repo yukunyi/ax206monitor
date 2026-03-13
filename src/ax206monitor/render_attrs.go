@@ -6,6 +6,26 @@ import (
 	"strings"
 )
 
+func rawAttrFloat64(raw interface{}) (float64, bool) {
+	switch value := raw.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case uint64:
+		return float64(value), true
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
 func itemRenderAttrs(item *ItemConfig) map[string]interface{} {
 	if item == nil || item.RenderAttrsMap == nil {
 		return nil
@@ -93,21 +113,8 @@ func getItemAttrFloat(item *ItemConfig, key string, fallback float64) float64 {
 	if !exists || raw == nil {
 		return fallback
 	}
-	switch value := raw.(type) {
-	case float64:
-		return value
-	case float32:
-		return float64(value)
-	case int:
-		return float64(value)
-	case int64:
-		return float64(value)
-	case uint64:
-		return float64(value)
-	case string:
-		if parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
-			return parsed
-		}
+	if parsed, ok := rawAttrFloat64(raw); ok {
+		return parsed
 	}
 	return fallback
 }
@@ -187,23 +194,18 @@ func getItemAttrFloatCfg(item *ItemConfig, config *MonitorConfig, key string, fa
 	if !exists || raw == nil {
 		return fallback
 	}
-	switch value := raw.(type) {
-	case float64:
-		return value
-	case float32:
-		return float64(value)
-	case int:
-		return float64(value)
-	case int64:
-		return float64(value)
-	case uint64:
-		return float64(value)
-	case string:
-		if parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
-			return parsed
-		}
+	if parsed, ok := rawAttrFloat64(raw); ok {
+		return parsed
 	}
 	return fallback
+}
+
+func getItemAttrFloatCfgOK(item *ItemConfig, config *MonitorConfig, key string) (float64, bool) {
+	raw, exists := getItemAttrWithDefaults(item, config, key)
+	if !exists || raw == nil {
+		return 0, false
+	}
+	return rawAttrFloat64(raw)
 }
 
 func getItemAttrIntCfg(item *ItemConfig, config *MonitorConfig, key string, fallback int) int {

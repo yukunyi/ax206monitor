@@ -1,10 +1,6 @@
 package main
 
-import (
-	"strings"
-
-	"github.com/fogleman/gg"
-)
+import "github.com/fogleman/gg"
 
 type SimpleLineRenderer struct{}
 
@@ -16,17 +12,22 @@ func (r *SimpleLineRenderer) GetType() string {
 	return itemTypeSimpleLine
 }
 
-func (r *SimpleLineRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	_ = registry
+func (r *SimpleLineRenderer) RequiresMonitor() bool {
+	return false
+}
+
+func (r *SimpleLineRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	_ = frame
 	_ = fontCache
 	if dc == nil || item == nil {
 		return nil
 	}
 
-	orientation := strings.ToLower(strings.TrimSpace(getItemAttrStringCfg(item, config, "line_orientation", "horizontal")))
-	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 1)
-	if lineWidth < 1 {
-		lineWidth = 1
+	orientation := item.runtime.simpleLine.orientation
+	lineWidth := item.runtime.simpleLine.lineWidth
+	if !item.runtime.prepared {
+		orientation = normalizeSimpleLineOrientation(getItemAttrStringCfg(item, config, "line_orientation", "horizontal"))
+		lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 1), 1)
 	}
 
 	dc.SetColor(parseColor(resolveItemStaticColor(item, config)))

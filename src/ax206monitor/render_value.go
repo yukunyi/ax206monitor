@@ -12,19 +12,18 @@ func (v *ValueRenderer) GetType() string {
 	return itemTypeSimpleValue
 }
 
-func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	monitor := registry.Get(item.Monitor)
-	if monitor == nil || !monitor.IsAvailable() {
+func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	monitor, value, ok := frame.AvailableItemValue(item)
+	if !ok {
 		return nil
 	}
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	value := monitor.GetValue()
 	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
-	fontSize := resolveItemFontSize(item, config, 16)
-	unitFontSize := resolveUnitFontSize(item, config, fontSize)
+	_, fontSize := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
+	_, unitFontSize := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 
 	itemColor := resolveMonitorColor(item, monitor, config)
 	unitColor := resolveUnitColor(item, config, itemColor)

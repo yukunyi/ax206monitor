@@ -1,7 +1,6 @@
 package output
 
 import (
-	"image"
 	"sync"
 )
 
@@ -18,16 +17,18 @@ type AX206USBSharedOutputHandler struct {
 	closed bool
 }
 
-func NewSharedAX206USBOutputHandler() (*AX206USBSharedOutputHandler, error) {
+func NewSharedAX206USBOutputHandler(cfg OutputConfig) (*AX206USBSharedOutputHandler, error) {
 	globalAX206Shared.mu.Lock()
 	defer globalAX206Shared.mu.Unlock()
 
 	if globalAX206Shared.handler == nil {
-		handler, err := NewAX206USBOutputHandler()
+		handler, err := NewAX206USBOutputHandler(cfg)
 		if err != nil {
 			return nil, err
 		}
 		globalAX206Shared.handler = handler
+	} else {
+		globalAX206Shared.handler.UpdateConfig(cfg)
 	}
 	globalAX206Shared.refs++
 	return &AX206USBSharedOutputHandler{}, nil
@@ -37,14 +38,14 @@ func (h *AX206USBSharedOutputHandler) GetType() string {
 	return TypeAX206USB
 }
 
-func (h *AX206USBSharedOutputHandler) Output(img image.Image) error {
+func (h *AX206USBSharedOutputHandler) OutputFrame(frame *OutputFrame) error {
 	globalAX206Shared.mu.Lock()
 	handler := globalAX206Shared.handler
 	globalAX206Shared.mu.Unlock()
-	if handler == nil {
+	if handler == nil || frame == nil {
 		return nil
 	}
-	return handler.Output(img)
+	return handler.OutputFrame(frame)
 }
 
 func (h *AX206USBSharedOutputHandler) Close() error {

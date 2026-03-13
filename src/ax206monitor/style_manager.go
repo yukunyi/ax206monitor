@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -18,53 +19,27 @@ type StyleOption struct {
 }
 
 type StyleKeyMeta struct {
-	Key     string        `json:"key"`
-	Label   string        `json:"label"`
-	Kind    string        `json:"kind"`
-	Scopes  []string      `json:"scopes"`
-	Types   []string      `json:"types,omitempty"`
-	Options []StyleOption `json:"options,omitempty"`
+	Key      string                 `json:"key"`
+	Label    string                 `json:"label"`
+	Kind     string                 `json:"kind"`
+	Scopes   []string               `json:"scopes"`
+	Types    []string               `json:"types,omitempty"`
+	Options  []StyleOption          `json:"options,omitempty"`
+	Default  interface{}            `json:"default,omitempty"`
+	Defaults map[string]interface{} `json:"defaults,omitempty"`
 }
 
-var styleRenderAttrKeySet = map[string]struct{}{
-	"content_padding":         {},
-	"value_font_size":         {},
-	"label_font_size":         {},
-	"meta_font_size":          {},
-	"title_font_size":         {},
-	"header_divider":          {},
-	"header_divider_width":    {},
-	"header_divider_offset":   {},
-	"header_divider_color":    {},
-	"body_gap":                {},
-	"history_points":          {},
-	"show_segment_lines":      {},
-	"show_grid_lines":         {},
-	"grid_lines":              {},
-	"enable_threshold_colors": {},
-	"line_width":              {},
-	"show_avg_line":           {},
-	"chart_color":             {},
-	"chart_area_bg":           {},
-	"chart_area_border_color": {},
-	"progress_style":          {},
-	"bar_height":              {},
-	"bar_radius":              {},
-	"track_color":             {},
-	"segments":                {},
-	"segment_gap":             {},
-	"card_radius":             {},
-	"gauge_thickness":         {},
-	"gauge_gap_degrees":       {},
-	"gauge_text_gap":          {},
-	"line_orientation":        {},
+type styleMetaEntry struct {
+	scopeSet  map[string]struct{}
+	typeSet   map[string]struct{}
+	allowType bool
 }
 
 var styleMetaList = []StyleKeyMeta{
 	{Key: "font_family", Label: "字体", Kind: "select", Scopes: []string{styleScopeBase}},
-	{Key: "small_font_size", Label: "小字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
-	{Key: "medium_font_size", Label: "中字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
-	{Key: "large_font_size", Label: "大字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
+	{Key: "text_font_size", Label: "文本字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
+	{Key: "unit_font_size", Label: "单位字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
+	{Key: "value_font_size", Label: "值字号", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
 	{Key: "color", Label: "文字色", Kind: "color", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
 	{Key: "bg", Label: "背景色", Kind: "color", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
 	{Key: "unit_color", Label: "单位色", Kind: "color", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
@@ -74,11 +49,10 @@ var styleMetaList = []StyleKeyMeta{
 	{Key: "thresholds", Label: "阈值(%)", Kind: "float4", Scopes: []string{styleScopeBase, styleScopeItem}},
 	{Key: "level_colors", Label: "等级颜色", Kind: "color4", Scopes: []string{styleScopeBase, styleScopeItem}},
 	{Key: "history_points", Label: "历史点数", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}, Types: []string{itemTypeSimpleChart, itemTypeFullChart}},
-	{Key: "content_padding", Label: "内边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
+	{Key: "content_padding_x", Label: "左右边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
+	{Key: "content_padding_y", Label: "上下边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
 	{Key: "body_gap", Label: "标题间距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "value_font_size", Label: "值字号", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
-	{Key: "label_font_size", Label: "标签字号", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullGauge}},
-	{Key: "title_font_size", Label: "标题字号", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
+	{Key: "header_height", Label: "标题栏高度", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
 	{Key: "header_divider", Label: "标题分隔线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
 	{Key: "header_divider_width", Label: "分隔线宽", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
 	{Key: "header_divider_offset", Label: "分隔线偏移", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
@@ -105,12 +79,36 @@ var styleMetaList = []StyleKeyMeta{
 	{Key: "gauge_text_gap", Label: "文字间距", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullGauge}},
 }
 
-var styleKnownKeySet = buildStyleKnownKeySet()
+var styleMetaByKey = buildStyleMetaByKey()
 
-func buildStyleKnownKeySet() map[string]struct{} {
-	set := make(map[string]struct{}, len(styleMetaList))
+func buildStyleMetaByKey() map[string]styleMetaEntry {
+	set := make(map[string]styleMetaEntry, len(styleMetaList))
 	for _, meta := range styleMetaList {
-		set[meta.Key] = struct{}{}
+		key := strings.TrimSpace(meta.Key)
+		if key == "" {
+			continue
+		}
+		scopeSet := make(map[string]struct{}, len(meta.Scopes))
+		for _, scope := range meta.Scopes {
+			name := strings.TrimSpace(scope)
+			if name == "" {
+				continue
+			}
+			scopeSet[name] = struct{}{}
+		}
+		typeSet := make(map[string]struct{}, len(meta.Types))
+		for _, itemType := range meta.Types {
+			name := normalizeItemTypeName(itemType)
+			if name == "" {
+				continue
+			}
+			typeSet[name] = struct{}{}
+		}
+		set[key] = styleMetaEntry{
+			scopeSet:  scopeSet,
+			typeSet:   typeSet,
+			allowType: len(typeSet) == 0,
+		}
 	}
 	return set
 }
@@ -118,55 +116,70 @@ func buildStyleKnownKeySet() map[string]struct{} {
 func WebStyleKeyMeta() []StyleKeyMeta {
 	out := make([]StyleKeyMeta, len(styleMetaList))
 	copy(out, styleMetaList)
+	for idx := range out {
+		meta := &out[idx]
+		baseDefault, hasBase := styleCodeDefault("", meta.Key)
+		if len(meta.Types) == 1 {
+			if typeDefault, ok := styleCodeDefault(meta.Types[0], meta.Key); ok {
+				meta.Default = typeDefault
+			} else if hasBase {
+				meta.Default = baseDefault
+			}
+		} else if hasBase {
+			meta.Default = baseDefault
+		}
+
+		defaults := make(map[string]interface{})
+		for _, itemType := range allItemTypes {
+			typeDefault, ok := styleCodeDefault(itemType, meta.Key)
+			if !ok {
+				continue
+			}
+			if hasBase && reflect.DeepEqual(typeDefault, baseDefault) {
+				continue
+			}
+			defaults[itemType] = typeDefault
+		}
+		if len(defaults) > 0 {
+			meta.Defaults = defaults
+		}
+	}
 	return out
 }
 
 func isStyleRenderAttrKey(key string) bool {
-	_, exists := styleRenderAttrKeySet[key]
-	return exists
+	return isKnownStyleKey(key)
 }
 
 func isKnownStyleKey(key string) bool {
-	_, exists := styleKnownKeySet[strings.TrimSpace(key)]
+	_, exists := styleMetaByKey[strings.TrimSpace(key)]
 	return exists
 }
 
-func styleScopesForKey(key string) map[string]struct{} {
-	scopes := map[string]struct{}{}
-	for _, meta := range styleMetaList {
-		if meta.Key != key {
-			continue
-		}
-		for _, scope := range meta.Scopes {
-			scopes[scope] = struct{}{}
-		}
-		break
-	}
-	return scopes
+func styleMetaForKey(key string) (styleMetaEntry, bool) {
+	meta, ok := styleMetaByKey[strings.TrimSpace(key)]
+	return meta, ok
 }
 
 func keySupportsScope(key string, scope string) bool {
-	_, ok := styleScopesForKey(key)[scope]
+	meta, ok := styleMetaForKey(key)
+	if !ok {
+		return false
+	}
+	_, ok = meta.scopeSet[strings.TrimSpace(scope)]
 	return ok
 }
 
 func keySupportsType(key string, itemType string) bool {
-	itemType = normalizeItemTypeName(itemType)
-	for _, meta := range styleMetaList {
-		if meta.Key != key {
-			continue
-		}
-		if len(meta.Types) == 0 {
-			return true
-		}
-		for _, typed := range meta.Types {
-			if typed == itemType {
-				return true
-			}
-		}
+	meta, ok := styleMetaForKey(key)
+	if !ok {
 		return false
 	}
-	return false
+	if meta.allowType {
+		return true
+	}
+	_, ok = meta.typeSet[normalizeItemTypeName(itemType)]
+	return ok
 }
 
 func normalizeStyleMap(input map[string]interface{}, scope string, itemType string) map[string]interface{} {
@@ -195,7 +208,7 @@ func normalizeStyleMap(input map[string]interface{}, scope string, itemType stri
 
 func normalizeStyleValueByKey(key string, value interface{}) interface{} {
 	switch key {
-	case "small_font_size", "medium_font_size", "large_font_size", "value_font_size", "label_font_size", "title_font_size", "history_points", "grid_lines", "segments", "content_padding", "body_gap", "radius":
+	case "text_font_size", "unit_font_size", "value_font_size", "header_height", "history_points", "grid_lines", "segments", "content_padding_x", "content_padding_y", "body_gap", "radius":
 		n, ok := toStyleNumber(value)
 		if !ok {
 			return 0
@@ -315,11 +328,11 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	switch key {
 	case "font_family":
 		return "", true
-	case "small_font_size":
-		return 14, true
-	case "medium_font_size":
+	case "text_font_size":
 		return 16, true
-	case "large_font_size":
+	case "unit_font_size":
+		return 14, true
+	case "value_font_size":
 		return 18, true
 	case "color":
 		return "#f8fafc", true
@@ -328,8 +341,14 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "unit_color":
 		return "#f8fafc", true
 	case "border_width":
+		if itemType == itemTypeSimpleChart || itemType == itemTypeFullChart {
+			return 1.0, true
+		}
 		return 0.0, true
 	case "border_color":
+		if itemType == itemTypeSimpleChart || itemType == itemTypeFullChart {
+			return "#cbd5e1", true
+		}
 		return "#475569", true
 	case "radius":
 		return 0, true
@@ -339,7 +358,7 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 		return []string{"#22c55e", "#eab308", "#f97316", "#ef4444"}, true
 	case "history_points":
 		return 150, true
-	case "content_padding":
+	case "content_padding_x", "content_padding_y":
 		if itemType == itemTypeLabelText || strings.HasPrefix(itemType, "full_") {
 			return 1, true
 		}
@@ -349,7 +368,7 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 			return 4, true
 		}
 		return 0, true
-	case "value_font_size", "label_font_size", "title_font_size":
+	case "header_height":
 		return 0, true
 	case "header_divider":
 		return true, true
@@ -358,11 +377,11 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "header_divider_offset":
 		return 3.0, true
 	case "header_divider_color":
-		return "#94a3b840", true
+		return "#cbd5e166", true
 	case "show_segment_lines":
-		return true, true
+		return false, true
 	case "show_grid_lines":
-		return true, true
+		return false, true
 	case "grid_lines":
 		return 4, true
 	case "enable_threshold_colors":
@@ -376,6 +395,9 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "chart_color":
 		return "#38bdf8", true
 	case "chart_area_bg":
+		if itemType == itemTypeFullChart {
+			return "#000000", true
+		}
 		return "", true
 	case "chart_area_border_color":
 		return "", true
@@ -398,7 +420,7 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "gauge_gap_degrees":
 		return 76.0, true
 	case "gauge_text_gap":
-		return 4.0, true
+		return 1.0, true
 	}
 	return nil, false
 }

@@ -2,11 +2,14 @@ package main
 
 import (
 	"ax206monitor/output"
-	"time"
+	"image"
 )
 
 type OutputHandler = output.OutputHandler
 type OutputManager = output.OutputManager
+type OutputConfig = output.OutputConfig
+type OutputConfigSummary = output.ConfigSummary
+type OutputFrame = output.OutputFrame
 type MemImgOutputHandler = output.MemImgOutputHandler
 type AX206USBOutputHandler = output.AX206USBOutputHandler
 type OutputRuntimeStats = output.OutputRuntimeStats
@@ -17,12 +20,12 @@ func NewOutputManager() *OutputManager {
 	return output.NewOutputManager()
 }
 
-func NewMemImgOutputHandler() *MemImgOutputHandler {
-	return output.NewMemImgOutputHandler()
+func NewOutputFrame(img image.Image) *OutputFrame {
+	return output.NewOutputFrame(img)
 }
 
-func NewAX206USBOutputHandler() (*AX206USBOutputHandler, error) {
-	return output.NewAX206USBOutputHandler()
+func NewMemImgOutputHandler() *MemImgOutputHandler {
+	return output.NewMemImgOutputHandler()
 }
 
 func SetMemImgPNG(data []byte) {
@@ -41,6 +44,6 @@ func GetAX206DeviceFrameRuntimeStats() AX206DeviceFrameRuntimeStats {
 	return output.GetAX206DeviceFrameRuntimeStats()
 }
 
-func SetAX206ReconnectInterval(interval time.Duration) {
-	output.SetAX206ReconnectInterval(interval)
+func GetHTTPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
+	return output.GetHTTPPushRuntimeStats()
 }

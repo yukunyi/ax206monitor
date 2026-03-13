@@ -260,7 +260,7 @@
       "monitor": "alias.net.ip",
       "style": {
         "bg": "#111827",
-        "large_font_size": 12
+        "value_font_size": 12
       },
       "type": "simple_value",
       "unit": "auto",
@@ -274,7 +274,7 @@
       "monitor": "alias.system.time",
       "style": {
         "bg": "#111827",
-        "large_font_size": 12
+        "value_font_size": 12
       },
       "type": "simple_value",
       "unit": "auto",
@@ -288,7 +288,7 @@
       "monitor": "alias.system.resolution",
       "style": {
         "bg": "#111827",
-        "large_font_size": 12
+        "value_font_size": 12
       },
       "type": "simple_value",
       "unit": "auto",
@@ -302,7 +302,7 @@
       "monitor": "alias.system.refresh_rate",
       "style": {
         "bg": "#111827",
-        "large_font_size": 12
+        "value_font_size": 12
       },
       "type": "simple_value",
       "unit": "auto",

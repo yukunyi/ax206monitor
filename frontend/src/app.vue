@@ -6,7 +6,14 @@ import BasicTab from "./components/basic_tab.vue";
 import ElementsTab from "./components/elements_tab.vue";
 import TypeDefaultsTab from "./components/type_defaults_tab.vue";
 import RuntimeTab from "./components/runtime_tab.vue";
-import { normalizeStyleKeys } from "./style_keys";
+import { isMonitorRequiredType } from "./item_types";
+import { monitorAliasLabel, normalizeMonitorName } from "./monitor_aliases";
+import {
+  buildStyleKeySet,
+  normalizeConfigModel,
+  normalizeRenderAttrs,
+  normalizeStyleMap,
+} from "./config_normalizer";
 
 const state = reactive({
   loading: true,
@@ -44,21 +51,6 @@ const profileDialog = reactive({
 });
 const importInputRef = ref(null);
 
-const DEFAULT_OUTPUT_TYPES = ["memimg", "ax206usb"];
-const DEFAULT_ITEM_TYPES = [
-  "simple_value",
-  "simple_progress",
-  "simple_line_chart",
-  "simple_line",
-  "simple_label",
-  "simple_rect",
-  "simple_circle",
-  "label_text",
-  "full_chart",
-  "full_progress",
-  "full_gauge",
-];
-
 const DEFAULT_COLLECTOR_ENABLED = {
   "go_native.cpu": true,
   "go_native.memory": true,
@@ -69,62 +61,6 @@ const DEFAULT_COLLECTOR_ENABLED = {
   coolercontrol: false,
   librehardwaremonitor: false,
   rtss: false,
-};
-
-const MONITOR_REQUIRED_TYPES = new Set([
-  "simple_value",
-  "simple_progress",
-  "simple_line_chart",
-  "label_text",
-  "full_chart",
-  "full_progress",
-  "full_gauge",
-]);
-
-const ITEM_TYPE_LABELS = {
-  simple_value: "基础数值",
-  simple_progress: "基础进度条",
-  simple_line_chart: "基础折线图",
-  simple_line: "基础线条",
-  simple_label: "基础标签",
-  simple_rect: "基础矩形",
-  simple_circle: "基础圆形",
-  label_text: "标签数值",
-  full_chart: "复杂图表",
-  full_progress: "复杂进度条",
-  full_gauge: "复杂仪表盘",
-};
-
-const ALIAS_LABELS = {
-  "alias.cpu.usage": "CPU usage",
-  "alias.cpu.temp": "CPU temperature",
-  "alias.cpu.freq": "CPU frequency",
-  "alias.cpu.max_freq": "CPU max frequency",
-  "alias.cpu.power": "CPU power",
-  "alias.memory.usage": "Memory usage",
-  "alias.memory.used": "Memory used",
-  "alias.gpu.fps": "GPU FPS",
-  "alias.gpu.usage": "GPU usage",
-  "alias.gpu.power": "GPU power",
-  "alias.gpu.vram": "GPU VRAM usage",
-  "alias.gpu.temp": "GPU temperature",
-  "alias.gpu.fan": "GPU fan speed",
-  "alias.gpu.freq": "GPU frequency",
-  "alias.gpu.max_freq": "GPU max frequency",
-  "alias.net.upload": "Network upload",
-  "alias.net.download": "Network download",
-  "alias.net.ip": "IP address",
-  "alias.net.interface": "Network interface",
-  "alias.system.time": "System time",
-  "alias.system.hostname": "Host name",
-  "alias.system.load": "System load",
-  "alias.system.resolution": "Display resolution",
-  "alias.system.refresh_rate": "Display refresh rate",
-  "alias.system.display": "Display mode",
-  "alias.disk.temp": "Disk temperature",
-  "alias.fan.cpu": "CPU fan speed",
-  "alias.fan.gpu": "GPU fan speed",
-  "alias.fan.system": "System fan speed",
 };
 
 const PROFILE_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -234,7 +170,7 @@ const visibleTabs = computed(() => {
 
 const monitorOptions = computed(() =>
   monitorCatalog.value.map((name) => {
-    const label = String(monitorLabelMap[name] || monitorAliasLabel(name) || "").trim();
+    const label = String(monitorLabelMap[name] || aliasLabel(name) || "").trim();
     if (!label || label === name) return { label: name, value: name };
     return { label: `${label} (${name})`, value: name };
   }),
@@ -252,6 +188,10 @@ const committedConfigJson = ref("");
 const canUndo = computed(() => undoStack.value.length > 0);
 
 let itemIdSeed = 1;
+
+function aliasLabel(name) {
+  return monitorAliasLabel(name, state.meta?.monitor_alias_labels || null);
+}
 
 function createItemId() {
   const stamp = Date.now();
@@ -315,82 +255,6 @@ function pushUndoSnapshot(operation = "") {
   }
 }
 
-function buildStyleKeySet(styleKeys) {
-  const set = new Set();
-  normalizeStyleKeys(styleKeys).forEach((meta) => {
-    if (meta.key) set.add(meta.key);
-  });
-  return set;
-}
-
-function normalizeStyleMap(raw, styleKeySet) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const result = {};
-  Object.entries(source).forEach(([key, value]) => {
-    const name = String(key || "").trim();
-    if (!name || !styleKeySet.has(name)) return;
-    result[name] = value;
-  });
-  return result;
-}
-
-function normalizeRenderAttrs(raw, styleKeySet) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const result = {};
-  Object.entries(source).forEach(([key, value]) => {
-    const name = String(key || "").trim();
-    if (!name || styleKeySet.has(name)) return;
-    result[name] = value;
-  });
-  return result;
-}
-
-function normalizeTypeDefaults(raw, styleKeySet) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const result = {};
-  DEFAULT_ITEM_TYPES.forEach((type) => {
-    const input = source[type] && typeof source[type] === "object" ? source[type] : {};
-    result[type] = {
-      render_attrs_map: normalizeRenderAttrs(input.render_attrs_map, styleKeySet),
-      style: normalizeStyleMap(input.style, styleKeySet),
-    };
-  });
-  Object.keys(source).forEach((type) => {
-    if (result[type]) return;
-    const input = source[type] && typeof source[type] === "object" ? source[type] : {};
-    result[type] = {
-      render_attrs_map: normalizeRenderAttrs(input.render_attrs_map, styleKeySet),
-      style: normalizeStyleMap(input.style, styleKeySet),
-    };
-  });
-  return result;
-}
-
-function normalizeMonitorName(raw) {
-  const name = String(raw || "").trim();
-  if (!name || name === "-") return "";
-  return name;
-}
-
-function monitorAliasLabel(raw) {
-  const name = String(raw || "").trim();
-  if (!name) return "";
-  if (ALIAS_LABELS[name]) return ALIAS_LABELS[name];
-  if (!name.startsWith("alias.")) return "";
-  const text = name
-    .slice(6)
-    .split(".")
-    .filter(Boolean)
-    .map((part) => {
-      if (part === "cpu" || part === "gpu" || part === "ip" || part === "fps" || part === "vram") {
-        return part.toUpperCase();
-      }
-      return part.charAt(0).toUpperCase() + part.slice(1);
-    })
-    .join(" ");
-  return text || "Alias";
-}
-
 function mergeMonitorNames(names) {
   if (!Array.isArray(names) || names.length === 0) return;
   let changed = false;
@@ -398,9 +262,9 @@ function mergeMonitorNames(names) {
     const name = normalizeMonitorName(raw);
     if (!name || monitorCatalogSet.has(name)) return;
     monitorCatalogSet.add(name);
-    const aliasLabel = monitorAliasLabel(name);
-    if (aliasLabel && !monitorLabelMap[name]) {
-      monitorLabelMap[name] = aliasLabel;
+    const label = aliasLabel(name);
+    if (label && !monitorLabelMap[name]) {
+      monitorLabelMap[name] = label;
     }
     changed = true;
   });
@@ -415,7 +279,7 @@ function mergeSnapshotMonitors(snapshot) {
   Object.entries(snapshot.values || {}).forEach(([name, item]) => {
     const monitor = normalizeMonitorName(name);
     if (!monitor) return;
-    const label = String(item?.label || monitorAliasLabel(monitor) || "").trim();
+    const label = String(item?.label || aliasLabel(monitor) || "").trim();
     if (!label) return;
     monitorLabelMap[monitor] = label;
   });
@@ -427,59 +291,13 @@ function mergeConfigMonitors(config) {
   mergeMonitorNames((config.custom_monitors || []).map((item) => item?.name));
 }
 
-function ensureCollectorEntry(config, collectorName) {
-  if (!config.collector_config || typeof config.collector_config !== "object") {
-    config.collector_config = {};
-  }
-  if (!config.collector_config[collectorName]) {
-    config.collector_config[collectorName] = {
-      enabled: !!DEFAULT_COLLECTOR_ENABLED[collectorName],
-      options: {},
-    };
-  }
-  if (!config.collector_config[collectorName].options) {
-    config.collector_config[collectorName].options = {};
-  }
-}
-
-function normalizeConfig(cfg, styleKeysRaw = []) {
-  const styleKeySet = buildStyleKeySet(styleKeysRaw);
-  const config = deepClone(cfg || {});
-  config.name = String(config.name || "web");
-  config.width = Math.max(10, Number(config.width || 480));
-  config.height = Math.max(10, Number(config.height || 320));
-  config.layout_padding = Math.max(0, Number(config.layout_padding || 0));
-  config.refresh_interval = Math.max(100, Number(config.refresh_interval || 1000));
-  config.collect_warn_ms = Math.max(10, Number(config.collect_warn_ms || 100));
-  config.render_wait_max_ms = Math.max(0, Number(config.render_wait_max_ms || 300));
-  config.ax206_reconnect_ms = Math.min(60000, Math.max(100, Number(config.ax206_reconnect_ms || 3000)));
-  config.history_size = Math.max(10, Number(config.history_size || 180));
-  config.default_history_points = Math.max(10, Number(config.default_history_points || 150));
-  config.default_font = String(config.default_font || "");
-  config.style_base = normalizeStyleMap(config.style_base, styleKeySet);
-  config.allow_custom_style = config.allow_custom_style === true;
-  config.font_families = Array.isArray(config.font_families) ? config.font_families : [];
-  config.output_types = Array.isArray(config.output_types) ? config.output_types : ["memimg"];
-  config.pause_collect_on_lock = config.pause_collect_on_lock === true;
-  config.type_defaults = normalizeTypeDefaults(config.type_defaults, styleKeySet);
-  config.items = Array.isArray(config.items) ? config.items : [];
-  const itemIdSet = new Set();
-  config.items = config.items.map((item) => {
-    const next = { ...(item || {}) };
-    next.id = String(next.id || "").trim() || createItemId();
-    if (itemIdSet.has(next.id)) {
-      next.id = createItemId();
-    }
-    itemIdSet.add(next.id);
-    next.custom_style = config.allow_custom_style ? next.custom_style === true : false;
-    next.style = normalizeStyleMap(next.style, styleKeySet);
-    next.render_attrs_map = normalizeRenderAttrs(next.render_attrs_map, styleKeySet);
-    return next;
+function normalizeConfig(cfg, styleKeysRaw = [], itemTypesRaw = []) {
+  return normalizeConfigModel(cfg, {
+    styleKeysRaw,
+    itemTypesRaw,
+    createItemId,
+    defaultCollectorEnabled: DEFAULT_COLLECTOR_ENABLED,
   });
-  config.custom_monitors = Array.isArray(config.custom_monitors) ? config.custom_monitors : [];
-  config.collector_config = config.collector_config || {};
-  Object.keys(DEFAULT_COLLECTOR_ENABLED).forEach((name) => ensureCollectorEntry(config, name));
-  return config;
 }
 
 function createDefaultItem(type = "simple_value", monitor = "") {
@@ -492,7 +310,7 @@ function createDefaultItem(type = "simple_value", monitor = "") {
     type,
     edit_ui_name: "",
     custom_style: false,
-    monitor: MONITOR_REQUIRED_TYPES.has(type) ? defaultMonitor : "",
+    monitor: isMonitorRequiredType(type) ? defaultMonitor : "",
     x: 10,
     y: 10,
     width: isSimpleLine ? 160 : isFullGauge ? 150 : 140,
@@ -512,7 +330,7 @@ function undoLastChange() {
   if (readonlyProfile.value || state.saving || undoStack.value.length <= 0) return;
   const last = undoStack.value.pop();
   if (!last?.config) return;
-  state.config = normalizeConfig(last.config, state.meta?.style_keys || []);
+  state.config = normalizeConfig(last.config, state.meta?.style_keys || [], state.meta?.item_types || []);
   mergeConfigMonitors(state.config);
   normalizeSelection();
   const currentJson = serializeConfig(state.config);
@@ -524,7 +342,11 @@ function undoLastChange() {
 function restoreUnsavedChanges() {
   if (readonlyProfile.value || state.saving || !state.dirty) return;
   if (!committedConfig.value) return;
-  state.config = normalizeConfig(deepClone(committedConfig.value), state.meta?.style_keys || []);
+  state.config = normalizeConfig(
+    deepClone(committedConfig.value),
+    state.meta?.style_keys || [],
+    state.meta?.item_types || [],
+  );
   mergeConfigMonitors(state.config);
   normalizeSelection();
   state.dirty = false;
@@ -560,7 +382,7 @@ async function onImportFileChange(event) {
       throw new Error("配置文件格式不正确");
     }
     pushUndoSnapshot("import-config");
-    state.config = normalizeConfig(imported, state.meta?.style_keys || []);
+    state.config = normalizeConfig(imported, state.meta?.style_keys || [], state.meta?.item_types || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     setDirty();
@@ -765,7 +587,7 @@ async function loadInitial() {
     ]);
 
     state.meta = metaRes;
-    state.config = normalizeConfig(configRes.config, metaRes?.style_keys || []);
+    state.config = normalizeConfig(configRes.config, metaRes?.style_keys || [], metaRes?.item_types || []);
     state.profiles = profilesRes.items || [];
     state.collectors = collectorsRes.items || [];
     if (snapshotRes && typeof snapshotRes === "object") {
@@ -830,7 +652,7 @@ function onItemFieldChange({ field, value }) {
   currentItem.value[field] = value;
   if (
     field === "type" &&
-    MONITOR_REQUIRED_TYPES.has(String(value || "")) &&
+    isMonitorRequiredType(String(value || "")) &&
     !String(currentItem.value.monitor || "").trim()
   ) {
     currentItem.value.monitor = String(monitorOptions.value[0]?.value || "");
@@ -950,7 +772,7 @@ async function switchProfile() {
       body: JSON.stringify({ name: state.editingProfile }),
     });
     state.meta = { ...(state.meta || {}), active_profile: res.active || state.editingProfile };
-    state.config = normalizeConfig(res.config, state.meta?.style_keys || []);
+    state.config = normalizeConfig(res.config, state.meta?.style_keys || [], state.meta?.item_types || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     markCommittedFromCurrent();
@@ -966,7 +788,7 @@ async function saveConfig() {
   if (!state.config || readonlyProfile.value) return;
   const missingMonitorIndex = state.config.items.findIndex(
     (item) =>
-      MONITOR_REQUIRED_TYPES.has(String(item.type || "")) &&
+      isMonitorRequiredType(String(item.type || "")) &&
       !String(item.monitor || "").trim(),
   );
   if (missingMonitorIndex >= 0) {
@@ -1062,7 +884,7 @@ async function renameProfile() {
     if (res.active) state.meta = { ...(state.meta || {}), active_profile: res.active };
     state.editingProfile = newName;
     if (res.config) {
-      state.config = normalizeConfig(res.config, state.meta?.style_keys || []);
+      state.config = normalizeConfig(res.config, state.meta?.style_keys || [], state.meta?.item_types || []);
       mergeConfigMonitors(state.config);
       await refreshMonitorCatalog();
     }
@@ -1088,7 +910,7 @@ async function deleteProfile() {
     const loaded = await api(`/api/profiles/${encodeURIComponent(state.editingProfile)}`).catch(() =>
       api("/api/config"),
     );
-    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || []);
+    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || [], state.meta?.item_types || []);
     mergeConfigMonitors(state.config);
     state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     markCommittedFromCurrent();
@@ -1142,7 +964,7 @@ async function setEditingProfile(name) {
   try {
     const loaded = await api(`/api/profiles/${encodeURIComponent(nextProfile)}`);
     state.editingProfile = nextProfile;
-    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || []);
+    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || [], state.meta?.item_types || []);
     mergeConfigMonitors(state.config);
     if (state.config.items.length <= 0) {
       state.selectedIndex = -1;

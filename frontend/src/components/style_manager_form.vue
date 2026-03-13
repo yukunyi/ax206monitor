@@ -132,16 +132,38 @@ function colorArray4(key, fallback) {
   return out;
 }
 
+function defaultFloat4(key) {
+  const raw = styleDefaultValue(props.styleKeys, key, props.itemType);
+  const out = [25, 50, 75, 100];
+  if (!Array.isArray(raw)) return out;
+  for (let i = 0; i < 4; i += 1) {
+    const n = Number(raw[i]);
+    if (Number.isFinite(n)) out[i] = n;
+  }
+  return out;
+}
+
+function defaultColor4(key) {
+  const raw = styleDefaultValue(props.styleKeys, key, props.itemType);
+  const out = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
+  if (!Array.isArray(raw)) return out;
+  for (let i = 0; i < 4; i += 1) {
+    const text = String(raw[i] || "").trim();
+    if (text) out[i] = text;
+  }
+  return out;
+}
+
 function patchArrayValue(key, index, nextValue) {
   const kind = fieldKind(key);
   if (kind === "float4") {
-    const prev = numberArray4(key, [25, 50, 75, 100]);
+    const prev = numberArray4(key, defaultFloat4(key));
     prev[index] = Number(nextValue || 0);
     emit("update-style", { key, value: prev });
     return;
   }
   if (kind === "color4") {
-    const prev = colorArray4(key, ["#22c55e", "#eab308", "#f97316", "#ef4444"]);
+    const prev = colorArray4(key, defaultColor4(key));
     prev[index] = String(nextValue || "");
     emit("update-style", { key, value: prev });
   }
@@ -158,7 +180,7 @@ function removeField(key) {
 function onAddSelected() {
   const key = String(addKey.value || "").trim();
   if (!key) return;
-  let defaultValue = styleDefaultValue(key, props.itemType);
+  let defaultValue = styleDefaultValue(props.styleKeys, key, props.itemType);
   if (key === "font_family") {
     const options = metaFor(key)?.options || [];
     const first = options.length > 0 ? String(options[0]?.value || "").trim() : "";
@@ -234,7 +256,7 @@ function onAddSelected() {
             <template v-else-if="fieldKind(key) === 'float4'">
               <n-space size="4" :wrap="false" class="array_inputs">
                 <n-input-number
-                  v-for="(item, idx) in numberArray4(key, [25, 50, 75, 100])"
+                  v-for="(item, idx) in numberArray4(key, defaultFloat4(key))"
                   :key="idx"
                   :value="item"
                   :show-button="false"
@@ -246,7 +268,7 @@ function onAddSelected() {
             <template v-else-if="fieldKind(key) === 'color4'">
               <n-space size="4" :wrap="false" class="array_inputs">
                 <pure-color-input
-                  v-for="(item, idx) in colorArray4(key, ['#22c55e', '#eab308', '#f97316', '#ef4444'])"
+                  v-for="(item, idx) in colorArray4(key, defaultColor4(key))"
                   :key="idx"
                   :value="item"
                   :disabled="disabled"

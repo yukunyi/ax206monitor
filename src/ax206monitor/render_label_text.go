@@ -18,22 +18,18 @@ func (r *LabelTextRenderer) GetType() string {
 	return r.itemType
 }
 
-func (r *LabelTextRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	monitor := registry.Get(item.Monitor)
-	if monitor == nil || !monitor.IsAvailable() {
-		return nil
-	}
-	value := monitor.GetValue()
-	if value == nil {
+func (r *LabelTextRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	monitor, value, ok := frame.AvailableItemValue(item)
+	if !ok {
 		return nil
 	}
 
-	labelText := strings.TrimSpace(getItemAttrStringCfg(item, config, "label", ""))
+	labelText := resolveItemLabelText(item, config)
 	if labelText == "" {
-		labelText = strings.TrimSpace(item.Text)
+		labelText = resolveItemText(item)
 	}
 	if labelText == "" {
-		labelText = strings.TrimSpace(monitor.GetLabel())
+		labelText = strings.TrimSpace(monitor.label)
 	}
 	if labelText == "" {
 		labelText = strings.TrimSpace(item.Monitor)
@@ -54,52 +50,37 @@ func (r *LabelTextRenderer) renderLabelText1(
 	item *ItemConfig,
 	fontCache *FontCache,
 	config *MonitorConfig,
-	monitor *CollectItem,
+	monitor *RenderMonitorSnapshot,
 	labelText string,
 	valueText string,
 	unitText string,
 ) {
-	padding := float64(getItemAttrIntCfg(item, config, "content_padding", 3))
-	if padding < 2 {
-		padding = 2
-	}
-
-	valueSize := resolveItemFontSize(item, config, 16)
-	valueSize = getItemAttrIntCfg(item, config, "value_font_size", valueSize)
-	if valueSize < 8 {
-		valueSize = 8
-	}
-	labelSize := getItemAttrIntCfg(item, config, "label_font_size", valueSize-2)
-	if labelSize <= 0 {
-		labelSize = resolveLabelFontSize(item, config, valueSize-2)
-	}
-	if labelSize < 8 {
-		labelSize = 8
-	}
-	unitSize := resolveUnitFontSize(item, config, labelSize)
-	if unitSize < 8 {
-		unitSize = 8
-	}
+	paddingX, paddingY := resolveContentPaddingXY(item, config, 3, 3, 2, 0)
+	valueFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
+	labelFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleLabel, 16, 8)
+	unitFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 
 	labelColor := resolveItemStaticColor(item, config)
 	valueColor := resolveMonitorColor(item, monitor, config)
 	unitColor := resolveUnitColor(item, config, valueColor)
-	centerY := float64(item.Y) + float64(item.Height)/2
+	textTop := float64(item.Y) + paddingY
+	textHeight := float64(item.Height) - paddingY*2
+	if textHeight < 1 {
+		textHeight = 1
+		textTop = float64(item.Y)
+	}
+	centerY := textTop + textHeight/2
 
-	labelFace := resolveFontFace(fontCache, labelSize)
 	dc.SetColor(parseColor(labelColor))
-	drawMetricAnchoredText(dc, labelFace, labelText, float64(item.X)+padding, centerY, 0)
+	drawMetricAnchoredText(dc, labelFace, labelText, float64(item.X)+paddingX, centerY, 0)
 
-	rightX := float64(item.X+item.Width) - padding
+	rightX := float64(item.X+item.Width) - paddingX
 	if strings.TrimSpace(unitText) == "" {
-		valueFace := resolveFontFace(fontCache, valueSize)
 		dc.SetColor(parseColor(valueColor))
 		drawMetricAnchoredText(dc, valueFace, valueText, rightX, centerY, 1)
 		return
 	}
 
-	valueFace := resolveFontFace(fontCache, valueSize)
-	unitFace := resolveFontFace(fontCache, unitSize)
 	dc.SetFontFace(valueFace)
 	valueWidth, _ := dc.MeasureString(valueText)
 	dc.SetFontFace(unitFace)

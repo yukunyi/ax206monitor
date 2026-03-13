@@ -12,8 +12,12 @@ func (r *LabelRenderer) GetType() string {
 	return itemTypeSimpleLabel
 }
 
-func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	_ = registry
+func (r *LabelRenderer) RequiresMonitor() bool {
+	return false
+}
+
+func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	_ = frame
 	if item == nil || item.Text == "" {
 		return nil
 	}

@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import StyleManagerForm from "./style_manager_form.vue";
 import { normalizeStyleKeys, styleDefaultValue } from "../style_keys";
+import { getItemTypeLabel, normalizeItemTypes } from "../item_types";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -15,24 +16,8 @@ function onField(path, value) {
   emit("change", { path, value });
 }
 
-const ITEM_TYPE_LABELS = {
-  simple_value: "基础数值",
-  simple_progress: "基础进度条",
-  simple_line_chart: "基础折线图",
-  simple_line: "基础线条",
-  simple_label: "基础标签",
-  simple_rect: "基础矩形",
-  simple_circle: "基础圆形",
-  label_text: "标签数值",
-  full_chart: "复杂图表",
-  full_progress: "复杂进度条",
-  full_gauge: "复杂仪表盘",
-};
-
 const typeDefaultRows = computed(() => {
-  const order = Array.isArray(props.meta?.item_types) && props.meta.item_types.length > 0
-    ? props.meta.item_types.map((item) => (typeof item === "string" ? item : String(item?.value || "")))
-    : Object.keys(ITEM_TYPE_LABELS);
+  const order = normalizeItemTypes(props.meta?.item_types);
   const unique = new Set(order.filter(Boolean));
   Object.keys(props.config.type_defaults || {}).forEach((type) => unique.add(type));
   return [...unique];
@@ -57,11 +42,6 @@ const typeDefaultGroups = computed(() => {
     { key: "complex", types: complex },
   ].filter((group) => group.types.length > 0);
 });
-
-function typeLabel(type) {
-  const key = String(type || "");
-  return ITEM_TYPE_LABELS[key] || key;
-}
 
 function typeDefaultEntry(type) {
   const table = props.config.type_defaults || {};
@@ -90,16 +70,13 @@ const showGlobalDefaults = ref(false);
 const selectedGlobalType = ref("__all__");
 
 const globalTypeOptions = computed(() => {
-  const fromMeta = Array.isArray(props.meta?.item_types) ? props.meta.item_types : [];
-  const candidates = fromMeta.length > 0
-    ? fromMeta.map((item) => (typeof item === "string" ? item : String(item?.value || "")))
-    : Object.keys(ITEM_TYPE_LABELS);
+  const candidates = normalizeItemTypes(props.meta?.item_types);
   const set = new Set(candidates.map((item) => String(item || "").trim()).filter(Boolean));
   Object.keys(props.config.type_defaults || {}).forEach((type) => set.add(String(type || "").trim()));
   const options = [{ label: "全部类型", value: "__all__" }];
   [...set].sort().forEach((type) => {
     options.push({
-      label: `${typeLabel(type)} (${type})`,
+      label: `${getItemTypeLabel(type)} (${type})`,
       value: type,
     });
   });
@@ -120,7 +97,7 @@ const globalDefaultRows = computed(() => {
       })
       .join(" / ");
     const typeText = types.length > 0 ? types.join(", ") : "全部类型";
-    let defaultRaw = styleDefaultValue(meta.key, "");
+    let defaultRaw = styleDefaultValue(props.meta?.style_keys || [], meta.key, "");
     if (meta.key === "font_family") {
       const options = Array.isArray(meta.options) ? meta.options : [];
       const first = options.length > 0 ? String(options[0]?.value || "").trim() : "";
@@ -209,7 +186,7 @@ function isColorRow(row) {
               class="type_default_type"
             >
               <header class="type_default_type_title">
-                <span class="type_default_type_name">{{ typeLabel(type) }}</span>
+                <span class="type_default_type_name">{{ getItemTypeLabel(type) }}</span>
                 <span class="type_default_type_key">{{ type }}</span>
               </header>
 

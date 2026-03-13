@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import StyleManagerForm from "./style_manager_form.vue";
+import { patchObjectKey } from "../composables/object_patch";
+import { buildItemTypeOptions, getItemTypeLabel, isMonitorRequiredType } from "../item_types";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -56,79 +58,18 @@ const canvasStyle = computed(() => ({
   height: `${props.config.height * previewScale.value}px`,
 }));
 
-const TYPE_LABELS = {
-  simple_value: "基础数值",
-  simple_progress: "基础进度条",
-  simple_line_chart: "基础折线图",
-  simple_line: "基础线条",
-  simple_label: "基础标签",
-  simple_rect: "基础矩形",
-  simple_circle: "基础圆形",
-  label_text: "标签数值",
-  full_chart: "复杂图表",
-  full_progress: "复杂进度条",
-  full_gauge: "复杂仪表盘",
-};
-
-function typeLabel(type) {
-  const key = String(type || "");
-  return TYPE_LABELS[key] || key;
-}
-
-const itemTypeOptions = computed(() => {
-  const fallback = [
-    "simple_value",
-    "simple_progress",
-    "simple_line_chart",
-    "simple_line",
-    "simple_label",
-    "simple_rect",
-    "simple_circle",
-    "label_text",
-    "full_chart",
-    "full_progress",
-    "full_gauge",
-  ];
-  const list = Array.isArray(props.meta?.item_types) && props.meta.item_types.length > 0 ? props.meta.item_types : fallback;
-  return list
-    .map((item) => {
-      if (typeof item === "string") {
-        return { label: typeLabel(item), value: item };
-      }
-      const value = String(item?.value || "");
-      if (!value) return null;
-      const label = String(item?.label || typeLabel(value));
-      return { label, value };
-    })
-    .filter(Boolean);
-});
+const itemTypeOptions = computed(() => buildItemTypeOptions(props.meta?.item_types));
 
 const monitorSelectOptions = computed(() => props.monitorOptions || []);
 
 const selectedMonitorRequired = computed(() => {
   const type = String(selectedItem.value?.type || "");
-  return (
-    type === "simple_value" ||
-    type === "simple_progress" ||
-    type === "simple_line_chart" ||
-    type === "label_text" ||
-    type === "full_chart" ||
-    type === "full_progress" ||
-    type === "full_gauge"
-  );
+  return isMonitorRequiredType(type);
 });
 
 const addMonitorRequired = computed(() => {
   const type = String(addType.value || "");
-  return (
-    type === "simple_value" ||
-    type === "simple_progress" ||
-    type === "simple_line_chart" ||
-    type === "label_text" ||
-    type === "full_chart" ||
-    type === "full_progress" ||
-    type === "full_gauge"
-  );
+  return isMonitorRequiredType(type);
 });
 
 const selectedType = computed(() => String(selectedItem.value?.type || ""));
@@ -407,11 +348,7 @@ function updateRenderAttr(key, value) {
   if (props.readonlyProfile || props.selectedIndex < 0) return;
   const item = selectedItem.value;
   if (!item) return;
-  const next = { ...resolveRenderAttrs(item) };
-  const shouldDelete =
-    value === undefined || value === null || (typeof value === "string" && value.trim() === "");
-  if (shouldDelete) delete next[key];
-  else next[key] = value;
+  const next = patchObjectKey(resolveRenderAttrs(item), key, value, { removeEmptyString: true });
   emit("patch-item", {
     index: props.selectedIndex,
     patch: { render_attrs_map: next },
@@ -424,8 +361,7 @@ function updateItemStyle(payload) {
   if (!item) return;
   const key = String(payload?.key || "").trim();
   if (!key) return;
-  const next = { ...resolveItemStyle(item) };
-  next[key] = payload.value;
+  const next = patchObjectKey(resolveItemStyle(item), key, payload.value);
   emit("patch-item", {
     index: props.selectedIndex,
     patch: { style: next },
@@ -438,8 +374,7 @@ function removeItemStyle(payload) {
   if (!item) return;
   const key = String(payload?.key || "").trim();
   if (!key) return;
-  const next = { ...resolveItemStyle(item) };
-  delete next[key];
+  const next = patchObjectKey(resolveItemStyle(item), key, undefined);
   emit("patch-item", {
     index: props.selectedIndex,
     patch: { style: next },
@@ -539,7 +474,7 @@ watch(
             @click="emit('select-item', idx)"
           >
             <span class="item_name">{{ idx + 1 }}. {{ displayItemName(item) }}</span>
-            <small class="item_type">{{ typeLabel(item.type) }}</small>
+            <small class="item_type">{{ getItemTypeLabel(item.type) }}</small>
           </button>
         </n-space>
       </n-scrollbar>

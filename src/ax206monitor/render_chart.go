@@ -20,14 +20,9 @@ func (c *LineChartRenderer) GetType() string {
 	return itemTypeSimpleChart
 }
 
-func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	monitor := registry.Get(item.Monitor)
-	if monitor == nil || !monitor.IsAvailable() {
-		return nil
-	}
-
-	value := monitor.GetValue()
-	if value == nil {
+func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	monitor, value, ok := frame.AvailableItemValue(item)
+	if !ok {
 		return nil
 	}
 	val, ok := tryGetFloat64(value.Value)
@@ -35,7 +30,7 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
-	history := appendRenderHistory(c.history, item, itemTypeSimpleChart, val, 60, config)
+	history := appendRenderHistory(c.history, item, val)
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
@@ -49,11 +44,12 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	minVal, maxVal = resolveEffectiveMinMax(item, value, minVal, maxVal)
 
 	lineColor := resolveMonitorColor(item, monitor, config)
-	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 1.5)
-	if lineWidth < 1 {
-		lineWidth = 1
+	lineWidth := item.runtime.simpleChart.lineWidth
+	enableThresholdColors := item.runtime.simpleChart.enableThresholdColors
+	if !item.runtime.prepared {
+		lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 1.5), 1)
+		enableThresholdColors = getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
 	}
-	enableThresholdColors := getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
 	thresholds := []float64{}
 	colors := []string{}
 	if enableThresholdColors {
@@ -117,24 +113,6 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 	drawBaseItemBorder(dc, item, config, radius)
 	_ = fontCache
 	return nil
-}
-func resizeChartHistory(old []float64, historySize int) []float64 {
-	if historySize < 1 {
-		return []float64{}
-	}
-	resized := make([]float64, historySize)
-	for idx := range resized {
-		resized[idx] = math.NaN()
-	}
-	if len(old) == 0 {
-		return resized
-	}
-	copyLen := len(old)
-	if copyLen > historySize {
-		copyLen = historySize
-	}
-	copy(resized[historySize-copyLen:], old[len(old)-copyLen:])
-	return resized
 }
 
 func isFiniteHistoryValue(value float64) bool {

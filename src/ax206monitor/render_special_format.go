@@ -5,96 +5,133 @@ import (
 	"time"
 )
 
-func resolveItemDisplayValueParts(item *ItemConfig, monitor *CollectItem, value *CollectValue, config *MonitorConfig) (string, string) {
+const (
+	renderSpecialFormatNone       = ""
+	renderSpecialFormatTime       = "time"
+	renderSpecialFormatDisplay    = "display"
+	renderSpecialFormatResolution = "resolution"
+	renderSpecialFormatRefresh    = "refresh"
+)
+
+func resolveItemDisplayValueParts(item *ItemConfig, monitor *RenderMonitorSnapshot, value *CollectValue, config *MonitorConfig) (string, string) {
 	fallbackValue, fallbackUnit := FormatCollectValueParts(value, resolveUnitOverride(item))
-	keys := collectMonitorNameKeys(item, monitor)
+	format := resolveRenderSpecialFormat(item, monitor)
 
-	if matchMonitorName(keys, "alias.system.time", "go_native.system.current_time") {
-		layout := strings.TrimSpace(getItemAttrString(item, "format", ""))
-		if layout == "" {
-			layout = "2006-01-02 15:04:05"
-		}
-		return time.Now().Format(normalizeTimeLayout(layout)), ""
-	}
-
-	displayKind := detectDisplayFormatKind(keys)
-	if displayKind != "" {
+	switch format.kind {
+	case renderSpecialFormatTime:
+		return time.Now().Format(format.timeLayout), ""
+	case renderSpecialFormatDisplay, renderSpecialFormatResolution, renderSpecialFormatRefresh:
 		resolution, refresh, ok := getDisplayInfoSnapshot(2 * time.Minute)
 		if !ok {
 			return fallbackValue, fallbackUnit
 		}
-		template := strings.TrimSpace(getItemAttrString(item, "format", ""))
-		if template == "" {
-			switch displayKind {
-			case "resolution":
-				template = "{resolution}"
-			case "refresh":
-				template = "{refresh_rate}"
-			default:
-				template = "{resolution}@{refresh_rate}"
+		return formatDisplayTemplate(format.displayTemplate, resolution, refresh), ""
+	default:
+		_ = config
+		return fallbackValue, fallbackUnit
+	}
+}
+
+func prepareRenderSpecialFormatRuntime(item *ItemConfig) renderSpecialFormatRuntime {
+	runtime := renderSpecialFormatRuntime{
+		monitorKey: normalizeRenderMonitorKey(itemMonitorName(item)),
+	}
+	runtime.kind = detectRenderSpecialFormatKind(runtime.monitorKey)
+
+	rawFormat := strings.TrimSpace(getItemAttrString(item, "format", ""))
+	switch runtime.kind {
+	case renderSpecialFormatTime:
+		runtime.timeLayout = normalizeTimeLayout(rawFormat)
+	case renderSpecialFormatDisplay, renderSpecialFormatResolution, renderSpecialFormatRefresh:
+		runtime.displayTemplate = resolveDisplayTemplate(rawFormat, runtime.kind)
+	}
+	return runtime
+}
+
+func resolveRenderSpecialFormat(item *ItemConfig, monitor *RenderMonitorSnapshot) renderSpecialFormatRuntime {
+	if item != nil && item.runtime.prepared {
+		runtime := item.runtime.specialFormat
+		if runtime.kind != renderSpecialFormatNone {
+			return runtime
+		}
+		if monitor == nil {
+			return runtime
+		}
+		monitorKey := normalizeRenderMonitorKey(monitor.name)
+		if monitorKey == "" || monitorKey == runtime.monitorKey {
+			return runtime
+		}
+		runtime.monitorKey = monitorKey
+		runtime.kind = detectRenderSpecialFormatKind(monitorKey)
+		switch runtime.kind {
+		case renderSpecialFormatTime:
+			if runtime.timeLayout == "" {
+				runtime.timeLayout = normalizeTimeLayout("")
 			}
+		case renderSpecialFormatDisplay, renderSpecialFormatResolution, renderSpecialFormatRefresh:
+			runtime.displayTemplate = resolveDisplayTemplate("", runtime.kind)
 		}
-		return formatDisplayTemplate(template, resolution, refresh), ""
+		return runtime
 	}
 
-	_ = config
-	return fallbackValue, fallbackUnit
+	runtime := prepareRenderSpecialFormatRuntime(item)
+	if runtime.kind != renderSpecialFormatNone || monitor == nil {
+		return runtime
+	}
+	monitorKey := normalizeRenderMonitorKey(monitor.name)
+	if monitorKey == "" || monitorKey == runtime.monitorKey {
+		return runtime
+	}
+	runtime.monitorKey = monitorKey
+	runtime.kind = detectRenderSpecialFormatKind(monitorKey)
+	switch runtime.kind {
+	case renderSpecialFormatTime:
+		runtime.timeLayout = normalizeTimeLayout(strings.TrimSpace(getItemAttrString(item, "format", "")))
+	case renderSpecialFormatDisplay, renderSpecialFormatResolution, renderSpecialFormatRefresh:
+		runtime.displayTemplate = resolveDisplayTemplate(strings.TrimSpace(getItemAttrString(item, "format", "")), runtime.kind)
+	}
+	return runtime
 }
 
-func collectMonitorNameKeys(item *ItemConfig, monitor *CollectItem) []string {
-	seen := map[string]struct{}{}
-	keys := make([]string, 0, 2)
-	appendKey := func(raw string) {
-		name := strings.ToLower(strings.TrimSpace(raw))
-		if name == "" {
-			return
-		}
-		if _, exists := seen[name]; exists {
-			return
-		}
-		seen[name] = struct{}{}
-		keys = append(keys, name)
+func itemMonitorName(item *ItemConfig) string {
+	if item == nil {
+		return ""
 	}
-	if item != nil {
-		appendKey(item.Monitor)
-	}
-	if monitor != nil {
-		appendKey(monitor.GetName())
-	}
-	return keys
+	return item.Monitor
 }
 
-func matchMonitorName(keys []string, candidates ...string) bool {
-	if len(keys) == 0 || len(candidates) == 0 {
-		return false
-	}
-	set := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		name := strings.ToLower(strings.TrimSpace(candidate))
-		if name == "" {
-			continue
-		}
-		set[name] = struct{}{}
-	}
-	for _, key := range keys {
-		if _, ok := set[key]; ok {
-			return true
-		}
-	}
-	return false
+func normalizeRenderMonitorKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
-func detectDisplayFormatKind(keys []string) string {
-	if matchMonitorName(keys, "alias.system.display", "go_native.system.display") {
-		return "display"
+func detectRenderSpecialFormatKind(monitorKey string) string {
+	switch monitorKey {
+	case "alias.system.time", "go_native.system.current_time":
+		return renderSpecialFormatTime
+	case "alias.system.display", "go_native.system.display":
+		return renderSpecialFormatDisplay
+	case "alias.system.resolution", "go_native.system.resolution":
+		return renderSpecialFormatResolution
+	case "alias.system.refresh_rate", "go_native.system.refresh_rate":
+		return renderSpecialFormatRefresh
+	default:
+		return renderSpecialFormatNone
 	}
-	if matchMonitorName(keys, "alias.system.resolution", "go_native.system.resolution") {
-		return "resolution"
+}
+
+func resolveDisplayTemplate(template, kind string) string {
+	template = strings.TrimSpace(template)
+	if template != "" {
+		return template
 	}
-	if matchMonitorName(keys, "alias.system.refresh_rate", "go_native.system.refresh_rate") {
-		return "refresh"
+	switch kind {
+	case renderSpecialFormatResolution:
+		return "{resolution}"
+	case renderSpecialFormatRefresh:
+		return "{refresh_rate}"
+	default:
+		return "{resolution}@{refresh_rate}"
 	}
-	return ""
 }
 
 func formatDisplayTemplate(template, resolution, refresh string) string {

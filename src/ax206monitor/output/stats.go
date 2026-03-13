@@ -45,6 +45,7 @@ var (
 	outputRuntimeTotal  outputRuntimeAccumulator
 	outputRuntimeByType = make(map[string]*outputRuntimeAccumulator)
 	ax206DeviceRuntime  outputRuntimeAccumulator
+	httpPushByType      = make(map[string]*outputRuntimeAccumulator)
 )
 
 func recordOutputRuntime(typeName string, duration time.Duration, err error) {
@@ -171,4 +172,57 @@ func GetAX206DeviceFrameRuntimeStats() AX206DeviceFrameRuntimeStats {
 		MaxMS:  toMillis(ax206DeviceRuntime.maxNS),
 		AvgMS:  avgMillis(ax206DeviceRuntime.totalNS, ax206DeviceRuntime.calls),
 	}
+}
+
+func recordHTTPPushRuntime(typeName string, duration time.Duration, err error) {
+	if duration < 0 {
+		duration = 0
+	}
+	typeName = normalizeTypeName(typeName)
+	durationNS := duration.Nanoseconds()
+
+	outputRuntimeMu.Lock()
+	defer outputRuntimeMu.Unlock()
+
+	entry := httpPushByType[typeName]
+	if entry == nil {
+		entry = &outputRuntimeAccumulator{}
+		httpPushByType[typeName] = entry
+	}
+	entry.calls++
+	entry.lastNS = durationNS
+	entry.totalNS += durationNS
+	if durationNS > entry.maxNS {
+		entry.maxNS = durationNS
+	}
+	if err != nil {
+		entry.errors++
+	}
+}
+
+func GetHTTPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
+	outputRuntimeMu.RLock()
+	defer outputRuntimeMu.RUnlock()
+
+	result := make(map[string]OutputHandlerRuntimeStats, len(httpPushByType))
+	keys := make([]string, 0, len(httpPushByType))
+	for key := range httpPushByType {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		entry := httpPushByType[key]
+		if entry == nil {
+			continue
+		}
+		result[key] = OutputHandlerRuntimeStats{
+			Type:   key,
+			Calls:  entry.calls,
+			Errors: entry.errors,
+			LastMS: toMillis(entry.lastNS),
+			MaxMS:  toMillis(entry.maxNS),
+			AvgMS:  avgMillis(entry.totalNS, entry.calls),
+		}
+	}
+	return result
 }

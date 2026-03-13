@@ -62,12 +62,12 @@ type MonitorConfig struct {
 	StyleBase               map[string]interface{}      `json:"style_base,omitempty"`
 	AllowCustomStyle        bool                        `json:"allow_custom_style,omitempty"`
 	FontFamilies            []string                    `json:"font_families"`
+	Outputs                 []OutputConfig              `json:"outputs"`
 	OutputTypes             []string                    `json:"output_types"`
 	PauseCollectOnLock      bool                        `json:"pause_collect_on_lock,omitempty"`
 	RefreshInterval         int                         `json:"refresh_interval"`
 	CollectWarnMS           int                         `json:"collect_warn_ms,omitempty"`
 	RenderWaitMaxMS         int                         `json:"render_wait_max_ms,omitempty"`
-	AX206ReconnectMS        int                         `json:"ax206_reconnect_ms,omitempty"`
 	HistorySize             int                         `json:"history_size,omitempty"`
 	DefaultHistoryPoints    int                         `json:"default_history_points,omitempty"`
 	NetworkInterface        string                      `json:"network_interface,omitempty"`
@@ -99,6 +99,7 @@ type ItemConfig struct {
 	Text           string                 `json:"text,omitempty"`
 	Style          map[string]interface{} `json:"style,omitempty"`
 	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
+	runtime        renderItemRuntime
 }
 
 type ConfigManager struct {
@@ -214,7 +215,7 @@ func (config *MonitorConfig) GetDefaultFontName() string {
 }
 
 func (config *MonitorConfig) GetDefaultFontSize() int {
-	size := resolveStyleInt(nil, config, "medium_font_size", 0)
+	size := resolveStyleInt(nil, config, "text_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -222,7 +223,7 @@ func (config *MonitorConfig) GetDefaultFontSize() int {
 }
 
 func (config *MonitorConfig) GetDefaultValueFontSize() int {
-	size := resolveStyleInt(nil, config, "large_font_size", 0)
+	size := resolveStyleInt(nil, config, "value_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -230,7 +231,7 @@ func (config *MonitorConfig) GetDefaultValueFontSize() int {
 }
 
 func (config *MonitorConfig) GetDefaultLabelFontSize() int {
-	size := resolveStyleInt(nil, config, "medium_font_size", 0)
+	size := resolveStyleInt(nil, config, "text_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -238,7 +239,7 @@ func (config *MonitorConfig) GetDefaultLabelFontSize() int {
 }
 
 func (config *MonitorConfig) GetDefaultUnitFontSize() int {
-	size := resolveStyleInt(nil, config, "small_font_size", 0)
+	size := resolveStyleInt(nil, config, "unit_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -409,20 +410,6 @@ func (config *MonitorConfig) GetRenderWaitMaxDuration() time.Duration {
 		waitMS = maxByTick
 	}
 	return time.Duration(waitMS) * time.Millisecond
-}
-
-func (config *MonitorConfig) GetAX206ReconnectDuration() time.Duration {
-	reconnectMS := config.AX206ReconnectMS
-	if reconnectMS <= 0 {
-		reconnectMS = 3000
-	}
-	if reconnectMS < 100 {
-		reconnectMS = 100
-	}
-	if reconnectMS > 60000 {
-		reconnectMS = 60000
-	}
-	return time.Duration(reconnectMS) * time.Millisecond
 }
 
 func (config *MonitorConfig) IsPauseCollectOnLockEnabled() bool {

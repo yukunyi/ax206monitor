@@ -1,12 +1,5 @@
 package output
 
-import (
-	"bytes"
-	"fmt"
-	"image"
-	"image/png"
-)
-
 type MemImgOutputHandler struct{}
 
 func NewMemImgOutputHandler() *MemImgOutputHandler {
@@ -17,12 +10,15 @@ func (m *MemImgOutputHandler) GetType() string {
 	return "memimg"
 }
 
-func (m *MemImgOutputHandler) Output(img image.Image) error {
-	var buffer bytes.Buffer
-	if err := png.Encode(&buffer, img); err != nil {
-		return fmt.Errorf("failed to encode memimg png: %w", err)
+func (m *MemImgOutputHandler) OutputFrame(frame *OutputFrame) error {
+	if frame == nil {
+		return nil
 	}
-	SetMemImgPNG(buffer.Bytes())
+	data, err := frame.PNG()
+	if err != nil {
+		return err
+	}
+	SetMemImgPNG(data)
 	return nil
 }
 

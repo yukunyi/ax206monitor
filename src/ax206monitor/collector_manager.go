@@ -27,6 +27,7 @@ type BaseCollectItem struct {
 	enabled     bool
 	rateWindow  time.Duration
 	rateSamples []rateSample
+	version     uint64
 	mutex       sync.RWMutex
 }
 
@@ -65,6 +66,23 @@ func (b *BaseCollectItem) GetValue() *CollectValue {
 	return &copied
 }
 
+func (b *BaseCollectItem) SnapshotState() (uint64, bool, *CollectValue) {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	var copied *CollectValue
+	if b.value != nil {
+		valueCopy := *b.value
+		copied = &valueCopy
+	}
+	return b.version, b.available, copied
+}
+
+func (b *BaseCollectItem) Version() uint64 {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	return b.version
+}
+
 func (b *BaseCollectItem) IsAvailable() bool {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
@@ -81,6 +99,7 @@ func (b *BaseCollectItem) SetEnabled(enabled bool) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.enabled = enabled
+	b.version++
 }
 
 func (b *BaseCollectItem) SetValue(value interface{}) {
@@ -115,6 +134,7 @@ func (b *BaseCollectItem) SetValue(value interface{}) {
 		}
 	}
 	b.value.Value = value
+	b.version++
 }
 
 func (b *BaseCollectItem) SetUnit(unit string) {
@@ -128,12 +148,14 @@ func (b *BaseCollectItem) SetUnit(unit string) {
 	if b.rateWindow <= 0 {
 		b.rateSamples = nil
 	}
+	b.version++
 }
 
 func (b *BaseCollectItem) SetAvailable(available bool) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.available = available
+	b.version++
 }
 
 func FormatCollectValue(value *CollectValue, showUnit bool, unitOverride string) string {
@@ -395,6 +417,11 @@ type CollectorManager struct {
 	collectorEnabled map[string]bool
 	items            map[string]*CollectItem
 	itemToCollector  map[string]string
+	aliasResolution  map[string]string
+	allItemsSnapshot map[string]*CollectItem
+	allNamesSnapshot []string
+	snapshotDirty    bool
+	snapshotVersion  uint64
 
 	requiredSet      map[string]struct{}
 	requiredResolved map[string]struct{}
@@ -459,6 +486,8 @@ func NewCollectorManager() *CollectorManager {
 		collectorEnabled: make(map[string]bool),
 		items:            make(map[string]*CollectItem),
 		itemToCollector:  make(map[string]string),
+		aliasResolution:  make(map[string]string),
+		snapshotDirty:    true,
 		requiredSet:      make(map[string]struct{}),
 		requiredResolved: make(map[string]struct{}),
 		epochStates:      make(map[int64]*collectorEpochState),
@@ -534,8 +563,42 @@ func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector) {
 		m.items[key] = item
 		m.itemToCollector[key] = discoveredOwners[key]
 	}
+	m.aliasResolution = buildMonitorAliasResolution(m.items)
+	m.invalidateItemSnapshotsLocked()
 	m.rebuildRequiredResolvedLocked()
 	m.mutex.Unlock()
+}
+
+func (m *CollectorManager) invalidateItemSnapshotsLocked() {
+	m.allItemsSnapshot = nil
+	m.allNamesSnapshot = nil
+	m.snapshotDirty = true
+	m.snapshotVersion++
+}
+
+func (m *CollectorManager) rebuildItemSnapshotsLocked() {
+	if !m.snapshotDirty {
+		return
+	}
+	items := make(map[string]*CollectItem, len(m.items)+len(m.aliasResolution))
+	for name, item := range m.items {
+		items[name] = item
+	}
+	for aliasName, targetName := range m.aliasResolution {
+		item := m.items[targetName]
+		if item == nil {
+			continue
+		}
+		items[aliasName] = item
+	}
+	names := make([]string, 0, len(items))
+	for name := range items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	m.allItemsSnapshot = items
+	m.allNamesSnapshot = names
+	m.snapshotDirty = false
 }
 
 func (m *CollectorManager) discoverAll() {
@@ -1121,29 +1184,49 @@ func (m *CollectorManager) Get(name string) *CollectItem {
 	if item, exists := m.items[normalized]; exists {
 		return item
 	}
-	resolved := resolveMonitorAliasWithItems(normalized, m.items)
-	if resolved == "" || resolved == normalized {
+	target, ok := m.aliasResolution[normalized]
+	if !ok {
 		return nil
 	}
-	return m.items[resolved]
+	return m.items[target]
 }
 
 func (m *CollectorManager) GetAll() map[string]*CollectItem {
 	m.mutex.RLock()
+	if !m.snapshotDirty {
+		items := m.allItemsSnapshot
+		m.mutex.RUnlock()
+		return items
+	}
+	m.mutex.RUnlock()
+
+	m.mutex.Lock()
+	m.rebuildItemSnapshotsLocked()
+	items := m.allItemsSnapshot
+	m.mutex.Unlock()
+	return items
+}
+
+func (m *CollectorManager) AllNames() []string {
+	m.mutex.RLock()
+	if !m.snapshotDirty {
+		names := append([]string(nil), m.allNamesSnapshot...)
+		m.mutex.RUnlock()
+		return names
+	}
+	m.mutex.RUnlock()
+
+	m.mutex.Lock()
+	m.rebuildItemSnapshotsLocked()
+	names := append([]string(nil), m.allNamesSnapshot...)
+	m.mutex.Unlock()
+	return names
+}
+
+func (m *CollectorManager) SnapshotVersion() uint64 {
+	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	aliasMap := buildMonitorAliasResolution(m.items)
-	result := make(map[string]*CollectItem, len(m.items)+len(aliasMap))
-	for key, item := range m.items {
-		result[key] = item
-	}
-	for aliasName, targetName := range aliasMap {
-		item := m.items[targetName]
-		if item == nil {
-			continue
-		}
-		result[aliasName] = item
-	}
-	return result
+	return m.snapshotVersion
 }
 
 func (m *CollectorManager) Update(requiredItems []string) error {
@@ -1208,8 +1291,8 @@ func (m *CollectorManager) PreviewMode() bool {
 	return m.previewMode
 }
 
-func (m *CollectorManager) ResolveOutputTypes(outputTypes []string) []string {
-	return resolveOutputTypes(&MonitorConfig{OutputTypes: outputTypes}, m.PreviewMode())
+func (m *CollectorManager) ResolveOutputSummary(outputs []OutputConfig) OutputConfigSummary {
+	return resolveOutputConfigSummaryFromList(outputs, m.PreviewMode())
 }
 
 func (m *CollectorManager) CollectorStates() map[string]bool {
@@ -1354,8 +1437,12 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.system.render.avg_ms",
 		"go_native.system.output.max_ms",
 		"go_native.system.output.avg_ms",
+		"go_native.system.output.memimg.last_ms",
 		"go_native.system.output.memimg.max_ms",
 		"go_native.system.output.memimg.avg_ms",
+		"go_native.system.output.httppush.last_ms",
+		"go_native.system.output.httppush.max_ms",
+		"go_native.system.output.httppush.avg_ms",
 		"go_native.system.output.ax206usb.last_ms",
 		"go_native.system.output.ax206usb.max_ms",
 		"go_native.system.output.ax206usb.avg_ms",

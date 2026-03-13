@@ -3,9 +3,7 @@
 package output
 
 import (
-	"image"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -14,12 +12,6 @@ const (
 	minAX206ReconnectInterval     = 100 * time.Millisecond
 	maxAX206ReconnectInterval     = 60 * time.Second
 )
-
-var ax206ReconnectIntervalNS atomic.Int64
-
-func init() {
-	ax206ReconnectIntervalNS.Store(int64(defaultAX206ReconnectInterval))
-}
 
 func normalizeAX206ReconnectInterval(interval time.Duration) time.Duration {
 	if interval <= 0 {
@@ -34,15 +26,6 @@ func normalizeAX206ReconnectInterval(interval time.Duration) time.Duration {
 	return interval
 }
 
-func SetAX206ReconnectInterval(interval time.Duration) {
-	ax206ReconnectIntervalNS.Store(int64(normalizeAX206ReconnectInterval(interval)))
-}
-
-func getAX206ReconnectInterval() time.Duration {
-	value := time.Duration(ax206ReconnectIntervalNS.Load())
-	return normalizeAX206ReconnectInterval(value)
-}
-
 type AX206USBOutputHandler struct {
 	deviceMu sync.RWMutex
 	device   *AX206USB
@@ -53,20 +36,24 @@ type AX206USBOutputHandler struct {
 	loopWg   sync.WaitGroup
 
 	reconnectCh chan struct{}
-	frameCh     chan image.Image
+	frameCh     chan *OutputFrame
 
 	lastConnectErrMu sync.Mutex
 	lastConnectErrAt time.Time
 
 	lastTransferErrMu sync.Mutex
 	lastTransferErrAt time.Time
+
+	reconnectIntervalMu sync.RWMutex
+	reconnectInterval   time.Duration
 }
 
-func NewAX206USBOutputHandler() (*AX206USBOutputHandler, error) {
+func NewAX206USBOutputHandler(cfg OutputConfig) (*AX206USBOutputHandler, error) {
 	handler := &AX206USBOutputHandler{
-		stopCh:      make(chan struct{}),
-		reconnectCh: make(chan struct{}, 1),
-		frameCh:     make(chan image.Image, 1),
+		stopCh:            make(chan struct{}),
+		reconnectCh:       make(chan struct{}, 1),
+		frameCh:           make(chan *OutputFrame, 1),
+		reconnectInterval: normalizeAX206ReconnectInterval(time.Duration(normalizeAX206ReconnectMS(cfg.ReconnectMS)) * time.Millisecond),
 	}
 	handler.loopWg.Add(2)
 	go handler.connectionLoop()
@@ -78,11 +65,11 @@ func (h *AX206USBOutputHandler) GetType() string {
 	return TypeAX206USB
 }
 
-func (h *AX206USBOutputHandler) Output(img image.Image) error {
-	if img == nil {
+func (h *AX206USBOutputHandler) OutputFrame(frame *OutputFrame) error {
+	if frame == nil {
 		return nil
 	}
-	enqueueLatestAX206Frame(h.frameCh, img)
+	enqueueLatestAX206Frame(h.frameCh, frame)
 	return nil
 }
 
@@ -95,12 +82,31 @@ func (h *AX206USBOutputHandler) Close() error {
 	return nil
 }
 
+func (h *AX206USBOutputHandler) UpdateConfig(cfg OutputConfig) {
+	if h == nil {
+		return
+	}
+	interval := normalizeAX206ReconnectInterval(time.Duration(normalizeAX206ReconnectMS(cfg.ReconnectMS)) * time.Millisecond)
+	h.reconnectIntervalMu.Lock()
+	h.reconnectInterval = interval
+	h.reconnectIntervalMu.Unlock()
+}
+
+func (h *AX206USBOutputHandler) reconnectDelay() time.Duration {
+	if h == nil {
+		return defaultAX206ReconnectInterval
+	}
+	h.reconnectIntervalMu.RLock()
+	defer h.reconnectIntervalMu.RUnlock()
+	return normalizeAX206ReconnectInterval(h.reconnectInterval)
+}
+
 func (h *AX206USBOutputHandler) connectionLoop() {
 	defer h.loopWg.Done()
 
 	h.tryConnect()
 	for {
-		timer := time.NewTimer(getAX206ReconnectInterval())
+		timer := time.NewTimer(h.reconnectDelay())
 		select {
 		case <-h.stopCh:
 			if !timer.Stop() {
@@ -130,13 +136,13 @@ func (h *AX206USBOutputHandler) outputLoop() {
 		select {
 		case <-h.stopCh:
 			return
-		case img := <-h.frameCh:
+		case frame := <-h.frameCh:
 			device := h.getDevice()
-			if device == nil || img == nil {
+			if device == nil || frame == nil || frame.Image == nil {
 				continue
 			}
 			startedAt := time.Now()
-			h.rgb565 = convertImageToRGB565(h.rgb565, img)
+			h.rgb565 = frame.RGB565(h.rgb565)
 			err := device.Blit(h.rgb565)
 			recordAX206DeviceFrameRuntime(time.Since(startedAt), err)
 			if err != nil {
@@ -146,42 +152,7 @@ func (h *AX206USBOutputHandler) outputLoop() {
 	}
 }
 
-func convertImageToRGB565(dst *ImageRGB565, src image.Image) *ImageRGB565 {
-	bounds := src.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-	if width <= 0 || height <= 0 {
-		return dst
-	}
-	required := width * height * 2
-	if dst == nil || dst.Stride != width*2 || dst.Rect.Dx() != width || dst.Rect.Dy() != height || cap(dst.Pix) < required {
-		dst = &ImageRGB565{
-			Pix:    make([]uint8, required),
-			Stride: width * 2,
-			Rect:   image.Rect(0, 0, width, height),
-		}
-	} else {
-		dst.Rect = image.Rect(0, 0, width, height)
-		dst.Pix = dst.Pix[:required]
-	}
-
-	minX := bounds.Min.X
-	minY := bounds.Min.Y
-	for y := 0; y < height; y++ {
-		dstOff := y * dst.Stride
-		srcY := minY + y
-		for x := 0; x < width; x++ {
-			r, g, b, _ := src.At(minX+x, srcY).RGBA()
-			c := uint16((r & 0xF800) | ((g & 0xFC00) >> 5) | ((b & 0xFC00) >> 11))
-			dst.Pix[dstOff] = uint8(c >> 8)
-			dst.Pix[dstOff+1] = uint8(c)
-			dstOff += 2
-		}
-	}
-	return dst
-}
-
-func enqueueLatestAX206Frame(ch chan image.Image, frame image.Image) {
+func enqueueLatestAX206Frame(ch chan *OutputFrame, frame *OutputFrame) {
 	select {
 	case ch <- frame:
 		return
@@ -237,7 +208,7 @@ func (h *AX206USBOutputHandler) tryConnect() {
 	}
 	h.device = device
 	h.deviceMu.Unlock()
-	logInfoModule("ax206usb", "Connected")
+	logInfoModule("ax206usb", "Connected (%dx%d)", device.Width, device.Height)
 }
 
 func (h *AX206USBOutputHandler) logConnectFailure(err error) {

@@ -12,8 +12,12 @@ func (r *CircleRenderer) GetType() string {
 	return itemTypeSimpleCircle
 }
 
-func (r *CircleRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	_ = registry
+func (r *CircleRenderer) RequiresMonitor() bool {
+	return false
+}
+
+func (r *CircleRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	_ = frame
 	_ = fontCache
 
 	cx := float64(item.X) + float64(item.Width)/2

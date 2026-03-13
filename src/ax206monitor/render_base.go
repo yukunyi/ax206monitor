@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math"
 	"strings"
 
 	"github.com/fogleman/gg"
@@ -41,6 +40,60 @@ type BaseTextDrawOptions struct {
 	AlignV   BaseAlignV
 	PaddingX float64
 	PaddingY float64
+}
+
+func clampMinInt(value, minValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	return value
+}
+
+func resolveContentPaddingXY(
+	item *ItemConfig,
+	config *MonitorConfig,
+	fallbackX float64,
+	fallbackY float64,
+	minX float64,
+	minY float64,
+) (float64, float64) {
+	paddingX := fallbackX
+	paddingY := fallbackY
+	if item != nil && item.runtime.prepared {
+		if item.runtime.hasPaddingX {
+			paddingX = item.runtime.paddingX
+		}
+		if item.runtime.hasPaddingY {
+			paddingY = item.runtime.paddingY
+		}
+	} else {
+		paddingX = getItemAttrFloatCfg(item, config, "content_padding_x", fallbackX)
+		paddingY = getItemAttrFloatCfg(item, config, "content_padding_y", fallbackY)
+	}
+	if paddingX < minX {
+		paddingX = minX
+	}
+	if paddingY < minY {
+		paddingY = minY
+	}
+	return paddingX, paddingY
+}
+
+func resolveRoleFontSize(item *ItemConfig, config *MonitorConfig, role BaseTextRole, fallback int, minSize int) int {
+	size := resolveFontSizeByTextRole(item, config, role, fallback)
+	return clampMinInt(size, minSize)
+}
+
+func resolveRoleFontFace(
+	fontCache *FontCache,
+	item *ItemConfig,
+	config *MonitorConfig,
+	role BaseTextRole,
+	fallback int,
+	minSize int,
+) (font.Face, int) {
+	size := resolveRoleFontSize(item, config, role, fallback, minSize)
+	return resolveFontFace(fontCache, size), size
 }
 
 func drawBaseItemFrame(dc *gg.Context, item *ItemConfig, config *MonitorConfig) {
@@ -127,29 +180,29 @@ func drawTextInItemRect(
 		anchorX = 0
 	}
 
+	metrics := baseMeasureText(face, text)
+	lineHeight := metrics.ascent + metrics.descent
+	if lineHeight <= 0 {
+		lineHeight = 1
+	}
 	centerY := (top + bottom) / 2
 	switch opts.AlignV {
 	case AlignTop:
-		metrics := baseMeasureText(face, text)
-		dc.DrawStringAnchored(text, textX, top+metrics.ascent, anchorX, 0)
-		return
+		centerY = top + lineHeight/2
 	case AlignBottom:
-		metrics := baseMeasureText(face, text)
-		dc.DrawStringAnchored(text, textX, bottom-metrics.descent, anchorX, 0)
-		return
-	default:
-		drawBaseMetricAnchoredText(dc, face, text, textX, centerY, anchorX)
+		centerY = bottom - lineHeight/2
 	}
+	drawBaseMetricAnchoredText(dc, face, text, textX, centerY, anchorX)
 }
 
 func resolveFontSizeByTextRole(item *ItemConfig, config *MonitorConfig, role BaseTextRole, fallback int) int {
 	switch role {
 	case TextRoleLabel, TextRoleTitle, TextRoleMeta:
-		return resolveLabelFontSize(item, config, fallback)
+		return resolveTextFontSize(item, config, fallback)
 	case TextRoleUnit:
 		return resolveUnitFontSize(item, config, fallback)
 	default:
-		return resolveItemFontSize(item, config, fallback)
+		return resolveValueFontSize(item, config, fallback)
 	}
 }
 
@@ -167,24 +220,25 @@ type baseTextMetrics struct {
 }
 
 func baseMeasureText(face font.Face, text string) baseTextMetrics {
+	_ = text
+	if isNilFontFace(face) {
+		return baseTextMetrics{ascent: 7, descent: 2}
+	}
+	rawMetrics := face.Metrics()
 	metrics := baseTextMetrics{
-		ascent:  float64(face.Metrics().Ascent.Ceil()),
-		descent: float64(face.Metrics().Descent.Ceil()),
+		ascent:  float64(rawMetrics.Ascent) / 64.0,
+		descent: float64(rawMetrics.Descent) / 64.0,
 	}
-	if metrics.ascent <= 0 {
-		metrics.ascent = 6
-	}
-	if metrics.descent < 0 {
-		metrics.descent = 0
-	}
-	bounds, _ := font.BoundString(face, strings.TrimSpace(text))
-	minY := float64(bounds.Min.Y) / 64.0
-	maxY := float64(bounds.Max.Y) / 64.0
-	if minY < 0 {
-		metrics.ascent = math.Max(metrics.ascent, -minY)
-	}
-	if maxY > 0 {
-		metrics.descent = math.Max(metrics.descent, maxY)
+	if metrics.ascent <= 0 && metrics.descent <= 0 {
+		metrics.ascent = 7
+		metrics.descent = 2
+	} else {
+		if metrics.ascent <= 0 {
+			metrics.ascent = 1
+		}
+		if metrics.descent < 0 {
+			metrics.descent = 0
+		}
 	}
 	return metrics
 }

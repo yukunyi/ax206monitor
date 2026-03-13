@@ -1,5 +1,12 @@
 <script setup>
 import { computed } from "vue";
+import {
+  buildOutputTypeOptions,
+  createDefaultOutputEntry,
+  isAX206Type,
+  isHttpPushType,
+  OUTPUT_FORMAT_OPTIONS,
+} from "../output_configs";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -42,14 +49,10 @@ const collectorNames = computed(() => {
 });
 
 const monitorSelectOptions = computed(() => props.monitorOptions || []);
-const outputTypeOptions = computed(() => {
-  const set = new Set();
-  (props.meta.output_types || ["memimg", "ax206usb"]).forEach((item) => set.add(String(item || "")));
-  (props.config.output_types || []).forEach((item) => set.add(String(item || "")));
-  return [...set]
-    .filter(Boolean)
-    .map((item) => ({ label: item, value: item }));
-});
+const outputTypeOptions = computed(() =>
+  buildOutputTypeOptions(props.meta?.output_types, props.config?.outputs),
+);
+const outputFormatOptions = OUTPUT_FORMAT_OPTIONS;
 
 const customTypeOptions = computed(() => {
   const options = [
@@ -92,6 +95,61 @@ function collectorAuthUserLabel(name) {
 
 function collectorOption(name, key) {
   return String(collectorEntry(name).options?.[key] || "");
+}
+
+function collectorFieldDisabled(name) {
+  return props.readonlyProfile || !collectorEntry(name).enabled;
+}
+
+function outputEntries() {
+  return Array.isArray(props.config.outputs) ? props.config.outputs : [];
+}
+
+function updateOutputs(next) {
+  onField("outputs", Array.isArray(next) ? next : []);
+}
+
+function outputEntryByType(type) {
+  return outputEntries().find((item) => String(item?.type || "").trim().toLowerCase() === String(type || "").trim().toLowerCase()) || null;
+}
+
+function outputEnabled(type) {
+  return !!outputEntryByType(type);
+}
+
+function outputFieldDisabled(type) {
+  return props.readonlyProfile || !outputEnabled(type);
+}
+
+function setOutputEnabled(type, enabled) {
+  const next = outputEntries().map((item) => ({ ...(item || {}) }));
+  const normalized = String(type || "").trim().toLowerCase();
+  const index = next.findIndex((item) => String(item?.type || "").trim().toLowerCase() === normalized);
+  if (enabled) {
+    if (index >= 0) return;
+    next.push(createDefaultOutputEntry(normalized));
+  } else if (index >= 0) {
+    next.splice(index, 1);
+  }
+  updateOutputs(next);
+}
+
+function patchOutputByType(type, patch) {
+  const next = outputEntries().map((item) => ({ ...(item || {}) }));
+  const normalized = String(type || "").trim().toLowerCase();
+  const index = next.findIndex((item) => String(item?.type || "").trim().toLowerCase() === normalized);
+  if (index >= 0) {
+    next[index] = { ...(next[index] || {}), ...(patch || {}) };
+  } else {
+    next.push({ ...createDefaultOutputEntry(normalized), ...(patch || {}) });
+  }
+  updateOutputs(next);
+}
+
+function outputTypeLabel(type) {
+  if (isAX206Type(type)) return "AX206 USB";
+  if (isHttpPushType(type)) return "HTTP Push";
+  return String(type || "");
 }
 
 </script>
@@ -152,14 +210,6 @@ function collectorOption(name, key) {
                     @update:value="(v) => onField('render_wait_max_ms', Number(v || 0))"
                   />
                 </n-form-item-gi>
-                <n-form-item-gi label="AX206重连间隔(ms)">
-                  <n-input-number
-                    :value="config.ax206_reconnect_ms"
-                    :disabled="readonlyProfile"
-                    :show-button="false"
-                    @update:value="(v) => onField('ax206_reconnect_ms', Number(v || 0))"
-                  />
-                </n-form-item-gi>
                 <n-form-item-gi label="允许元素样式定制">
                   <n-switch
                     :value="config.allow_custom_style === true"
@@ -176,21 +226,80 @@ function collectorOption(name, key) {
                     @update:value="(v) => onField('pause_collect_on_lock', !!v)"
                   />
                 </n-form-item-gi>
-                <n-form-item-gi label="输出类型" :span="2">
-                  <n-checkbox-group
-                    :value="config.output_types || []"
-                    :disabled="readonlyProfile"
-                    @update:value="(v) => onField('output_types', Array.isArray(v) ? v : [])"
-                  >
-                    <n-space size="small" :wrap="true">
-                      <n-checkbox
-                        v-for="item in outputTypeOptions"
-                        :key="item.value"
-                        :value="item.value"
-                        :label="item.label"
-                      />
-                    </n-space>
-                  </n-checkbox-group>
+                <n-form-item-gi label="输出配置" :span="2">
+                  <n-table class="collector_table output_table" size="small" striped>
+                    <thead>
+                      <tr>
+                        <th style="width: 30%">输出类型</th>
+                        <th style="width: 12%">启用</th>
+                        <th>参数</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="option in outputTypeOptions" :key="option.value">
+                        <td>{{ outputTypeLabel(option.value) }}</td>
+                        <td>
+                          <n-switch
+                            :value="outputEnabled(option.value)"
+                            :disabled="readonlyProfile"
+                            size="small"
+                            @update:value="(v) => setOutputEnabled(option.value, !!v)"
+                          />
+                        </td>
+                        <td>
+                          <template v-if="isAX206Type(option.value)">
+                            <n-space size="small" :wrap="false" align="center">
+                              <n-text depth="3">重连间隔</n-text>
+                              <n-input-number
+                                style="width: 180px"
+                                :value="Number(outputEntryByType(option.value)?.reconnect_ms || 3000)"
+                                :disabled="outputFieldDisabled(option.value)"
+                                :show-button="false"
+                                @update:value="(v) => patchOutputByType(option.value, { reconnect_ms: Number(v || 3000) })"
+                              />
+                            </n-space>
+                          </template>
+                          <template v-else-if="isHttpPushType(option.value)">
+                            <n-space vertical size="small" style="width: 100%">
+                              <n-space size="small" :wrap="false" align="center">
+                                <n-text depth="3" style="width: 52px">地址</n-text>
+                                <n-input
+                                  :value="outputEntryByType(option.value)?.url || ''"
+                                  :disabled="outputFieldDisabled(option.value)"
+                                  size="small"
+                                  placeholder="http://127.0.0.1:18090/push"
+                                  @update:value="(v) => patchOutputByType(option.value, { url: String(v || '') })"
+                                />
+                              </n-space>
+                              <n-space size="small" :wrap="false">
+                                <n-space size="small" :wrap="false" align="center">
+                                  <n-text depth="3">格式</n-text>
+                                  <n-select
+                                    style="width: 120px"
+                                    :value="outputEntryByType(option.value)?.format || 'jpeg'"
+                                    :disabled="outputFieldDisabled(option.value)"
+                                    :options="outputFormatOptions"
+                                    @update:value="(v) => patchOutputByType(option.value, { format: String(v || 'jpeg') })"
+                                  />
+                                </n-space>
+                                <n-space size="small" :wrap="false" align="center">
+                                  <n-text depth="3">质量</n-text>
+                                  <n-input-number
+                                    style="width: 120px"
+                                    :value="Number(outputEntryByType(option.value)?.quality || 80)"
+                                    :disabled="outputFieldDisabled(option.value)"
+                                    :show-button="false"
+                                    @update:value="(v) => patchOutputByType(option.value, { quality: Number(v || 80) })"
+                                  />
+                                </n-space>
+                              </n-space>
+                            </n-space>
+                          </template>
+                          <template v-else>-</template>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </n-table>
                 </n-form-item-gi>
               </n-grid>
             </n-form>
@@ -207,10 +316,10 @@ function collectorOption(name, key) {
               <th>URL/参数</th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-for="name in collectorNames" :key="name">
-              <td>{{ name }}</td>
-              <td>
+                    <tbody>
+                      <tr v-for="name in collectorNames" :key="name">
+                        <td>{{ name }}</td>
+                        <td>
                 <n-switch
                   :value="!!collectorEntry(name).enabled"
                   :disabled="readonlyProfile"
@@ -223,7 +332,7 @@ function collectorOption(name, key) {
                   <n-space vertical size="small" style="width: 100%">
                     <n-input
                       :value="collectorUrl(name)"
-                      :disabled="readonlyProfile"
+                      :disabled="collectorFieldDisabled(name)"
                       size="small"
                       :placeholder="name === 'coolercontrol' ? 'http://127.0.0.1:11987' : 'http://127.0.0.1:8085'"
                       @update:value="(v) => onField(['collector_config', name, 'options', 'url'], String(v || ''))"
@@ -231,7 +340,7 @@ function collectorOption(name, key) {
                     <n-space v-if="collectorHasAuth(name)" size="small" :wrap="false">
                       <n-input
                         :value="collectorOption(name, 'username')"
-                        :disabled="readonlyProfile"
+                        :disabled="collectorFieldDisabled(name)"
                         size="small"
                         :placeholder="collectorAuthUserLabel(name)"
                         @update:value="(v) => onField(['collector_config', name, 'options', 'username'], String(v || ''))"
@@ -240,7 +349,7 @@ function collectorOption(name, key) {
                         type="password"
                         show-password-on="click"
                         :value="collectorOption(name, 'password')"
-                        :disabled="readonlyProfile"
+                        :disabled="collectorFieldDisabled(name)"
                         size="small"
                         placeholder="Password"
                         @update:value="(v) => onField(['collector_config', name, 'options', 'password'], String(v || ''))"

@@ -3,7 +3,6 @@ package main
 import (
 	"ax206monitor/rtsssource"
 	"fmt"
-	"image"
 	"math"
 	"sort"
 	"strings"
@@ -43,8 +42,12 @@ type WebAPI struct {
 	registry      *CollectorManager
 	renderManager *RenderManager
 	outputManager *OutputManager
+	outputConfigs []OutputConfig
 	outputTypes   []string
 	outputHasMem  bool
+	layoutCache   webSnapshotLayoutCache
+	snapshotCache webSnapshotCache
+	valueCache    map[*CollectItem]webSnapshotValueCache
 	idleProvider  func() (*MonitorConfig, error)
 	previewOutput *MemImgOutputHandler
 	lastProbeCC   string
@@ -73,9 +76,56 @@ type WebAPI struct {
 }
 
 type webOutputFrame struct {
-	img        image.Image
+	result     *RenderResult
 	enqueuedAt time.Time
 	modeFull   bool
+}
+
+type webSnapshotCache struct {
+	valid     bool
+	registry  *CollectorManager
+	modeFull  bool
+	updatedAt string
+	required  []string
+	response  WebSnapshotResponse
+}
+
+type webSnapshotLayoutCache struct {
+	valid           bool
+	registry        *CollectorManager
+	snapshotVersion uint64
+	modeFull        bool
+	required        []string
+	layout          webSnapshotLayout
+}
+
+type webSnapshotLayout struct {
+	names   []string
+	entries []webSnapshotEntry
+}
+
+type webSnapshotEntry struct {
+	name      string
+	monitor   *CollectItem
+	baseLabel string
+	labelKind webSnapshotLabelKind
+	index     int
+	suffix    string
+}
+
+type webSnapshotLabelKind uint8
+
+const (
+	webSnapshotLabelStatic webSnapshotLabelKind = iota
+	webSnapshotLabelNetIndexed
+	webSnapshotLabelDiskIndexed
+)
+
+type webSnapshotValueCache struct {
+	version   uint64
+	available bool
+	text      string
+	unit      string
 }
 
 func NewWebAPI(cfg *MonitorConfig) (*WebAPI, error) {
@@ -88,6 +138,7 @@ func NewWebAPI(cfg *MonitorConfig) (*WebAPI, error) {
 		fontCache:     fontCache,
 		previewOutput: NewMemImgOutputHandler(),
 		outputChan:    make(chan webOutputFrame, 1),
+		valueCache:    make(map[*CollectItem]webSnapshotValueCache),
 		stopCh:        make(chan struct{}),
 		stopped:       make(chan struct{}),
 	}
@@ -141,12 +192,16 @@ func (r *WebAPI) SetIdleConfigProvider(provider func() (*MonitorConfig, error)) 
 func (r *WebAPI) outputLoop() {
 	defer r.outputWg.Done()
 	for frame := range r.outputChan {
-		if frame.img == nil {
+		if frame.result == nil {
 			continue
 		}
 		outputStart := time.Now()
+		outputFrame := frame.result.OutputFrame()
+		if outputFrame == nil {
+			continue
+		}
 		// Always refresh preview buffer for WebSocket clients, independent of output types.
-		if err := r.previewOutput.Output(frame.img); err != nil {
+		if err := r.previewOutput.OutputFrame(outputFrame); err != nil {
 			logDebugModule("web", "preview output failed: %v", err)
 		}
 
@@ -154,7 +209,7 @@ func (r *WebAPI) outputLoop() {
 		if outputManager == nil {
 			continue
 		}
-		if err := outputManager.Output(frame.img); err != nil {
+		if err := outputManager.OutputFrame(outputFrame); err != nil {
 			logDebugModule("web", "runtime output failed: %v", err)
 			continue
 		}
@@ -177,9 +232,9 @@ func (r *WebAPI) renderOnce(forceFull bool) (bool, error) {
 		return false, nil
 	}
 	if r.shouldRenderLockScreen() {
-		img := r.renderLockScreenImage(cfg)
+		result := r.renderLockScreenResult(cfg)
 		replaced, ok := enqueueLatestWebFrame(r.outputChan, webOutputFrame{
-			img:        img,
+			result:     result,
 			enqueuedAt: time.Now(),
 			modeFull:   modeFull,
 		})
@@ -207,14 +262,14 @@ func (r *WebAPI) renderOnce(forceFull bool) (bool, error) {
 	}
 
 	renderStartedAt := time.Now()
-	img, err := renderManager.Render(cfg)
+	result, err := renderManager.Render(cfg)
 	if err != nil {
 		return false, err
 	}
 	recordRenderDuration(time.Since(renderStartedAt))
 
 	replaced, ok := enqueueLatestWebFrame(r.outputChan, webOutputFrame{
-		img:        img,
+		result:     result,
 		enqueuedAt: time.Now(),
 		modeFull:   modeFull,
 	})
@@ -238,7 +293,6 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 
 	configCopy := cloneMonitorConfig(cfg)
 	normalizeMonitorConfig(configCopy)
-	SetAX206ReconnectInterval(configCopy.GetAX206ReconnectDuration())
 
 	SetGlobalCollectorConfig(configCopy)
 	initializeCache()
@@ -248,24 +302,19 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	registry.SetPreviewMode(forceMemImg)
 	renderManager := NewRenderManager(r.fontCache, registry)
 
-	outputTypes := registry.ResolveOutputTypes(configCopy.OutputTypes)
-	outputHasMem := false
-	for _, typeName := range outputTypes {
-		if typeName == outputTypeMemImg {
-			outputHasMem = true
-			break
-		}
-	}
+	outputSummary := registry.ResolveOutputSummary(configCopy.Outputs)
+	outputConfigs := outputSummary.Configs
 
 	var outputManager *OutputManager
 	r.mu.RLock()
 	existingOutputManager := r.outputManager
-	existingOutputTypes := append([]string(nil), r.outputTypes...)
+	existingOutputConfigs := append([]OutputConfig(nil), r.outputConfigs...)
 	r.mu.RUnlock()
-	if existingOutputManager != nil && equalStringSlices(existingOutputTypes, outputTypes) {
+	if existingOutputManager != nil && outputConfigsEqual(existingOutputConfigs, outputConfigs) {
 		outputManager = existingOutputManager
 	} else {
-		outputManager, _ = buildOutputManager(configCopy, false)
+		outputManager, outputConfigs = buildOutputManager(configCopy, forceMemImg)
+		outputSummary = describeOutputConfigs(outputConfigs)
 	}
 
 	r.mu.Lock()
@@ -275,8 +324,12 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	r.registry = registry
 	r.renderManager = renderManager
 	r.outputManager = outputManager
-	r.outputTypes = append([]string(nil), outputTypes...)
-	r.outputHasMem = outputHasMem
+	r.outputConfigs = append([]OutputConfig(nil), outputConfigs...)
+	r.outputTypes = append([]string(nil), outputSummary.Types...)
+	r.outputHasMem = outputSummary.HasMemImg
+	r.layoutCache = webSnapshotLayoutCache{}
+	r.snapshotCache = webSnapshotCache{}
+	r.valueCache = make(map[*CollectItem]webSnapshotValueCache)
 	r.lastEpoch = 0
 	r.mu.Unlock()
 	r.setLockPauseEnabled(configCopy.IsPauseCollectOnLockEnabled())
@@ -288,18 +341,6 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	}
 	r.maybeProbeDataSources(configCopy)
 	return nil
-}
-
-func equalStringSlices(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for idx := range left {
-		if left[idx] != right[idx] {
-			return false
-		}
-	}
-	return true
 }
 
 func enqueueLatestWebFrame(ch chan webOutputFrame, frame webOutputFrame) (bool, bool) {
@@ -441,47 +482,14 @@ func (r *WebAPI) Snapshot() WebSnapshotResponse {
 	modeFull := r.isFullMode()
 	r.setMode(modeFull)
 
-	cfg, required, registry, _, _, _ := r.getRuntimeRefs()
-	values := make(map[string]WebMonitorSnapshotItem)
+	_, required, registry, _, _, _ := r.getRuntimeRefs()
 	if registry == nil {
 		return WebSnapshotResponse{
 			Mode:      "required",
 			UpdatedAt: time.Now().Format(time.RFC3339Nano),
-			Values:    values,
+			Values:    map[string]WebMonitorSnapshotItem{},
 		}
 	}
-	monitorStats := registry.Stats()
-
-	names := make([]string, 0)
-	if modeFull {
-		all := registry.GetAll()
-		for name := range all {
-			names = append(names, name)
-		}
-	} else {
-		names = append(names, required...)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		monitor := registry.Get(name)
-		if monitor == nil {
-			continue
-		}
-		item := WebMonitorSnapshotItem{
-			Available: monitor.IsAvailable(),
-			Label:     strings.TrimSpace(monitor.GetLabel()),
-			Text:      "-",
-		}
-		if monitor.IsAvailable() {
-			if value := monitor.GetValue(); value != nil {
-				item.Text = FormatCollectValue(value, true, "")
-				item.Unit = value.Unit
-			}
-		}
-		values[name] = item
-	}
-	optimizeWebSnapshotLabels(values)
 
 	mode := "required"
 	if modeFull {
@@ -492,15 +500,33 @@ func (r *WebAPI) Snapshot() WebSnapshotResponse {
 	if updatedAt.IsZero() {
 		updatedAt = time.Now()
 	}
+	updatedAtText := updatedAt.Format(time.RFC3339Nano)
 
-	_ = cfg
-	return WebSnapshotResponse{
+	if snapshot, ok := r.loadCachedSnapshot(registry, modeFull, updatedAtText, required); ok {
+		return snapshot
+	}
+
+	monitorStats := registry.Stats()
+	layout := r.snapshotLayout(registry, modeFull, required)
+	values := make(map[string]WebMonitorSnapshotItem, len(layout.entries))
+	for _, entry := range layout.entries {
+		if entry.monitor == nil {
+			continue
+		}
+		item := r.snapshotValueItem(entry.monitor, entry.baseLabel)
+		values[entry.name] = item
+	}
+	applyDynamicWebSnapshotLabels(values, layout.entries)
+
+	snapshot := WebSnapshotResponse{
 		Mode:           mode,
-		UpdatedAt:      updatedAt.Format(time.RFC3339Nano),
-		Monitors:       names,
+		UpdatedAt:      updatedAtText,
+		Monitors:       append([]string(nil), layout.names...),
 		Values:         values,
 		MonitorRuntime: &monitorStats,
 	}
+	r.storeCachedSnapshot(registry, modeFull, updatedAtText, required, snapshot)
+	return snapshot
 }
 
 func (r *WebAPI) MonitorStats() *CollectorManagerStats {
@@ -517,13 +543,7 @@ func (r *WebAPI) AllMonitorNames() []string {
 	if registry == nil {
 		return []string{}
 	}
-	all := registry.GetAll()
-	names := make([]string, 0, len(all))
-	for name := range all {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return registry.AllNames()
 }
 
 func (r *WebAPI) CollectorNames() []string {
@@ -570,7 +590,11 @@ func (r *WebAPI) Close() {
 	outputChan := r.outputChan
 	r.outputChan = nil
 	r.outputManager = nil
+	r.outputConfigs = nil
 	r.outputTypes = nil
+	r.layoutCache = webSnapshotLayoutCache{}
+	r.snapshotCache = webSnapshotCache{}
+	r.valueCache = nil
 	r.registry = nil
 	r.renderManager = nil
 	r.config = nil
@@ -703,7 +727,7 @@ func (r *WebAPI) applyLockPolicy() {
 	registry.SetPaused(r.shouldRenderLockScreen())
 }
 
-func (r *WebAPI) renderLockScreenImage(cfg *MonitorConfig) image.Image {
+func (r *WebAPI) renderLockScreenResult(cfg *MonitorConfig) *RenderResult {
 	width := 480
 	height := 320
 	if cfg != nil {
@@ -734,7 +758,7 @@ func (r *WebAPI) renderLockScreenImage(cfg *MonitorConfig) image.Image {
 	face := resolveFontFace(r.fontCache, fontSize)
 	dc.SetColor(parseColor(color))
 	drawMetricAnchoredText(dc, face, "已锁屏", float64(width)/2, float64(height)/2, 0.5)
-	return dc.Image()
+	return NewRenderResult(dc.Image())
 }
 
 func (r *WebAPI) getRuntimeRefs() (*MonitorConfig, []string, *CollectorManager, *RenderManager, *OutputManager, bool) {
@@ -790,97 +814,191 @@ func (r *WebAPI) getUpdatedAt() time.Time {
 	return r.updatedAt
 }
 
-func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
-	if len(values) == 0 {
-		return
+func (r *WebAPI) loadCachedSnapshot(
+	registry *CollectorManager,
+	modeFull bool,
+	updatedAt string,
+	required []string,
+) (WebSnapshotResponse, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	cache := r.snapshotCache
+	if !cache.valid {
+		return WebSnapshotResponse{}, false
 	}
-
-	explicit := map[string]string{
-		"go_native.cpu.usage":                      "CPU usage",
-		"go_native.cpu.temp":                       "CPU temperature",
-		"go_native.cpu.freq":                       "CPU frequency",
-		"go_native.cpu.max_freq":                   "CPU max frequency",
-		"go_native.cpu.model":                      "CPU model",
-		"go_native.cpu.cores":                      "CPU cores",
-		"go_native.memory.usage":                   "Memory usage",
-		"go_native.memory.used":                    "Memory used",
-		"go_native.memory.total":                   "Memory total",
-		"go_native.memory.usage_text":              "Memory usage detail",
-		"go_native.memory.usage_progress":          "Memory usage progress",
-		"go_native.memory.swap_usage":              "Swap usage",
-		"go_native.system.load_avg":                "System load average",
-		"go_native.system.current_time":            "Current time",
-		"go_native.system.hostname":                "Host name",
-		"go_native.system.resolution":              "Display resolution",
-		"go_native.system.refresh_rate":            "Display refresh rate",
-		"go_native.system.display":                 "Display mode",
-		"go_native.system.collect.max_ms":          "Collect max ms",
-		"go_native.system.collect.avg_ms":          "Collect avg ms",
-		"go_native.system.render.max_ms":           "Render max ms",
-		"go_native.system.render.avg_ms":           "Render avg ms",
-		"go_native.system.output.max_ms":           "Output max ms",
-		"go_native.system.output.avg_ms":           "Output avg ms",
-		"go_native.system.output.memimg.max_ms":    "Output memimg max ms",
-		"go_native.system.output.memimg.avg_ms":    "Output memimg avg ms",
-		"go_native.system.output.ax206usb.last_ms": "AX206 refresh duration",
-		"go_native.system.output.ax206usb.max_ms":  "Output ax206usb max ms",
-		"go_native.system.output.ax206usb.avg_ms":  "Output ax206usb avg ms",
-		"alias.cpu.usage":                          "CPU usage",
-		"alias.cpu.temp":                           "CPU temperature",
-		"alias.cpu.freq":                           "CPU frequency",
-		"alias.cpu.max_freq":                       "CPU max frequency",
-		"alias.cpu.power":                          "CPU power",
-		"alias.memory.usage":                       "Memory usage",
-		"alias.memory.used":                        "Memory used",
-		"alias.gpu.fps":                            "GPU FPS",
-		"alias.gpu.usage":                          "GPU usage",
-		"alias.gpu.power":                          "GPU power",
-		"alias.gpu.vram":                           "GPU VRAM usage",
-		"alias.gpu.temp":                           "GPU temperature",
-		"alias.gpu.fan":                            "GPU fan speed",
-		"alias.gpu.freq":                           "GPU frequency",
-		"alias.gpu.max_freq":                       "GPU max frequency",
-		"alias.net.upload":                         "Network upload",
-		"alias.net.download":                       "Network download",
-		"alias.net.ip":                             "IP address",
-		"alias.net.interface":                      "Network interface",
-		"alias.system.time":                        "System time",
-		"alias.system.hostname":                    "Host name",
-		"alias.system.load":                        "System load",
-		"alias.system.resolution":                  "Display resolution",
-		"alias.system.refresh_rate":                "Display refresh rate",
-		"alias.system.display":                     "Display mode",
-		"alias.disk.temp":                          "Disk temperature",
-		"alias.fan.cpu":                            "CPU fan speed",
-		"alias.fan.gpu":                            "GPU fan speed",
-		"alias.fan.system":                         "System fan speed",
-		"rtss_fps":                                 "RTSS FPS",
-		"rtss_frametime_ms":                        "RTSS frame time",
-		"rtss_max_fps":                             "RTSS max FPS",
-		"rtss_active_apps":                         "RTSS active apps",
-		"rtss_foreground_pid":                      "RTSS foreground PID",
+	if cache.registry != registry || cache.modeFull != modeFull || cache.updatedAt != updatedAt {
+		return WebSnapshotResponse{}, false
 	}
+	if !modeFull && !equalStringSlices(cache.required, required) {
+		return WebSnapshotResponse{}, false
+	}
+	return cache.response, true
+}
 
-	for name, item := range values {
-		if label, ok := explicit[name]; ok {
-			item.Label = label
-			values[name] = item
-			continue
-		}
-		if strings.TrimSpace(item.Label) == "" {
-			item.Label = humanizeMonitorKey(name)
-			values[name] = item
+func (r *WebAPI) storeCachedSnapshot(
+	registry *CollectorManager,
+	modeFull bool,
+	updatedAt string,
+	required []string,
+	response WebSnapshotResponse,
+) {
+	r.mu.Lock()
+	r.snapshotCache = webSnapshotCache{
+		valid:     true,
+		registry:  registry,
+		modeFull:  modeFull,
+		updatedAt: updatedAt,
+		required:  append([]string(nil), required...),
+		response:  response,
+	}
+	r.mu.Unlock()
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for idx := range left {
+		if left[idx] != right[idx] {
+			return false
 		}
 	}
+	return true
+}
 
-	for name, item := range values {
+func (r *WebAPI) snapshotLayout(
+	registry *CollectorManager,
+	modeFull bool,
+	required []string,
+) webSnapshotLayout {
+	snapshotVersion := registry.SnapshotVersion()
+
+	r.mu.RLock()
+	cache := r.layoutCache
+	r.mu.RUnlock()
+	if cache.valid &&
+		cache.registry == registry &&
+		cache.snapshotVersion == snapshotVersion &&
+		cache.modeFull == modeFull &&
+		(modeFull || equalStringSlices(cache.required, required)) {
+		return cache.layout
+	}
+
+	names := make([]string, 0)
+	if modeFull {
+		names = registry.AllNames()
+	} else {
+		names = append(names, required...)
+		sort.Strings(names)
+	}
+
+	entries := make([]webSnapshotEntry, 0, len(names))
+	for _, name := range names {
+		monitor := registry.Get(name)
+		label := buildStaticWebSnapshotLabel(name, monitor)
+		entry := webSnapshotEntry{
+			name:      name,
+			monitor:   monitor,
+			baseLabel: label,
+			labelKind: webSnapshotLabelStatic,
+		}
 		index, suffix, ok := parseGoNativeIndexedWebMonitor(name, "go_native.net.")
 		if ok {
-			iface := resolveGoNativeIndexedMonitorAnchor(values, "go_native.net.", index, "interface")
+			entry.labelKind = webSnapshotLabelNetIndexed
+			entry.index = index
+			entry.suffix = suffix
+		} else if index, suffix, ok = parseGoNativeIndexedWebMonitor(name, "go_native.disk."); ok {
+			entry.labelKind = webSnapshotLabelDiskIndexed
+			entry.index = index
+			entry.suffix = suffix
+		}
+		entries = append(entries, entry)
+	}
+
+	layout := webSnapshotLayout{
+		names:   names,
+		entries: entries,
+	}
+
+	r.mu.Lock()
+	r.layoutCache = webSnapshotLayoutCache{
+		valid:           true,
+		registry:        registry,
+		snapshotVersion: snapshotVersion,
+		modeFull:        modeFull,
+		required:        append([]string(nil), required...),
+		layout:          layout,
+	}
+	r.mu.Unlock()
+	return layout
+}
+
+func buildStaticWebSnapshotLabel(name string, monitor *CollectItem) string {
+	if label, ok := explicitWebSnapshotLabels[name]; ok {
+		return label
+	}
+	if monitor != nil {
+		if label := strings.TrimSpace(monitor.GetLabel()); label != "" {
+			return label
+		}
+	}
+	return humanizeMonitorKey(name)
+}
+
+func (r *WebAPI) snapshotValueItem(monitor *CollectItem, baseLabel string) WebMonitorSnapshotItem {
+	version, available, value := monitor.SnapshotState()
+
+	r.mu.RLock()
+	cache, ok := r.valueCache[monitor]
+	r.mu.RUnlock()
+	if ok && cache.version == version {
+		return WebMonitorSnapshotItem{
+			Available: cache.available,
+			Label:     baseLabel,
+			Text:      cache.text,
+			Unit:      cache.unit,
+		}
+	}
+
+	item := WebMonitorSnapshotItem{
+		Available: available,
+		Label:     baseLabel,
+		Text:      "-",
+	}
+	if available && value != nil {
+		item.Text = FormatCollectValue(value, true, "")
+		item.Unit = value.Unit
+	}
+
+	r.mu.Lock()
+	if r.valueCache != nil {
+		r.valueCache[monitor] = webSnapshotValueCache{
+			version:   version,
+			available: item.Available,
+			text:      item.Text,
+			unit:      item.Unit,
+		}
+	}
+	r.mu.Unlock()
+	return item
+}
+
+func applyDynamicWebSnapshotLabels(values map[string]WebMonitorSnapshotItem, entries []webSnapshotEntry) {
+	if len(values) == 0 || len(entries) == 0 {
+		return
+	}
+	for _, entry := range entries {
+		item, ok := values[entry.name]
+		if !ok {
+			continue
+		}
+		switch entry.labelKind {
+		case webSnapshotLabelNetIndexed:
+			iface := resolveGoNativeIndexedMonitorAnchor(values, "go_native.net.", entry.index, "interface")
 			if iface == "" {
-				iface = "net" + itoa(index)
+				iface = "net" + itoa(entry.index)
 			}
-			switch suffix {
+			switch entry.suffix {
 			case "upload":
 				item.Label = "Net " + iface + " upload speed"
 			case "download":
@@ -890,17 +1008,13 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 			case "interface":
 				item.Label = "Net " + iface + " interface"
 			}
-			values[name] = item
-			continue
-		}
-
-		index, suffix, ok = parseGoNativeIndexedWebMonitor(name, "go_native.disk.")
-		if ok {
-			diskName := resolveGoNativeIndexedMonitorAnchor(values, "go_native.disk.", index, "name")
+			values[entry.name] = item
+		case webSnapshotLabelDiskIndexed:
+			diskName := resolveGoNativeIndexedMonitorAnchor(values, "go_native.disk.", entry.index, "name")
 			if diskName == "" {
-				diskName = "disk" + itoa(index)
+				diskName = "disk" + itoa(entry.index)
 			}
-			switch suffix {
+			switch entry.suffix {
 			case "name":
 				item.Label = "Disk " + diskName + " name"
 			case "size":
@@ -908,9 +1022,79 @@ func optimizeWebSnapshotLabels(values map[string]WebMonitorSnapshotItem) {
 			case "temp":
 				item.Label = "Disk " + diskName + " temperature"
 			}
-			values[name] = item
+			values[entry.name] = item
 		}
 	}
+}
+
+var explicitWebSnapshotLabels = map[string]string{
+	"go_native.cpu.usage":                      "CPU usage",
+	"go_native.cpu.temp":                       "CPU temperature",
+	"go_native.cpu.freq":                       "CPU frequency",
+	"go_native.cpu.max_freq":                   "CPU max frequency",
+	"go_native.cpu.model":                      "CPU model",
+	"go_native.cpu.cores":                      "CPU cores",
+	"go_native.memory.usage":                   "Memory usage",
+	"go_native.memory.used":                    "Memory used",
+	"go_native.memory.total":                   "Memory total",
+	"go_native.memory.usage_text":              "Memory usage detail",
+	"go_native.memory.usage_progress":          "Memory usage progress",
+	"go_native.memory.swap_usage":              "Swap usage",
+	"go_native.system.load_avg":                "System load average",
+	"go_native.system.current_time":            "Current time",
+	"go_native.system.hostname":                "Host name",
+	"go_native.system.resolution":              "Display resolution",
+	"go_native.system.refresh_rate":            "Display refresh rate",
+	"go_native.system.display":                 "Display mode",
+	"go_native.system.collect.max_ms":          "Collect max ms",
+	"go_native.system.collect.avg_ms":          "Collect avg ms",
+	"go_native.system.render.max_ms":           "Render max ms",
+	"go_native.system.render.avg_ms":           "Render avg ms",
+	"go_native.system.output.max_ms":           "Output max ms",
+	"go_native.system.output.avg_ms":           "Output avg ms",
+	"go_native.system.output.memimg.last_ms":   "Output memimg last ms",
+	"go_native.system.output.memimg.max_ms":    "Output memimg max ms",
+	"go_native.system.output.memimg.avg_ms":    "Output memimg avg ms",
+	"go_native.system.output.ax206usb.last_ms": "AX206 refresh duration",
+	"go_native.system.output.ax206usb.max_ms":  "Output ax206usb max ms",
+	"go_native.system.output.ax206usb.avg_ms":  "Output ax206usb avg ms",
+	"go_native.system.output.httppush.last_ms": "HTTP push last ms",
+	"go_native.system.output.httppush.max_ms":  "HTTP push max ms",
+	"go_native.system.output.httppush.avg_ms":  "HTTP push avg ms",
+	"alias.cpu.usage":                          "CPU usage",
+	"alias.cpu.temp":                           "CPU temperature",
+	"alias.cpu.freq":                           "CPU frequency",
+	"alias.cpu.max_freq":                       "CPU max frequency",
+	"alias.cpu.power":                          "CPU power",
+	"alias.memory.usage":                       "Memory usage",
+	"alias.memory.used":                        "Memory used",
+	"alias.gpu.fps":                            "GPU FPS",
+	"alias.gpu.usage":                          "GPU usage",
+	"alias.gpu.power":                          "GPU power",
+	"alias.gpu.vram":                           "GPU VRAM usage",
+	"alias.gpu.temp":                           "GPU temperature",
+	"alias.gpu.fan":                            "GPU fan speed",
+	"alias.gpu.freq":                           "GPU frequency",
+	"alias.gpu.max_freq":                       "GPU max frequency",
+	"alias.net.upload":                         "Network upload",
+	"alias.net.download":                       "Network download",
+	"alias.net.ip":                             "IP address",
+	"alias.net.interface":                      "Network interface",
+	"alias.system.time":                        "System time",
+	"alias.system.hostname":                    "Host name",
+	"alias.system.load":                        "System load",
+	"alias.system.resolution":                  "Display resolution",
+	"alias.system.refresh_rate":                "Display refresh rate",
+	"alias.system.display":                     "Display mode",
+	"alias.disk.temp":                          "Disk temperature",
+	"alias.fan.cpu":                            "CPU fan speed",
+	"alias.fan.gpu":                            "GPU fan speed",
+	"alias.fan.system":                         "System fan speed",
+	"rtss_fps":                                 "RTSS FPS",
+	"rtss_frametime_ms":                        "RTSS frame time",
+	"rtss_max_fps":                             "RTSS max FPS",
+	"rtss_active_apps":                         "RTSS active apps",
+	"rtss_foreground_pid":                      "RTSS foreground PID",
 }
 
 func parseGoNativeIndexedWebMonitor(name, basePrefix string) (int, string, bool) {

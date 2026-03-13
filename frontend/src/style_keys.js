@@ -4,9 +4,9 @@ export const STYLE_SCOPE_ITEM = "item";
 
 export const DEFAULT_STYLE_KEYS = [
   { key: "font_family", label: "字体", kind: "select", scopes: [STYLE_SCOPE_BASE] },
-  { key: "small_font_size", label: "小字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
-  { key: "medium_font_size", label: "中字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
-  { key: "large_font_size", label: "大字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
+  { key: "text_font_size", label: "文本字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
+  { key: "unit_font_size", label: "单位字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
+  { key: "value_font_size", label: "值字号", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
   { key: "color", label: "文字色", kind: "color", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
   { key: "bg", label: "背景色", kind: "color", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
   { key: "unit_color", label: "单位色", kind: "color", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM] },
@@ -16,11 +16,10 @@ export const DEFAULT_STYLE_KEYS = [
   { key: "thresholds", label: "阈值(%)", kind: "float4", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_ITEM] },
   { key: "level_colors", label: "等级颜色", kind: "color4", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_ITEM] },
   { key: "history_points", label: "历史点数", kind: "int", scopes: [STYLE_SCOPE_BASE, STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["simple_line_chart", "full_chart"] },
-  { key: "content_padding", label: "内边距", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["label_text", "full_chart", "full_progress", "full_gauge"] },
+  { key: "content_padding_x", label: "左右边距", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["label_text", "full_chart", "full_progress", "full_gauge"] },
+  { key: "content_padding_y", label: "上下边距", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["label_text", "full_chart", "full_progress", "full_gauge"] },
   { key: "body_gap", label: "标题间距", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
-  { key: "value_font_size", label: "值字号", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress", "full_gauge"] },
-  { key: "label_font_size", label: "标签字号", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_gauge"] },
-  { key: "title_font_size", label: "标题字号", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
+  { key: "header_height", label: "标题栏高度", kind: "int", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
   { key: "header_divider", label: "标题分隔线", kind: "bool", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
   { key: "header_divider_width", label: "分隔线宽", kind: "float", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
   { key: "header_divider_offset", label: "分隔线偏移", kind: "float", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart", "full_progress"] },
@@ -86,94 +85,47 @@ export function normalizeStyleKeys(raw) {
             }))
             .filter((opt) => !!opt.value)
         : [],
+      default: cloneStyleValue(item?.default),
+      defaults: normalizeStyleDefaults(item?.defaults),
     }))
     .filter((item) => !!item.key);
 }
 
-export function styleDefaultValue(key, itemType = "") {
-  const type = String(itemType || "").trim();
-  switch (String(key || "").trim()) {
-    case "font_family":
-      return "";
-    case "small_font_size":
-      return 14;
-    case "medium_font_size":
-      return 16;
-    case "large_font_size":
-      return 18;
-    case "color":
-      return "#f8fafc";
-    case "bg":
-      return "";
-    case "unit_color":
-      return "#f8fafc";
-    case "border_width":
-      return 0;
-    case "border_color":
-      return "#475569";
-    case "radius":
-      return 0;
-    case "thresholds":
-      return [25, 50, 75, 100];
-    case "level_colors":
-      return ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-    case "history_points":
-      return 150;
-    case "content_padding":
-      return type.startsWith("full_") ? 1 : 3;
-    case "body_gap":
-      return type === "full_chart" ? 4 : 0;
-    case "value_font_size":
-    case "label_font_size":
-    case "title_font_size":
-      return 0;
-    case "header_divider":
-      return true;
-    case "header_divider_width":
-      return 1;
-    case "header_divider_offset":
-      return 3;
-    case "header_divider_color":
-      return "#94a3b840";
-    case "show_segment_lines":
-    case "show_grid_lines":
-    case "show_avg_line":
-      return true;
-    case "grid_lines":
-      return 4;
-    case "enable_threshold_colors":
-      return false;
-    case "line_width":
-      return 1;
-    case "line_orientation":
-      return "horizontal";
-    case "chart_color":
-      return "#38bdf8";
-    case "chart_area_bg":
-    case "chart_area_border_color":
-      return "";
-    case "progress_style":
-      return "gradient";
-    case "bar_height":
-    case "bar_radius":
-      return 0;
-    case "track_color":
-      return "#1f2937";
-    case "segments":
-      return 12;
-    case "segment_gap":
-      return 2;
-    case "card_radius":
-      return 0;
-    case "gauge_thickness":
-      return 10;
-    case "gauge_gap_degrees":
-      return 76;
-    case "gauge_text_gap":
-      return 4;
-    default:
-      return "";
+function cloneStyleValue(value) {
+  if (Array.isArray(value)) return value.map((item) => cloneStyleValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneStyleValue(item)]),
+    );
   }
+  return value;
+}
+
+function normalizeStyleDefaults(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const name = String(key || "").trim();
+    if (!name) return;
+    out[name] = cloneStyleValue(value);
+  });
+  return out;
+}
+
+export function styleDefaultValue(styleKeys, key, itemType = "") {
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) return "";
+  const meta = styleMetaMap(styleKeys)[normalizedKey];
+  if (!meta) return "";
+
+  const type = String(itemType || "").trim();
+  if (type && meta.defaults && Object.prototype.hasOwnProperty.call(meta.defaults, type)) {
+    return cloneStyleValue(meta.defaults[type]);
+  }
+  if (meta.default !== undefined) {
+    return cloneStyleValue(meta.default);
+  }
+  return "";
 }
 
 export function supportsScope(meta, scope) {

@@ -141,6 +141,52 @@ var monitorAliasNamesSorted = func() []string {
 	return keys
 }()
 
+var monitorAliasUpperTokenMap = map[string]string{
+	"cpu":  "CPU",
+	"gpu":  "GPU",
+	"ip":   "IP",
+	"fps":  "FPS",
+	"vram": "VRAM",
+}
+
+func monitorAliasLabels() map[string]string {
+	labels := make(map[string]string, len(monitorAliasNamesSorted))
+	for _, name := range monitorAliasNamesSorted {
+		if label := buildMonitorAliasLabel(name); label != "" {
+			labels[name] = label
+		}
+	}
+	return labels
+}
+
+func buildMonitorAliasLabel(name string) string {
+	normalized := normalizeMonitorAliasInput(name)
+	if !strings.HasPrefix(normalized, monitorAliasPrefix) {
+		return ""
+	}
+	body := strings.TrimPrefix(normalized, monitorAliasPrefix)
+	if body == "" {
+		return ""
+	}
+	parts := strings.Split(body, ".")
+	words := make([]string, 0, len(parts))
+	for _, part := range parts {
+		token := strings.ToLower(strings.TrimSpace(part))
+		if token == "" {
+			continue
+		}
+		if upper, ok := monitorAliasUpperTokenMap[token]; ok {
+			words = append(words, upper)
+			continue
+		}
+		words = append(words, strings.ToUpper(token[:1])+token[1:])
+	}
+	if len(words) == 0 {
+		return ""
+	}
+	return strings.Join(words, " ")
+}
+
 func normalizeMonitorAliasInput(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

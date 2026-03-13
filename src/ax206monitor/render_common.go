@@ -204,8 +204,25 @@ func canUseItemCustomStyle(item *ItemConfig, config *MonitorConfig) bool {
 	return item.CustomStyle
 }
 
-func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	size := resolveStyleInt(item, config, "large_font_size", 0)
+func resolveValueFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
+	if item != nil && item.runtime.prepared && item.runtime.valueFontSize > 0 {
+		return item.runtime.valueFontSize
+	}
+	size := resolveStyleInt(item, config, "value_font_size", 0)
+	if size > 0 {
+		return size
+	}
+	if fallback > 0 {
+		return fallback
+	}
+	return 18
+}
+
+func resolveTextFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
+	if item != nil && item.runtime.prepared && item.runtime.textFontSize > 0 {
+		return item.runtime.textFontSize
+	}
+	size := resolveStyleInt(item, config, "text_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -215,8 +232,11 @@ func resolveItemFontSize(item *ItemConfig, config *MonitorConfig, fallback int) 
 	return 16
 }
 
-func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	size := resolveStyleInt(item, config, "medium_font_size", 0)
+func resolveUnitFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
+	if item != nil && item.runtime.prepared && item.runtime.unitFontSize > 0 {
+		return item.runtime.unitFontSize
+	}
+	size := resolveStyleInt(item, config, "unit_font_size", 0)
 	if size > 0 {
 		return size
 	}
@@ -226,20 +246,12 @@ func resolveLabelFontSize(item *ItemConfig, config *MonitorConfig, fallback int)
 	return 14
 }
 
-func resolveUnitFontSize(item *ItemConfig, config *MonitorConfig, fallback int) int {
-	size := resolveStyleInt(item, config, "small_font_size", 0)
-	if size > 0 {
-		return size
-	}
-	if fallback > 0 {
-		return fallback
-	}
-	return 12
-}
-
 func resolveItemBackground(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
 		return ""
+	}
+	if item.runtime.prepared {
+		return item.runtime.background
 	}
 	bg := strings.TrimSpace(resolveStyleColor(item, config, "bg", "rgba(0,0,0,0)"))
 	if bg == "rgba(0,0,0,0)" {
@@ -251,6 +263,9 @@ func resolveItemBackground(item *ItemConfig, config *MonitorConfig) string {
 func resolveItemStaticColor(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
 		return "#f8fafc"
+	}
+	if item.runtime.prepared && strings.TrimSpace(item.runtime.staticColor) != "" {
+		return item.runtime.staticColor
 	}
 	return resolveStyleColor(item, config, "color", "#f8fafc")
 }
@@ -266,11 +281,11 @@ func resolveUnitOverride(item *ItemConfig) string {
 	return unit
 }
 
-func resolveMonitorColor(item *ItemConfig, monitor *CollectItem, config *MonitorConfig) string {
+func resolveMonitorColor(item *ItemConfig, monitor *RenderMonitorSnapshot, config *MonitorConfig) string {
 	if monitor == nil {
 		return resolveItemStaticColor(item, config)
 	}
-	value := monitor.GetValue()
+	value := monitor.value
 	if value == nil {
 		return resolveItemStaticColor(item, config)
 	}
@@ -364,6 +379,9 @@ func isTemperatureMetric(item *ItemConfig, monitorValue *CollectValue) bool {
 
 func resolveUnitColor(item *ItemConfig, config *MonitorConfig, fallback string) string {
 	if item != nil {
+		if item.runtime.prepared && item.runtime.explicitUnitColor != "" {
+			return item.runtime.explicitUnitColor
+		}
 		if color := strings.TrimSpace(resolveStyleColor(item, config, "unit_color", "")); color != "" {
 			return color
 		}
@@ -378,6 +396,9 @@ func resolveItemBorderWidth(item *ItemConfig, config *MonitorConfig) float64 {
 	if item == nil {
 		return 0
 	}
+	if item.runtime.prepared {
+		return item.runtime.borderWidth
+	}
 	width := resolveStyleFloat(item, config, "border_width", 0)
 	if width < 0 {
 		width = 0
@@ -389,11 +410,23 @@ func resolveItemBorderColor(item *ItemConfig, config *MonitorConfig) string {
 	if item == nil {
 		return "#475569"
 	}
+	if item.runtime.prepared && strings.TrimSpace(item.runtime.borderColor) != "" {
+		return item.runtime.borderColor
+	}
 	return resolveStyleColor(item, config, "border_color", "#475569")
 }
 
 func resolveItemRadius(item *ItemConfig, config *MonitorConfig, fallback int) float64 {
 	if item == nil {
+		if fallback < 0 {
+			return 0
+		}
+		return float64(fallback)
+	}
+	if item.runtime.prepared {
+		if item.runtime.radius > 0 {
+			return item.runtime.radius
+		}
 		if fallback < 0 {
 			return 0
 		}
@@ -407,6 +440,26 @@ func resolveItemRadius(item *ItemConfig, config *MonitorConfig, fallback int) fl
 		return 0
 	}
 	return float64(fallback)
+}
+
+func resolveItemCardRadius(item *ItemConfig, config *MonitorConfig) float64 {
+	if item == nil {
+		return 0
+	}
+	if item.runtime.prepared {
+		if item.runtime.hasCardRadius {
+			return item.runtime.cardRadius
+		}
+		return item.runtime.radius
+	}
+	cardRadius := getItemAttrFloatCfg(item, config, "card_radius", -1)
+	if cardRadius < 0 {
+		cardRadius = resolveItemRadius(item, config, 0)
+	}
+	if cardRadius < 0 {
+		cardRadius = 0
+	}
+	return cardRadius
 }
 
 func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback int) int {
@@ -424,18 +477,35 @@ func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback 
 }
 
 func effectiveLevelColors(item *ItemConfig, config *MonitorConfig) []string {
+	if item != nil && item.runtime.prepared {
+		switch item.Type {
+		case itemTypeSimpleChart:
+			if len(item.runtime.simpleChart.levelColors) > 0 {
+				return item.runtime.simpleChart.levelColors
+			}
+		case itemTypeFullChart:
+			if len(item.runtime.fullChart.levelColors) > 0 {
+				return item.runtime.fullChart.levelColors
+			}
+		}
+	}
 	colors := resolveStyleLevelColors(item, config)
-	for len(colors) < 4 {
-		colors = append(colors, colors[len(colors)-1])
-	}
-	if len(colors) > 4 {
-		colors = colors[:4]
-	}
-	return colors
+	return normalizeRenderLevelColors(colors)
 }
 
 func effectiveThresholds(item *ItemConfig, minValue, maxValue float64, config *MonitorConfig) []float64 {
-	percentages := resolveStyleThresholdsPercent(item, config)
+	percentages := []float64(nil)
+	if item != nil && item.runtime.prepared {
+		switch item.Type {
+		case itemTypeSimpleChart:
+			percentages = item.runtime.simpleChart.thresholdPercents
+		case itemTypeFullChart:
+			percentages = item.runtime.fullChart.thresholdPercents
+		}
+	}
+	if len(percentages) == 0 {
+		percentages = resolveStyleThresholdsPercent(item, config)
+	}
 	thresholds := normalizeThresholds(percentages, minValue, maxValue)
 	if len(thresholds) == 4 {
 		return thresholds

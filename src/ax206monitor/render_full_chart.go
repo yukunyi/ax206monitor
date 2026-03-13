@@ -14,13 +14,9 @@ func (r *FullChartRenderer) GetType() string {
 	return itemTypeFullChart
 }
 
-func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *CollectorManager, fontCache *FontCache, config *MonitorConfig) error {
-	monitor := registry.Get(item.Monitor)
-	if monitor == nil || !monitor.IsAvailable() {
-		return nil
-	}
-	value := monitor.GetValue()
-	if value == nil {
+func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFrame, fontCache *FontCache, config *MonitorConfig) error {
+	monitor, value, ok := frame.AvailableItemValue(item)
+	if !ok {
 		return nil
 	}
 	numberValue, ok := tryGetFloat64(value.Value)
@@ -28,25 +24,16 @@ func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 		return nil
 	}
 
-	cardRadius := getItemAttrFloatCfg(item, config, "card_radius", -1)
-	if cardRadius < 0 {
-		cardRadius = resolveItemRadius(item, config, 0)
-	}
-	if cardRadius < 0 {
-		cardRadius = 0
-	}
+	cardRadius := resolveItemCardRadius(item, config)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), cardRadius)
 
 	labelText, displayValue := fullResolveTexts(item, monitor, value, config)
 	lineColor := resolveFullChartLineColor(item, config)
 	textColor := resolveItemStaticColor(item, config)
 
-	contentPadding := getItemAttrFloatCfg(item, config, "content_padding", 1)
-	if contentPadding < 0 {
-		contentPadding = 0
-	}
-	headerRect, bodyRect, labelFace, valueFace := fullBuildHeaderAndBody(item, config, fontCache, labelText, displayValue, contentPadding, 4)
-	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, displayValue, textColor, lineColor, 1)
+	contentPaddingX, contentPaddingY := resolveContentPaddingXY(item, config, 1, 1, 0, 0)
+	headerRect, bodyRect, labelFace, valueFace := fullBuildHeaderAndBody(item, config, fontCache, labelText, displayValue, contentPaddingX, contentPaddingY, 4)
+	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, displayValue, textColor, lineColor)
 
 	r.drawBody(dc, item, value, numberValue, lineColor, bodyRect, config)
 	drawBaseItemBorder(dc, item, config, cardRadius)
@@ -54,7 +41,7 @@ func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, registry *C
 }
 
 func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
-	history := appendRenderHistory(r.history, item, itemTypeFullChart, numberValue, 90, config)
+	history := appendRenderHistory(r.history, item, numberValue)
 	if len(history) == 0 {
 		return
 	}
@@ -64,11 +51,30 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		maxValue = minValue + 1
 	}
 
-	chartAreaBg := getItemAttrColorCfg(item, config, "chart_area_bg", "")
+	chartAreaBg := item.runtime.fullChart.chartAreaBg
+	chartAreaBorder := item.runtime.fullChart.chartAreaBorder
+	showSegmentLines := item.runtime.fullChart.showSegmentLines
+	gridLines := item.runtime.fullChart.gridLines
+	lineWidth := item.runtime.fullChart.lineWidth
+	enableThresholdColors := item.runtime.fullChart.enableThresholdColors
+	showAvgLine := item.runtime.fullChart.showAvgLine
+	if !item.runtime.prepared {
+		chartAreaBg = getItemAttrColorCfg(item, config, "chart_area_bg", "")
+		chartAreaBorder = getItemAttrColorCfg(item, config, "chart_area_border_color", "")
+		showSegmentLines = getItemAttrBoolCfg(
+			item,
+			config,
+			"show_segment_lines",
+			getItemAttrBoolCfg(item, config, "show_grid_lines", true),
+		)
+		gridLines = clampRenderInt(getItemAttrIntCfg(item, config, "grid_lines", 4), 2)
+		lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 2), 1)
+		enableThresholdColors = getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
+		showAvgLine = getItemAttrBoolCfg(item, config, "show_avg_line", true)
+	}
 	if chartAreaBg != "" {
 		drawRoundedRectFill(dc, body.x, body.y, body.w, body.h, 4, chartAreaBg)
 	}
-	chartAreaBorder := getItemAttrColorCfg(item, config, "chart_area_border_color", "")
 	if chartAreaBorder != "" {
 		dc.SetLineWidth(1)
 		dc.SetColor(parseColor(chartAreaBorder))
@@ -76,17 +82,7 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		dc.Stroke()
 	}
 
-	showSegmentLines := getItemAttrBoolCfg(
-		item,
-		config,
-		"show_segment_lines",
-		getItemAttrBoolCfg(item, config, "show_grid_lines", true),
-	)
 	if showSegmentLines {
-		gridLines := getItemAttrIntCfg(item, config, "grid_lines", 4)
-		if gridLines < 2 {
-			gridLines = 2
-		}
 		dc.SetLineWidth(1)
 		dc.SetColor(parseColor("#4755693c"))
 		for i := 0; i < gridLines; i++ {
@@ -96,11 +92,6 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		}
 	}
 
-	lineWidth := getItemAttrFloatCfg(item, config, "line_width", 2)
-	if lineWidth < 1 {
-		lineWidth = 1
-	}
-	enableThresholdColors := getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
 	thresholds := []float64{}
 	colors := []string{}
 	if enableThresholdColors {
@@ -151,7 +142,7 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		dc.Stroke()
 	}
 
-	if getItemAttrBoolCfg(item, config, "show_avg_line", true) {
+	if showAvgLine {
 		avg := historyAverage(history)
 		y := body.y + body.h - ((avg-minValue)/(maxValue-minValue))*body.h
 		y = clampFloat64(y, body.y, body.y+body.h)
