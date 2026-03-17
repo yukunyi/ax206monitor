@@ -32,6 +32,12 @@ type WebSnapshotResponse struct {
 	MonitorRuntime *CollectorManagerStats            `json:"monitor_runtime,omitempty"`
 }
 
+type webFrameRuntimeStats struct {
+	width    int
+	height   int
+	pngBytes int
+}
+
 type WebAPI struct {
 	mu            sync.RWMutex
 	applyMu       sync.Mutex
@@ -66,6 +72,7 @@ type WebAPI struct {
 	lockScreenActive bool
 	lockPauseEnabled bool
 	lockFrameReady   bool
+	frameStats       webFrameRuntimeStats
 
 	outputChan chan webOutputFrame
 	outputWg   sync.WaitGroup
@@ -203,6 +210,9 @@ func (r *WebAPI) outputLoop() {
 		// Always refresh preview buffer for WebSocket clients, independent of output types.
 		if err := r.previewOutput.OutputFrame(outputFrame); err != nil {
 			logDebugModule("web", "preview output failed: %v", err)
+		} else if outputFrame.Image != nil {
+			bounds := outputFrame.Image.Bounds()
+			r.setLatestFrameStats(bounds.Dx(), bounds.Dy(), GetMemImgPNGSize())
 		}
 
 		_, _, _, _, outputManager, _ := r.getRuntimeRefs()
@@ -302,7 +312,7 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	registry.SetPreviewMode(forceMemImg)
 	renderManager := NewRenderManager(r.fontCache, registry)
 
-	outputSummary := registry.ResolveOutputSummary(configCopy.Outputs)
+	outputSummary := resolveOutputConfigSummaryFromList(configCopy.Outputs, false)
 	outputConfigs := outputSummary.Configs
 
 	var outputManager *OutputManager
@@ -313,7 +323,7 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	if existingOutputManager != nil && outputConfigsEqual(existingOutputConfigs, outputConfigs) {
 		outputManager = existingOutputManager
 	} else {
-		outputManager, outputConfigs = buildOutputManager(configCopy, forceMemImg)
+		outputManager, outputConfigs = buildOutputManager(configCopy, false)
 		outputSummary = describeOutputConfigs(outputConfigs)
 	}
 
@@ -517,6 +527,7 @@ func (r *WebAPI) Snapshot() WebSnapshotResponse {
 		values[entry.name] = item
 	}
 	applyDynamicWebSnapshotLabels(values, layout.entries)
+	applyWebFrameRuntimeValues(values, r.latestFrameStats())
 
 	snapshot := WebSnapshotResponse{
 		Mode:           mode,
@@ -527,6 +538,78 @@ func (r *WebAPI) Snapshot() WebSnapshotResponse {
 	}
 	r.storeCachedSnapshot(registry, modeFull, updatedAtText, required, snapshot)
 	return snapshot
+}
+
+func (r *WebAPI) setLatestFrameStats(width, height, pngBytes int) {
+	if width < 0 {
+		width = 0
+	}
+	if height < 0 {
+		height = 0
+	}
+	if pngBytes < 0 {
+		pngBytes = 0
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.frameStats.width == width && r.frameStats.height == height && r.frameStats.pngBytes == pngBytes {
+		return
+	}
+	r.frameStats = webFrameRuntimeStats{
+		width:    width,
+		height:   height,
+		pngBytes: pngBytes,
+	}
+	r.snapshotCache = webSnapshotCache{}
+}
+
+func (r *WebAPI) latestFrameStats() webFrameRuntimeStats {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.frameStats
+}
+
+func applyWebFrameRuntimeValues(values map[string]WebMonitorSnapshotItem, stats webFrameRuntimeStats) {
+	if values == nil {
+		return
+	}
+
+	values["go_native.system.frame_size"] = WebMonitorSnapshotItem{
+		Available: stats.width > 0 && stats.height > 0,
+		Label:     "Frame Size",
+		Text:      formatWebFrameDimensions(stats.width, stats.height),
+	}
+	values["go_native.system.frame_bytes"] = WebMonitorSnapshotItem{
+		Available: stats.pngBytes > 0,
+		Label:     "Frame Bytes",
+		Text:      formatWebByteSize(stats.pngBytes),
+	}
+}
+
+func formatWebFrameDimensions(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%dx%d", width, height)
+}
+
+func formatWebByteSize(size int) string {
+	if size <= 0 {
+		return "0 B"
+	}
+	value := float64(size)
+	units := []string{"B", "KiB", "MiB", "GiB"}
+	unitIdx := 0
+	for value >= 1024 && unitIdx < len(units)-1 {
+		value /= 1024
+		unitIdx++
+	}
+	if unitIdx == 0 {
+		return fmt.Sprintf("%d %s", size, units[unitIdx])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unitIdx])
 }
 
 func (r *WebAPI) MonitorStats() *CollectorManagerStats {
@@ -1019,8 +1102,10 @@ func applyDynamicWebSnapshotLabels(values map[string]WebMonitorSnapshotItem, ent
 				item.Label = "Disk " + diskName + " name"
 			case "size":
 				item.Label = "Disk " + diskName + " size"
-			case "temp":
-				item.Label = "Disk " + diskName + " temperature"
+			case "read":
+				item.Label = "Disk " + diskName + " read speed"
+			case "write":
+				item.Label = "Disk " + diskName + " write speed"
 			}
 			values[entry.name] = item
 		}
@@ -1061,35 +1146,9 @@ var explicitWebSnapshotLabels = map[string]string{
 	"go_native.system.output.httppush.last_ms": "HTTP push last ms",
 	"go_native.system.output.httppush.max_ms":  "HTTP push max ms",
 	"go_native.system.output.httppush.avg_ms":  "HTTP push avg ms",
-	"alias.cpu.usage":                          "CPU usage",
-	"alias.cpu.temp":                           "CPU temperature",
-	"alias.cpu.freq":                           "CPU frequency",
-	"alias.cpu.max_freq":                       "CPU max frequency",
-	"alias.cpu.power":                          "CPU power",
-	"alias.memory.usage":                       "Memory usage",
-	"alias.memory.used":                        "Memory used",
-	"alias.gpu.fps":                            "GPU FPS",
-	"alias.gpu.usage":                          "GPU usage",
-	"alias.gpu.power":                          "GPU power",
-	"alias.gpu.vram":                           "GPU VRAM usage",
-	"alias.gpu.temp":                           "GPU temperature",
-	"alias.gpu.fan":                            "GPU fan speed",
-	"alias.gpu.freq":                           "GPU frequency",
-	"alias.gpu.max_freq":                       "GPU max frequency",
-	"alias.net.upload":                         "Network upload",
-	"alias.net.download":                       "Network download",
-	"alias.net.ip":                             "IP address",
-	"alias.net.interface":                      "Network interface",
-	"alias.system.time":                        "System time",
-	"alias.system.hostname":                    "Host name",
-	"alias.system.load":                        "System load",
-	"alias.system.resolution":                  "Display resolution",
-	"alias.system.refresh_rate":                "Display refresh rate",
-	"alias.system.display":                     "Display mode",
-	"alias.disk.temp":                          "Disk temperature",
-	"alias.fan.cpu":                            "CPU fan speed",
-	"alias.fan.gpu":                            "GPU fan speed",
-	"alias.fan.system":                         "System fan speed",
+	"go_native.system.output.tcppush.last_ms":  "TCP push last ms",
+	"go_native.system.output.tcppush.max_ms":   "TCP push max ms",
+	"go_native.system.output.tcppush.avg_ms":   "TCP push avg ms",
 	"rtss_fps":                                 "RTSS FPS",
 	"rtss_frametime_ms":                        "RTSS frame time",
 	"rtss_max_fps":                             "RTSS max FPS",

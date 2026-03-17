@@ -3,7 +3,9 @@ import { darkTheme } from "naive-ui";
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import TopBar from "./components/top_bar.vue";
 import BasicTab from "./components/basic_tab.vue";
+import DeferredInput from "./components/deferred_input.vue";
 import ElementsTab from "./components/elements_tab.vue";
+import OtherTab from "./components/other_tab.vue";
 import TypeDefaultsTab from "./components/type_defaults_tab.vue";
 import RuntimeTab from "./components/runtime_tab.vue";
 import { isMonitorRequiredType } from "./item_types";
@@ -11,9 +13,12 @@ import { monitorAliasLabel, normalizeMonitorName } from "./monitor_aliases";
 import {
   buildStyleKeySet,
   normalizeConfigModel,
-  normalizeRenderAttrs,
+  normalizeFullTableRows,
+  normalizeItemRenderAttrs,
+  normalizePositiveInt,
   normalizeStyleMap,
 } from "./config_normalizer";
+import { applyAutoThresholdGroupsToConfig } from "./threshold_group_auto";
 
 const state = reactive({
   loading: true,
@@ -162,6 +167,7 @@ const visibleTabs = computed(() => {
   }
   return [
     { key: "basic", label: "基础配置" },
+    { key: "other", label: "其他" },
     { key: "elements", label: "屏幕元素" },
     { key: "type-defaults", label: "样式管理" },
     { key: "collection", label: "采集运行态" },
@@ -220,11 +226,13 @@ function markCommittedFromCurrent() {
   if (!state.config) {
     committedConfig.value = null;
     committedConfigJson.value = "";
+    state.dirty = false;
     clearUndoStack();
     return;
   }
   committedConfig.value = deepClone(state.config);
   committedConfigJson.value = serializeConfig(committedConfig.value);
+  state.dirty = false;
   clearUndoStack();
 }
 
@@ -305,6 +313,7 @@ function createDefaultItem(type = "simple_value", monitor = "") {
   const defaultMonitor = selectedMonitor || String(monitorOptions.value[0]?.value || "");
   const isSimpleLine = type === "simple_line";
   const isFullGauge = type === "full_gauge";
+  const isFullTable = type === "full_table";
   return {
     id: createItemId(),
     type,
@@ -313,11 +322,13 @@ function createDefaultItem(type = "simple_value", monitor = "") {
     monitor: isMonitorRequiredType(type) ? defaultMonitor : "",
     x: 10,
     y: 10,
-    width: isSimpleLine ? 160 : isFullGauge ? 150 : 140,
-    height: isSimpleLine ? 12 : isFullGauge ? 120 : 36,
-    unit: "auto",
+    width: isSimpleLine ? 160 : isFullGauge ? 150 : isFullTable ? 220 : 140,
+    height: isSimpleLine ? 12 : isFullGauge ? 120 : isFullTable ? 136 : 36,
+    unit: isFullTable ? "" : "auto",
     style: {},
-    render_attrs_map: {},
+    render_attrs_map: isFullTable
+      ? { col_count: 1, row_count: 1, rows: [{ monitor: "", label: "" }] }
+      : {},
   };
 }
 
@@ -633,6 +644,12 @@ function onBasicChange({ path, value }) {
   if (!state.config || readonlyProfile.value) return;
   pushUndoSnapshot("basic-change");
   patchByPath(state.config, path, value);
+  if ((Array.isArray(path) ? path.join(".") : String(path)) === "outputs") {
+    state.config.output_types = (Array.isArray(state.config.outputs) ? state.config.outputs : [])
+      .filter((item) => item?.enabled !== false)
+      .map((item) => String(item?.type || "").trim().toLowerCase())
+      .filter((item, index, arr) => item && arr.indexOf(item) === index);
+  }
   if ((Array.isArray(path) ? path.join(".") : String(path)) === "allow_custom_style" && !value) {
     state.config.items = (state.config.items || []).map((item) => ({
       ...item,
@@ -644,18 +661,50 @@ function onBasicChange({ path, value }) {
 function onItemFieldChange({ field, value }) {
   if (!state.config || readonlyProfile.value || !currentItem.value) return;
   pushUndoSnapshot(`item-field:${field}`);
+  const styleKeySet = buildStyleKeySet(state.meta?.style_keys || []);
   if (field === "custom_style" && !state.config.allow_custom_style) {
     currentItem.value.custom_style = false;
     setDirty();
     return;
   }
   currentItem.value[field] = value;
-  if (
-    field === "type" &&
-    isMonitorRequiredType(String(value || "")) &&
-    !String(currentItem.value.monitor || "").trim()
-  ) {
-    currentItem.value.monitor = String(monitorOptions.value[0]?.value || "");
+  if (field === "type") {
+    const nextType = String(value || "").trim();
+    if (nextType === "full_table") {
+      const currentRows = normalizeFullTableRows(currentItem.value.render_attrs_map?.rows);
+      const colCount = normalizePositiveInt(currentItem.value.render_attrs_map?.col_count, 1);
+      const rowCount = normalizePositiveInt(currentItem.value.render_attrs_map?.row_count, 1);
+      const fallbackMonitor = normalizeMonitorName(currentItem.value.monitor);
+      currentItem.value.render_attrs_map = {
+        ...(currentItem.value.render_attrs_map || {}),
+        col_count: colCount,
+        row_count: rowCount,
+        rows: currentRows.length > 0
+          ? currentRows
+          : [{ monitor: fallbackMonitor || "", label: "" }],
+      };
+      currentItem.value.monitor = "";
+      currentItem.value.unit = "";
+    } else {
+      currentItem.value.render_attrs_map = normalizeItemRenderAttrs(
+        nextType,
+        currentItem.value.render_attrs_map,
+        styleKeySet,
+      );
+      if (isMonitorRequiredType(nextType) && !String(currentItem.value.monitor || "").trim()) {
+        currentItem.value.monitor = String(monitorOptions.value[0]?.value || "");
+      }
+      if (!String(currentItem.value.unit || "").trim()) {
+        currentItem.value.unit = "auto";
+      }
+    }
+  }
+  if (field === "type" && String(value || "").trim() === "full_table") {
+    currentItem.value.render_attrs_map = normalizeItemRenderAttrs(
+      "full_table",
+      currentItem.value.render_attrs_map,
+      styleKeySet,
+    );
   }
   if (field === "monitor") mergeMonitorNames([value]);
   setDirty();
@@ -672,7 +721,11 @@ function onItemPatch({ index, patch }) {
     nextPatch.style = normalizeStyleMap(nextPatch.style, styleKeySet);
   }
   if ("render_attrs_map" in nextPatch) {
-    nextPatch.render_attrs_map = normalizeRenderAttrs(nextPatch.render_attrs_map, styleKeySet);
+    nextPatch.render_attrs_map = normalizeItemRenderAttrs(
+      String(nextPatch.type || item.type || ""),
+      nextPatch.render_attrs_map,
+      styleKeySet,
+    );
   }
   if (!(state.config.allow_custom_style && item.custom_style === true)) {
     delete nextPatch.style;
@@ -840,11 +893,15 @@ async function createProfile() {
   profileDialog.error = "";
   profileDialog.submitting = true;
   try {
+    const nextConfig = applyAutoThresholdGroupsToConfig(deepClone(state.config), {
+      snapshot: state.snapshot,
+      monitorOptions: monitorOptions.value,
+    });
     const res = await api("/api/profiles", {
       method: "POST",
       body: JSON.stringify({
         name,
-        config: deepClone(state.config),
+        config: nextConfig,
         switch: false,
       }),
     });
@@ -983,13 +1040,13 @@ async function setEditingProfile(name) {
 function switchTab(tab) {
   state.activeTab = tab;
   if (tab === "collection") requestRuntime().catch(() => {});
-  if (tab === "elements" || tab === "basic" || tab === "type-defaults") {
+  if (tab === "elements" || tab === "basic" || tab === "other" || tab === "type-defaults") {
     refreshMonitorCatalog().catch(() => {});
   }
 }
 
 watch(readonlyProfile, (readonly) => {
-  if (readonly && (state.activeTab === "basic" || state.activeTab === "type-defaults")) {
+  if (readonly && (state.activeTab === "basic" || state.activeTab === "other" || state.activeTab === "type-defaults")) {
     state.activeTab = "elements";
   }
 });
@@ -1086,6 +1143,16 @@ onBeforeUnmount(() => {
               :config="state.config"
               :meta="state.meta"
               :collectors="state.collectors"
+              :snapshot="state.snapshot"
+              :readonly-profile="readonlyProfile"
+              @change="onBasicChange"
+            />
+
+            <OtherTab
+              v-else-if="state.activeTab === 'other' && !readonlyProfile"
+              :config="state.config"
+              :meta="state.meta"
+              :snapshot="state.snapshot"
               :monitor-options="monitorOptions"
               :readonly-profile="readonlyProfile"
               @change="onBasicChange"
@@ -1143,7 +1210,7 @@ onBeforeUnmount(() => {
       >
         <n-form label-placement="top" size="small">
           <n-form-item label="配置名称" :validation-status="profileDialog.error ? 'error' : undefined">
-            <n-input
+            <DeferredInput
               v-model:value="profileDialog.value"
               placeholder="仅支持 a-zA-Z0-9._-"
               :disabled="profileDialog.submitting"

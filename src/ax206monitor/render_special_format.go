@@ -106,13 +106,13 @@ func normalizeRenderMonitorKey(name string) string {
 
 func detectRenderSpecialFormatKind(monitorKey string) string {
 	switch monitorKey {
-	case "alias.system.time", "go_native.system.current_time":
+	case "go_native.system.current_time":
 		return renderSpecialFormatTime
-	case "alias.system.display", "go_native.system.display":
+	case "go_native.system.display":
 		return renderSpecialFormatDisplay
-	case "alias.system.resolution", "go_native.system.resolution":
+	case "go_native.system.resolution":
 		return renderSpecialFormatResolution
-	case "alias.system.refresh_rate", "go_native.system.refresh_rate":
+	case "go_native.system.refresh_rate":
 		return renderSpecialFormatRefresh
 	default:
 		return renderSpecialFormatNone

@@ -32,6 +32,7 @@ const systemRows = computed(() => {
     .filter(([name]) => String(name || "").startsWith("go_native.system"))
     .map(([name, item]) => ({
       name,
+      title: String(item?.label || name),
       available: !!item?.available,
       display: String(item?.text ?? "-"),
     }));
@@ -85,7 +86,7 @@ onBeforeUnmount(() => {
     <n-card class="runtime_meta" title="系统指标" size="small">
       <div class="runtime_sys_list">
         <div v-for="row in systemRows" :key="row.name" class="runtime_sys_row">
-          <span class="runtime_sys_name">{{ row.name }}</span>
+          <span class="runtime_sys_name">{{ row.title }}</span>
           <strong :class="row.available ? 'runtime_sys_value' : 'runtime_sys_value runtime_avail_off'">
             {{ row.display }}
           </strong>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/shirou/gopsutil/v3/cpu"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +32,9 @@ type GoNativeCPUCollector struct {
 
 func NewGoNativeCPUCollector() *GoNativeCPUCollector {
 	collector := &GoNativeCPUCollector{BaseCollector: NewBaseCollector("go_native.cpu")}
-	collector.triggerTempRefresh()
+	if nativeCPUTemperatureSupported() {
+		collector.triggerTempRefresh()
+	}
 	collector.triggerFreqRefresh()
 	return collector
 }
@@ -39,7 +42,9 @@ func NewGoNativeCPUCollector() *GoNativeCPUCollector {
 func (c *GoNativeCPUCollector) GetAllItems() map[string]*CollectItem {
 	if c.getItem("go_native.cpu.usage") == nil {
 		c.setItem("go_native.cpu.usage", NewCollectItem("go_native.cpu.usage", "CPU usage", "%", 0, 100, 0))
-		c.setItem("go_native.cpu.temp", NewCollectItem("go_native.cpu.temp", "CPU temperature", "°C", 0, 120, 0))
+		if nativeCPUTemperatureSupported() {
+			c.setItem("go_native.cpu.temp", NewCollectItem("go_native.cpu.temp", "CPU temperature", "°C", 0, 120, 0))
+		}
 		c.setItem("go_native.cpu.freq", NewCollectItem("go_native.cpu.freq", "CPU frequency", "MHz", 0, 0, 0))
 		c.setItem("go_native.cpu.max_freq", NewCollectItem("go_native.cpu.max_freq", "CPU max frequency", "MHz", 0, 0, 0))
 		c.setItem("go_native.cpu.model", NewCollectItem("go_native.cpu.model", "CPU model", "", 0, 0, 0))
@@ -166,7 +171,14 @@ func clampPercentage(value float64) float64 {
 	return value
 }
 
+func nativeCPUTemperatureSupported() bool {
+	return runtime.GOOS != "windows"
+}
+
 func (c *GoNativeCPUCollector) maybeRefreshTemp(now time.Time) {
+	if !nativeCPUTemperatureSupported() {
+		return
+	}
 	c.tempMu.RLock()
 	stale := c.tempAt.IsZero() || now.Sub(c.tempAt) >= 2*time.Second
 	c.tempMu.RUnlock()
@@ -176,6 +188,9 @@ func (c *GoNativeCPUCollector) maybeRefreshTemp(now time.Time) {
 }
 
 func (c *GoNativeCPUCollector) triggerTempRefresh() {
+	if !nativeCPUTemperatureSupported() {
+		return
+	}
 	if !atomic.CompareAndSwapInt32(&c.tempUpdating, 0, 1) {
 		return
 	}

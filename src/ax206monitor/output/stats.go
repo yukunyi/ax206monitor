@@ -32,6 +32,25 @@ type AX206DeviceFrameRuntimeStats struct {
 	AvgMS  int64 `json:"avg_ms"`
 }
 
+type TCPPushAvailabilityStats struct {
+	Type              string `json:"type"`
+	Connected         bool   `json:"connected"`
+	ProbeMode         bool   `json:"probe_mode"`
+	Available         bool   `json:"available"`
+	ShouldSendFrame   bool   `json:"should_send_frame"`
+	CanSend           bool   `json:"can_send"`
+	UserPriority      int    `json:"user_priority,omitempty"`
+	HighestPriority   int    `json:"highest_priority,omitempty"`
+	ActivePriority    int    `json:"active_priority,omitempty"`
+	ActiveSessionID   string `json:"active_session_id,omitempty"`
+	ActiveUser        string `json:"active_user,omitempty"`
+	LowerPriorityMode string `json:"lower_priority_mode,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	LastStatusCode    int    `json:"last_status_code,omitempty"`
+	LastStage         string `json:"last_stage,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
+}
+
 type outputRuntimeAccumulator struct {
 	calls   int64
 	errors  int64
@@ -46,6 +65,8 @@ var (
 	outputRuntimeByType = make(map[string]*outputRuntimeAccumulator)
 	ax206DeviceRuntime  outputRuntimeAccumulator
 	httpPushByType      = make(map[string]*outputRuntimeAccumulator)
+	tcpPushByType       = make(map[string]*outputRuntimeAccumulator)
+	tcpPushAvailability = make(map[string]TCPPushAvailabilityStats)
 )
 
 func recordOutputRuntime(typeName string, duration time.Duration, err error) {
@@ -223,6 +244,85 @@ func GetHTTPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
 			MaxMS:  toMillis(entry.maxNS),
 			AvgMS:  avgMillis(entry.totalNS, entry.calls),
 		}
+	}
+	return result
+}
+
+func recordTCPPushRuntime(typeName string, duration time.Duration, err error) {
+	if duration < 0 {
+		duration = 0
+	}
+	typeName = normalizeTypeName(typeName)
+	durationNS := duration.Nanoseconds()
+
+	outputRuntimeMu.Lock()
+	defer outputRuntimeMu.Unlock()
+
+	entry := tcpPushByType[typeName]
+	if entry == nil {
+		entry = &outputRuntimeAccumulator{}
+		tcpPushByType[typeName] = entry
+	}
+	entry.calls++
+	entry.lastNS = durationNS
+	entry.totalNS += durationNS
+	if durationNS > entry.maxNS {
+		entry.maxNS = durationNS
+	}
+	if err != nil {
+		entry.errors++
+	}
+}
+
+func GetTCPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
+	outputRuntimeMu.RLock()
+	defer outputRuntimeMu.RUnlock()
+
+	result := make(map[string]OutputHandlerRuntimeStats, len(tcpPushByType))
+	keys := make([]string, 0, len(tcpPushByType))
+	for key := range tcpPushByType {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		entry := tcpPushByType[key]
+		if entry == nil {
+			continue
+		}
+		result[key] = OutputHandlerRuntimeStats{
+			Type:   key,
+			Calls:  entry.calls,
+			Errors: entry.errors,
+			LastMS: toMillis(entry.lastNS),
+			MaxMS:  toMillis(entry.maxNS),
+			AvgMS:  avgMillis(entry.totalNS, entry.calls),
+		}
+	}
+	return result
+}
+
+func RecordTCPPushAvailabilityStats(stats TCPPushAvailabilityStats) {
+	typeName := normalizeTypeName(stats.Type)
+	stats.Type = typeName
+	stats.UpdatedAt = time.Now().Format(time.RFC3339Nano)
+
+	outputRuntimeMu.Lock()
+	defer outputRuntimeMu.Unlock()
+	tcpPushAvailability[typeName] = stats
+}
+
+func GetTCPPushAvailabilityStats() map[string]TCPPushAvailabilityStats {
+	outputRuntimeMu.RLock()
+	defer outputRuntimeMu.RUnlock()
+
+	result := make(map[string]TCPPushAvailabilityStats, len(tcpPushAvailability))
+	keys := make([]string, 0, len(tcpPushAvailability))
+	for key := range tcpPushAvailability {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result[key] = tcpPushAvailability[key]
 	}
 	return result
 }

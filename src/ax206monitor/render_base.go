@@ -11,7 +11,7 @@ type BaseTextRole string
 
 const (
 	TextRoleValue BaseTextRole = "value"
-	TextRoleLabel BaseTextRole = "label"
+	TextRoleText  BaseTextRole = "text"
 	TextRoleUnit  BaseTextRole = "unit"
 	TextRoleTitle BaseTextRole = "title"
 	TextRoleMeta  BaseTextRole = "meta"
@@ -197,7 +197,7 @@ func drawTextInItemRect(
 
 func resolveFontSizeByTextRole(item *ItemConfig, config *MonitorConfig, role BaseTextRole, fallback int) int {
 	switch role {
-	case TextRoleLabel, TextRoleTitle, TextRoleMeta:
+	case TextRoleText, TextRoleTitle, TextRoleMeta:
 		return resolveTextFontSize(item, config, fallback)
 	case TextRoleUnit:
 		return resolveUnitFontSize(item, config, fallback)

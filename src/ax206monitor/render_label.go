@@ -23,7 +23,7 @@ func (r *LabelRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFr
 	}
 	drawBaseItemFrame(dc, item, config)
 	drawTextInItemRect(dc, fontCache, item, config, item.Text, item.X, item.Y, item.Width, item.Height, BaseTextDrawOptions{
-		Role:     TextRoleLabel,
+		Role:     TextRoleText,
 		AlignH:   AlignLeft,
 		AlignV:   AlignMiddle,
 		PaddingX: 4,

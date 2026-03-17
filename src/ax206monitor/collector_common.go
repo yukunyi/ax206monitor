@@ -28,13 +28,12 @@ type CPUInfo struct {
 
 // DiskInfo represents detailed disk information
 type DiskInfo struct {
-	Name        string
-	Model       string
-	Size        int64 // Size in GB
-	Temperature float64
-	ReadSpeed   float64 // MB/s
-	WriteSpeed  float64 // MB/s
-	Usage       float64 // Usage percentage
+	Name       string
+	Model      string
+	Size       int64   // Size in GB
+	ReadSpeed  float64 // MB/s
+	WriteSpeed float64 // MB/s
+	Usage      float64 // Usage percentage
 }
 
 var (

@@ -1,13 +1,22 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
+)
+
+var (
+	nvmePartitionPattern   = regexp.MustCompile(`^(nvme\d+n\d+)p\d+$`)
+	mmcblkPartitionPattern = regexp.MustCompile(`^(mmcblk\d+)p\d+$`)
+	legacyDiskPartPattern  = regexp.MustCompile(`^((?:sd|hd|vd|xvd)[a-z]+)\d+$`)
 )
 
 func detectCPUInfo() *CPUInfo {
@@ -58,7 +67,50 @@ func detectCPUInfo() *CPUInfo {
 }
 
 func detectDiskInfo() []*DiskInfo {
+	if runtime.GOOS == "linux" {
+		disks, err := detectDiskInfoBySysfs()
+		if err == nil {
+			return disks
+		}
+		logWarnModule("disk", "sysfs disk detection failed, fallback to gopsutil: %v", err)
+	}
 	return detectDiskInfoByGopsutil()
+}
+
+type diskUsageAccumulator struct {
+	info       *DiskInfo
+	totalBytes uint64
+	usedBytes  uint64
+}
+
+func detectDiskInfoBySysfs() ([]*DiskInfo, error) {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil, err
+	}
+
+	usageByDisk := collectDiskUsageByBaseName()
+	disks := make([]*DiskInfo, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		baseName := normalizeDiskBaseName(entry.Name(), "")
+		if !isLinuxPhysicalDiskName(baseName) {
+			continue
+		}
+
+		info := buildDiskInfoFromSysfs(baseName, usageByDisk[baseName])
+		if info == nil {
+			continue
+		}
+		disks = append(disks, info)
+	}
+
+	sort.Slice(disks, func(i, j int) bool {
+		return disks[i].Name < disks[j].Name
+	})
+	return disks, nil
 }
 
 func detectDiskInfoByGopsutil() []*DiskInfo {
@@ -68,21 +120,35 @@ func detectDiskInfoByGopsutil() []*DiskInfo {
 		return []*DiskInfo{}
 	}
 
-	items := make(map[string]*DiskInfo)
+	items := make(map[string]*diskUsageAccumulator)
 	for _, part := range partitions {
-		name := normalizeDiskName(part.Device, part.Mountpoint)
-		if name == "" {
+		baseName := normalizeDiskBaseName("", part.Device)
+		if baseName == "" {
 			continue
 		}
-		key := strings.ToLower(name)
-		if _, exists := items[key]; exists {
+		if runtime.GOOS == "linux" && isLinuxPseudoDiskName(baseName) {
 			continue
 		}
 
-		usageTarget := strings.TrimSpace(part.Mountpoint)
-		if usageTarget == "" {
-			usageTarget = strings.TrimSpace(part.Device)
+		key := strings.ToLower(baseName)
+		acc, exists := items[key]
+		if !exists {
+			acc = &diskUsageAccumulator{
+				info: &DiskInfo{
+					Name:       baseName,
+					Model:      inferDiskModel(baseName),
+					ReadSpeed:  0,
+					WriteSpeed: 0,
+				},
+			}
+			if readSpeed, writeSpeed, ok := getDiskSpeedByDevice(baseName); ok {
+				acc.info.ReadSpeed = readSpeed
+				acc.info.WriteSpeed = writeSpeed
+			}
+			items[key] = acc
 		}
+
+		usageTarget := normalizeUsageMountpoint(part.Mountpoint)
 		if usageTarget == "" {
 			continue
 		}
@@ -91,21 +157,20 @@ func detectDiskInfoByGopsutil() []*DiskInfo {
 		if err != nil {
 			continue
 		}
-
-		items[key] = &DiskInfo{
-			Name:        name,
-			Model:       inferDiskModel(part.Device, part.Mountpoint),
-			Size:        int64(usage.Total / (1024 * 1024 * 1024)),
-			Temperature: 0,
-			ReadSpeed:   0,
-			WriteSpeed:  0,
-			Usage:       usage.UsedPercent,
-		}
+		acc.totalBytes += usage.Total
+		acc.usedBytes += usage.Used
 	}
 
 	disks := make([]*DiskInfo, 0, len(items))
-	for _, diskInfo := range items {
-		disks = append(disks, diskInfo)
+	for _, acc := range items {
+		if acc == nil || acc.info == nil {
+			continue
+		}
+		if acc.totalBytes > 0 {
+			acc.info.Size = int64(acc.totalBytes / (1024 * 1024 * 1024))
+			acc.info.Usage = float64(acc.usedBytes) * 100 / float64(acc.totalBytes)
+		}
+		disks = append(disks, acc.info)
 	}
 	sort.Slice(disks, func(i, j int) bool {
 		return disks[i].Name < disks[j].Name
@@ -113,33 +178,160 @@ func detectDiskInfoByGopsutil() []*DiskInfo {
 	return disks
 }
 
-func normalizeDiskName(device, mountpoint string) string {
-	device = strings.TrimSpace(device)
-	mountpoint = strings.TrimSpace(mountpoint)
-
-	if device != "" {
-		if runtime.GOOS == "windows" && strings.HasPrefix(strings.ToLower(device), `\\?\\volume`) && mountpoint != "" {
-			return mountpoint
-		}
-		return device
+func normalizeDiskBaseName(kname, fallback string) string {
+	name := strings.TrimSpace(kname)
+	if name == "" {
+		name = strings.TrimSpace(fallback)
 	}
-	if mountpoint != "" {
-		return mountpoint
+	name = filepath.Base(name)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return ""
+	}
+	return trimDiskPartitionSuffix(name)
+}
+
+func inferDiskModel(baseName string) string {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		return ""
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(baseName)
 	}
 	return ""
 }
 
-func inferDiskModel(device, mountpoint string) string {
-	name := strings.TrimSpace(device)
+func isLinuxPseudoDiskName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
-		name = strings.TrimSpace(mountpoint)
+		return true
 	}
+	return strings.HasPrefix(name, "loop") ||
+		strings.HasPrefix(name, "zram") ||
+		strings.HasPrefix(name, "ram") ||
+		strings.HasPrefix(name, "fd")
+}
+
+func normalizeUsageMountpoint(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "[") {
+		return ""
+	}
+	return value
+}
+
+func trimDiskPartitionSuffix(name string) string {
+	name = strings.TrimSpace(name)
 	if name == "" {
-		return "Disk"
+		return ""
 	}
-	base := filepath.Base(name)
-	if base == "." || base == string(filepath.Separator) || base == "" {
-		return "Disk"
+	if match := nvmePartitionPattern.FindStringSubmatch(name); len(match) == 2 {
+		return match[1]
 	}
-	return strings.ToUpper(base)
+	if match := mmcblkPartitionPattern.FindStringSubmatch(name); len(match) == 2 {
+		return match[1]
+	}
+	if match := legacyDiskPartPattern.FindStringSubmatch(strings.ToLower(name)); len(match) == 2 {
+		return match[1]
+	}
+	return name
+}
+
+func isLinuxPhysicalDiskName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || isLinuxPseudoDiskName(name) {
+		return false
+	}
+	infoPath := filepath.Join("/sys/block", name, "device")
+	if _, err := os.Stat(infoPath); err != nil {
+		return false
+	}
+	return true
+}
+
+func buildDiskInfoFromSysfs(baseName string, usage *diskUsageAccumulator) *DiskInfo {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		return nil
+	}
+
+	sizeBytes := readSysfsUint64(filepath.Join("/sys/block", baseName, "size")) * 512
+	info := &DiskInfo{
+		Name:       baseName,
+		Model:      readDiskModelFromSysfs(baseName),
+		Size:       int64(sizeBytes / (1024 * 1024 * 1024)),
+		ReadSpeed:  0,
+		WriteSpeed: 0,
+	}
+	if usage != nil && usage.totalBytes > 0 {
+		info.Size = int64(usage.totalBytes / (1024 * 1024 * 1024))
+		info.Usage = float64(usage.usedBytes) * 100 / float64(usage.totalBytes)
+	}
+	if readSpeed, writeSpeed, ok := getDiskSpeedByDevice(baseName); ok {
+		info.ReadSpeed = readSpeed
+		info.WriteSpeed = writeSpeed
+	}
+	return info
+}
+
+func collectDiskUsageByBaseName() map[string]*diskUsageAccumulator {
+	partitions, err := disk.Partitions(false)
+	if err != nil {
+		return map[string]*diskUsageAccumulator{}
+	}
+
+	result := make(map[string]*diskUsageAccumulator)
+	for _, part := range partitions {
+		baseName := normalizeDiskBaseName("", part.Device)
+		if !isLinuxPhysicalDiskName(baseName) {
+			continue
+		}
+		mountpoint := normalizeUsageMountpoint(part.Mountpoint)
+		if mountpoint == "" {
+			continue
+		}
+		usage, err := disk.Usage(mountpoint)
+		if err != nil {
+			continue
+		}
+		acc := result[baseName]
+		if acc == nil {
+			acc = &diskUsageAccumulator{}
+			result[baseName] = acc
+		}
+		acc.totalBytes += usage.Total
+		acc.usedBytes += usage.Used
+	}
+	return result
+}
+
+func readDiskModelFromSysfs(baseName string) string {
+	model := readSysfsTrimmed(filepath.Join("/sys/block", baseName, "device", "model"))
+	if serial := readSysfsTrimmed(filepath.Join("/sys/block", baseName, "device", "serial")); serial != "" {
+		if model != "" {
+			return model
+		}
+		return serial
+	}
+	return model
+}
+
+func readSysfsTrimmed(filename string) string {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func readSysfsUint64(filename string) uint64 {
+	value := readSysfsTrimmed(filename)
+	if value == "" {
+		return 0
+	}
+	number, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return number
 }

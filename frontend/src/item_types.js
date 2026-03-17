@@ -8,7 +8,9 @@ export const DEFAULT_ITEM_TYPES = [
   "simple_circle",
   "label_text",
   "full_chart",
-  "full_progress",
+  "full_table",
+  "full_progress_h",
+  "full_progress_v",
   "full_gauge",
 ];
 
@@ -22,7 +24,9 @@ export const ITEM_TYPE_LABELS = {
   simple_circle: "基础圆形",
   label_text: "标签数值",
   full_chart: "复杂图表",
-  full_progress: "复杂进度条",
+  full_table: "复杂表格",
+  full_progress_h: "复杂进度条(横向)",
+  full_progress_v: "复杂进度条(竖向)",
   full_gauge: "复杂仪表盘",
 };
 
@@ -32,7 +36,8 @@ const MONITOR_REQUIRED_TYPE_SET = new Set([
   "simple_line_chart",
   "label_text",
   "full_chart",
-  "full_progress",
+  "full_progress_h",
+  "full_progress_v",
   "full_gauge",
 ]);
 

@@ -29,7 +29,7 @@ func getConfiguredCoolerControlClient(cfg *MonitorConfig) *CoolerControlClient {
 	if url == "" {
 		return nil
 	}
-	return GetCoolerControlClient(url, cfg.GetCoolerControlUsername(), cfg.GetCoolerControlPassword())
+	return GetCoolerControlClient(url, cfg.GetCoolerControlPassword())
 }
 
 func listConfiguredCoolerControlOptions(cfg *MonitorConfig) ([]CoolerControlMonitorOption, error) {

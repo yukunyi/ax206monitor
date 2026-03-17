@@ -51,6 +51,18 @@ type ItemTypeDefaults struct {
 	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
 }
 
+type ThresholdRangeConfig struct {
+	Min   *float64 `json:"min,omitempty"`
+	Max   *float64 `json:"max,omitempty"`
+	Color string   `json:"color,omitempty"`
+}
+
+type ThresholdGroupConfig struct {
+	Name     string                 `json:"name"`
+	Monitors []string               `json:"monitors,omitempty"`
+	Ranges   []ThresholdRangeConfig `json:"ranges,omitempty"`
+}
+
 type MonitorConfig struct {
 	Name                    string                      `json:"name"`
 	Width                   int                         `json:"width"`
@@ -74,10 +86,10 @@ type MonitorConfig struct {
 	EnableRTSSCollect       bool                        `json:"enable_rtss_collect,omitempty"`
 	LibreHardwareMonitorURL string                      `json:"libre_hardware_monitor_url,omitempty"`
 	CoolerControlURL        string                      `json:"coolercontrol_url,omitempty"`
-	CoolerControlUsername   string                      `json:"coolercontrol_username,omitempty"`
 	CoolerControlPassword   string                      `json:"coolercontrol_password,omitempty"`
 	CollectorConfig         map[string]CollectorConfig  `json:"collector_config,omitempty"`
 	TypeDefaults            map[string]ItemTypeDefaults `json:"type_defaults,omitempty"`
+	ThresholdGroups         []ThresholdGroupConfig      `json:"threshold_groups,omitempty"`
 	CustomMonitors          []CustomMonitorConfig       `json:"custom_monitors,omitempty"`
 	Items                   []ItemConfig                `json:"items"`
 }
@@ -93,9 +105,6 @@ type ItemConfig struct {
 	Y              int                    `json:"y"`
 	Width          int                    `json:"width"`
 	Height         int                    `json:"height"`
-	Max            float64                `json:"max,omitempty"`
-	MaxValue       *float64               `json:"max_value,omitempty"`
-	MinValue       *float64               `json:"min_value,omitempty"`
 	Text           string                 `json:"text,omitempty"`
 	Style          map[string]interface{} `json:"style,omitempty"`
 	RenderAttrsMap map[string]interface{} `json:"render_attrs_map,omitempty"`
@@ -292,59 +301,6 @@ func (config *MonitorConfig) GetTypeDefaults(itemType string) ItemTypeDefaults {
 	return defaults
 }
 
-func normalizeThresholds(raw []float64, minValue, maxValue float64) []float64 {
-	percentages := make([]float64, 0, 4)
-	for _, value := range raw {
-		if value < 0 {
-			value = 0
-		}
-		if value > 100 {
-			value = 100
-		}
-		percentages = append(percentages, value)
-		if len(percentages) == 4 {
-			break
-		}
-	}
-	if len(percentages) == 0 {
-		return nil
-	}
-	for len(percentages) < 4 {
-		percentages = append(percentages, percentages[len(percentages)-1])
-	}
-	sort.Float64s(percentages)
-
-	if maxValue <= minValue {
-		minValue = 0
-		maxValue = 100
-	}
-	span := maxValue - minValue
-	thresholds := make([]float64, 4)
-	for i := 0; i < 4; i++ {
-		thresholds[i] = minValue + span*(percentages[i]/100.0)
-	}
-	for i := 1; i < len(thresholds); i++ {
-		if thresholds[i] < thresholds[i-1] {
-			thresholds[i] = thresholds[i-1]
-		}
-	}
-	return thresholds
-}
-
-func buildAverageThresholds(minValue, maxValue float64) []float64 {
-	if maxValue <= minValue {
-		minValue = 0
-		maxValue = 100
-	}
-	step := (maxValue - minValue) / 4.0
-	return []float64{
-		minValue + step,
-		minValue + 2*step,
-		minValue + 3*step,
-		maxValue,
-	}
-}
-
 func (config *MonitorConfig) GetNetworkInterface() string {
 	if value := config.GetCollectorStringOption("go_native.network", "interface", ""); strings.TrimSpace(value) != "" {
 		if strings.EqualFold(strings.TrimSpace(value), "auto") {
@@ -455,19 +411,6 @@ func (config *MonitorConfig) GetCoolerControlURL() string {
 		return url
 	}
 	return normalizeEndpointURL(defaultCoolerControlURL)
-}
-
-func (config *MonitorConfig) GetCoolerControlUsername() string {
-	if username := strings.TrimSpace(config.GetCollectorStringOption(collectorCoolerControl, "username", "")); username != "" {
-		return username
-	}
-	if config.CoolerControlUsername != "" {
-		return config.CoolerControlUsername
-	}
-	if config.GetCoolerControlPassword() != "" {
-		return "CCAdmin"
-	}
-	return ""
 }
 
 func (config *MonitorConfig) GetCoolerControlPassword() string {

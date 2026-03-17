@@ -147,7 +147,8 @@ func prepareRenderItemRuntime(config *MonitorConfig, item *ItemConfig) {
 	item.runtime = renderItemRuntime{}
 	item.runtime.background = resolveItemBackground(item, config)
 	item.runtime.staticColor = resolveItemStaticColor(item, config)
-	item.runtime.explicitUnitColor = strings.TrimSpace(resolveStyleColor(item, config, "unit_color", ""))
+	item.runtime.explicitStaticColor = strings.TrimSpace(resolveStyleOverrideColor(item, config, "color"))
+	item.runtime.explicitUnitColor = strings.TrimSpace(resolveStyleOverrideColor(item, config, "unit_color"))
 	item.runtime.borderWidth = resolveItemBorderWidth(item, config)
 	item.runtime.borderColor = resolveItemBorderColor(item, config)
 	item.runtime.radius = resolveItemRadius(item, config, 0)
@@ -231,8 +232,6 @@ func prepareRenderTypeRuntime(config *MonitorConfig, item *ItemConfig) {
 	case itemTypeSimpleChart:
 		item.runtime.simpleChart.lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 1.5), 1)
 		item.runtime.simpleChart.enableThresholdColors = getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
-		item.runtime.simpleChart.thresholdPercents = normalizeThresholdPercentageArray(resolveStyleThresholdsPercent(item, config))
-		item.runtime.simpleChart.levelColors = normalizeRenderLevelColors(resolveStyleLevelColors(item, config))
 	case itemTypeFullChart:
 		item.runtime.fullCard = prepareRenderFullCardRuntime(config, item, 4)
 		item.runtime.fullChart.lineColor = resolveFullChartLineColor(item, config)
@@ -248,9 +247,10 @@ func prepareRenderTypeRuntime(config *MonitorConfig, item *ItemConfig) {
 		item.runtime.fullChart.lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 2), 1)
 		item.runtime.fullChart.enableThresholdColors = getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
 		item.runtime.fullChart.showAvgLine = getItemAttrBoolCfg(item, config, "show_avg_line", true)
-		item.runtime.fullChart.thresholdPercents = normalizeThresholdPercentageArray(resolveStyleThresholdsPercent(item, config))
-		item.runtime.fullChart.levelColors = normalizeRenderLevelColors(resolveStyleLevelColors(item, config))
-	case itemTypeFullProgress:
+	case itemTypeFullTable:
+		item.runtime.fullCard = prepareRenderFullCardRuntime(config, item, 4)
+		item.runtime.fullTable = prepareRenderFullTableRuntime(item, config)
+	case itemTypeFullProgressH, itemTypeFullProgressV:
 		item.runtime.fullCard = prepareRenderFullCardRuntime(config, item, 0)
 		item.runtime.fullProgress.style = normalizeFullProgressStyle(getItemAttrStringCfg(item, config, "progress_style", "gradient"))
 		item.runtime.fullProgress.barRadius = getItemAttrFloatCfg(item, config, "bar_radius", 0)
@@ -305,10 +305,14 @@ func normalizeFullProgressStyle(style string) string {
 	if style == "glow" {
 		return "gradient"
 	}
-	if style == "" {
-		return "gradient"
+	switch style {
+	case "", "gradient", "solid", "segmented", "stripes":
+		if style == "" {
+			return "gradient"
+		}
+		return style
 	}
-	return style
+	return "gradient"
 }
 
 func normalizeSimpleLineOrientation(orientation string) string {
@@ -340,7 +344,7 @@ func clampRenderInt(value int, minValue int) int {
 	return value
 }
 
-func fullResolveTexts(item *ItemConfig, monitor *RenderMonitorSnapshot, value *CollectValue, config *MonitorConfig) (string, string) {
+func fullResolveTextParts(item *ItemConfig, monitor *RenderMonitorSnapshot, value *CollectValue, config *MonitorConfig) (string, string, string) {
 	labelText := resolveItemTitleText(item, config)
 	if labelText == "" {
 		labelText = resolveItemLabelText(item, config)
@@ -352,6 +356,11 @@ func fullResolveTexts(item *ItemConfig, monitor *RenderMonitorSnapshot, value *C
 		labelText = strings.TrimSpace(item.Monitor)
 	}
 	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
+	return labelText, valueText, unitText
+}
+
+func fullResolveTexts(item *ItemConfig, monitor *RenderMonitorSnapshot, value *CollectValue, config *MonitorConfig) (string, string) {
+	labelText, valueText, unitText := fullResolveTextParts(item, monitor, value, config)
 	displayValue := strings.TrimSpace(valueText + " " + unitText)
 	if displayValue == "" {
 		displayValue = strings.TrimSpace(valueText)
@@ -491,6 +500,42 @@ func drawFullHeader(
 		dc.DrawLine(rect.x, y, rect.x+rect.w, y)
 		dc.Stroke()
 	}
+}
+
+func drawFullHeaderValueWithUnit(
+	dc *gg.Context,
+	rect fullRect,
+	valueFace font.Face,
+	unitFace font.Face,
+	valueText string,
+	unitText string,
+	valueColor string,
+	unitColor string,
+) {
+	const headerHorizontalPadding = 2.0
+	rightX := rect.x + rect.w - headerHorizontalPadding
+	centerY := rect.y + rect.h/2
+
+	if strings.TrimSpace(unitText) == "" {
+		dc.SetColor(parseColor(valueColor))
+		drawBaseMetricAnchoredText(dc, valueFace, valueText, rightX, centerY, 1)
+		return
+	}
+
+	dc.SetFontFace(valueFace)
+	valueWidth, _ := dc.MeasureString(valueText)
+	dc.SetFontFace(unitFace)
+	unitWidth, _ := dc.MeasureString(unitText)
+
+	gap := 2.0
+	totalWidth := valueWidth + unitWidth + gap
+	valueX := rightX - totalWidth
+	unitX := valueX + valueWidth + gap
+
+	dc.SetColor(parseColor(valueColor))
+	drawBaseMetricAnchoredText(dc, valueFace, valueText, valueX, centerY, 0)
+	dc.SetColor(parseColor(unitColor))
+	drawBaseMetricAnchoredText(dc, unitFace, unitText, unitX, centerY, 0)
 }
 
 func resolveFullCardBodyGap(item *ItemConfig, config *MonitorConfig, fallback float64) float64 {

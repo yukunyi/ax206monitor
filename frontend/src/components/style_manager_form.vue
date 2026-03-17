@@ -1,5 +1,7 @@
 <script setup>
 import { computed, ref } from "vue";
+import DeferredInput from "./deferred_input.vue";
+import DeferredInputNumber from "./deferred_input_number.vue";
 import PureColorInput from "./pure_color_input.vue";
 import {
   normalizeStyleKeys,
@@ -222,7 +224,7 @@ function onAddSelected() {
         <n-form-item-gi v-for="key in orderedModelKeys" :key="key" :label="fieldLabel(key)">
           <n-space size="small" :wrap="false" align="center" class="style_field_row">
             <template v-if="fieldKind(key) === 'int' || fieldKind(key) === 'float'">
-              <n-input-number
+              <DeferredInputNumber
                 :value="numberValue(key, 0)"
                 :show-button="false"
                 :disabled="disabled"
@@ -255,7 +257,7 @@ function onAddSelected() {
             </template>
             <template v-else-if="fieldKind(key) === 'float4'">
               <n-space size="4" :wrap="false" class="array_inputs">
-                <n-input-number
+                <DeferredInputNumber
                   v-for="(item, idx) in numberArray4(key, defaultFloat4(key))"
                   :key="idx"
                   :value="item"
@@ -277,7 +279,7 @@ function onAddSelected() {
               </n-space>
             </template>
             <template v-else>
-              <n-input
+              <DeferredInput
                 :value="textValue(key, '')"
                 :disabled="disabled"
                 @update:value="(v) => updateField(key, String(v || ''))"

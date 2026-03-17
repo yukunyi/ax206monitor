@@ -8,12 +8,14 @@ const (
 	outputTypeMemImg   = output.TypeMemImg
 	outputTypeAX206USB = output.TypeAX206USB
 	outputTypeHTTPPush = output.TypeHTTPPush
+	outputTypeTCPPush  = output.TypeTCPPush
 )
 
 var supportedOutputTypes = []string{
 	outputTypeMemImg,
 	outputTypeAX206USB,
 	outputTypeHTTPPush,
+	outputTypeTCPPush,
 }
 
 func getSupportedOutputTypes() []string {
@@ -36,6 +38,10 @@ func normalizeOutputConfigs(configs []OutputConfig) []OutputConfig {
 
 func outputConfigsFromTypes(types []string) []OutputConfig {
 	return output.ConfigsFromTypes(types)
+}
+
+func outputEnabledTypeNames(configs []OutputConfig) []string {
+	return output.EnabledTypeNames(configs)
 }
 
 func describeOutputConfigs(configs []OutputConfig) OutputConfigSummary {

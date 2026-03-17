@@ -24,22 +24,22 @@ func (r *LabelTextRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 		return nil
 	}
 
-	labelText := resolveItemLabelText(item, config)
-	if labelText == "" {
-		labelText = resolveItemText(item)
+	textText := resolveItemLabelText(item, config)
+	if textText == "" {
+		textText = resolveItemText(item)
 	}
-	if labelText == "" {
-		labelText = strings.TrimSpace(monitor.label)
+	if textText == "" {
+		textText = strings.TrimSpace(monitor.label)
 	}
-	if labelText == "" {
-		labelText = strings.TrimSpace(item.Monitor)
+	if textText == "" {
+		textText = strings.TrimSpace(item.Monitor)
 	}
 	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	r.renderLabelText1(dc, item, fontCache, config, monitor, labelText, valueText, unitText)
+	r.renderLabelText1(dc, item, fontCache, config, monitor, textText, valueText, unitText)
 
 	drawBaseItemBorder(dc, item, config, radius)
 	return nil
@@ -51,18 +51,22 @@ func (r *LabelTextRenderer) renderLabelText1(
 	fontCache *FontCache,
 	config *MonitorConfig,
 	monitor *RenderMonitorSnapshot,
-	labelText string,
+	textText string,
 	valueText string,
 	unitText string,
 ) {
 	paddingX, paddingY := resolveContentPaddingXY(item, config, 3, 3, 2, 0)
 	valueFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
-	labelFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleLabel, 16, 8)
+	textFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleText, 16, 8)
 	unitFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 
-	labelColor := resolveItemStaticColor(item, config)
+	textColor := resolveItemStaticColor(item, config)
 	valueColor := resolveMonitorColor(item, monitor, config)
-	unitColor := resolveUnitColor(item, config, valueColor)
+	numberValue := 0.0
+	if monitor != nil && monitor.value != nil {
+		numberValue, _ = tryGetFloat64(monitor.value.Value)
+	}
+	unitColor := resolveMonitorUnitColor(item, monitor.name, monitor.value, numberValue, config)
 	textTop := float64(item.Y) + paddingY
 	textHeight := float64(item.Height) - paddingY*2
 	if textHeight < 1 {
@@ -71,8 +75,8 @@ func (r *LabelTextRenderer) renderLabelText1(
 	}
 	centerY := textTop + textHeight/2
 
-	dc.SetColor(parseColor(labelColor))
-	drawMetricAnchoredText(dc, labelFace, labelText, float64(item.X)+paddingX, centerY, 0)
+	dc.SetColor(parseColor(textColor))
+	drawMetricAnchoredText(dc, textFace, textText, float64(item.X)+paddingX, centerY, 0)
 
 	rightX := float64(item.X+item.Width) - paddingX
 	if strings.TrimSpace(unitText) == "" {

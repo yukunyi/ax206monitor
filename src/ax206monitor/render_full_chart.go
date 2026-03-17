@@ -1,6 +1,10 @@
 package main
 
-import "github.com/fogleman/gg"
+import (
+	"strings"
+
+	"github.com/fogleman/gg"
+)
 
 type FullChartRenderer struct {
 	history *renderHistoryStore
@@ -27,13 +31,18 @@ func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 	cardRadius := resolveItemCardRadius(item, config)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), cardRadius)
 
-	labelText, displayValue := fullResolveTexts(item, monitor, value, config)
+	labelText, valueText, unitText := fullResolveTextParts(item, monitor, value, config)
+	displayValue := strings.TrimSpace(valueText + " " + unitText)
 	lineColor := resolveFullChartLineColor(item, config)
 	textColor := resolveItemStaticColor(item, config)
+	valueColor := resolveMonitorValueColor(item, monitor.name, value, numberValue, config)
+	unitColor := resolveMonitorUnitColor(item, monitor.name, value, numberValue, config)
 
 	contentPaddingX, contentPaddingY := resolveContentPaddingXY(item, config, 1, 1, 0, 0)
 	headerRect, bodyRect, labelFace, valueFace := fullBuildHeaderAndBody(item, config, fontCache, labelText, displayValue, contentPaddingX, contentPaddingY, 4)
-	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, displayValue, textColor, lineColor)
+	unitFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
+	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, "", textColor, valueColor)
+	drawFullHeaderValueWithUnit(dc, headerRect, valueFace, unitFace, valueText, unitText, valueColor, unitColor)
 
 	r.drawBody(dc, item, value, numberValue, lineColor, bodyRect, config)
 	drawBaseItemBorder(dc, item, config, cardRadius)
@@ -92,13 +101,6 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		}
 	}
 
-	thresholds := []float64{}
-	colors := []string{}
-	if enableThresholdColors {
-		thresholds = effectiveThresholds(item, minValue, maxValue, config)
-		colors = effectiveLevelColors(item, config)
-	}
-
 	type chartPoint struct {
 		x float64
 		y float64
@@ -121,12 +123,12 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *Co
 		return
 	}
 
-	if enableThresholdColors && len(thresholds) > 0 && len(colors) > 0 {
+	if enableThresholdColors {
 		dc.SetLineWidth(lineWidth)
 		for idx := 1; idx < len(pointsOnChart); idx++ {
 			p0 := pointsOnChart[idx-1]
 			p1 := pointsOnChart[idx]
-			segmentColor := resolveChartThresholdColor((p0.v+p1.v)/2, thresholds, colors, lineColor)
+			segmentColor := resolveMonitorValueColor(item, item.Monitor, value, (p0.v+p1.v)/2, config)
 			dc.SetColor(parseColor(segmentColor))
 			dc.DrawLine(p0.x, p0.y, p1.x, p1.y)
 			dc.Stroke()

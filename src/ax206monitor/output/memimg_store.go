@@ -25,3 +25,9 @@ func GetMemImgPNG() ([]byte, bool) {
 	}
 	return append([]byte(nil), memImgStore.png...), true
 }
+
+func GetMemImgPNGSize() int {
+	memImgStore.mutex.RLock()
+	defer memImgStore.mutex.RUnlock()
+	return len(memImgStore.png)
+}

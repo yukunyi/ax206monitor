@@ -15,6 +15,7 @@ type AX206USBOutputHandler = output.AX206USBOutputHandler
 type OutputRuntimeStats = output.OutputRuntimeStats
 type OutputHandlerRuntimeStats = output.OutputHandlerRuntimeStats
 type AX206DeviceFrameRuntimeStats = output.AX206DeviceFrameRuntimeStats
+type TCPPushAvailabilityStats = output.TCPPushAvailabilityStats
 
 func NewOutputManager() *OutputManager {
 	return output.NewOutputManager()
@@ -36,6 +37,10 @@ func GetMemImgPNG() ([]byte, bool) {
 	return output.GetMemImgPNG()
 }
 
+func GetMemImgPNGSize() int {
+	return output.GetMemImgPNGSize()
+}
+
 func GetOutputRuntimeStats() OutputRuntimeStats {
 	return output.GetRuntimeStats()
 }
@@ -46,4 +51,12 @@ func GetAX206DeviceFrameRuntimeStats() AX206DeviceFrameRuntimeStats {
 
 func GetHTTPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
 	return output.GetHTTPPushRuntimeStats()
+}
+
+func GetTCPPushRuntimeStats() map[string]OutputHandlerRuntimeStats {
+	return output.GetTCPPushRuntimeStats()
+}
+
+func GetTCPPushAvailabilityStats() map[string]TCPPushAvailabilityStats {
+	return output.GetTCPPushAvailabilityStats()
 }

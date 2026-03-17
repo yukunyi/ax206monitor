@@ -53,8 +53,8 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rende
 	valueText, unitText := resolveItemDisplayValueParts(item, monitor, value, config)
 	_, fontSize := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
 	_, unitFontSize := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
-	textColor := config.GetDefaultTextColor()
-	unitColor := resolveUnitColor(item, config, textColor)
+	textColor := resolveMonitorColor(item, monitor, config)
+	unitColor := resolveMonitorUnitColor(item, monitor.name, value, val, config)
 	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, textColor, unitFontSize, unitColor, fontCache)
 
 	drawBaseItemBorder(dc, item, config, radius)

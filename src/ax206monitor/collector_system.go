@@ -32,6 +32,7 @@ func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
 		ensureOutputMetricItems(c, outputTypeMemImg, "Output memimg")
 		ensureOutputMetricItems(c, outputTypeAX206USB, "AX206 refresh")
 		ensureOutputMetricItems(c, outputTypeHTTPPush, "HTTP push")
+		ensureOutputMetricItems(c, outputTypeTCPPush, "TCP push")
 	}
 	if item := c.getItem("go_native.system.current_time"); item != nil {
 		item.SetValue(time.Now().Format("2006-01-02 15:04:05"))
@@ -105,6 +106,10 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 	setAX206DeviceOutputMetrics(c, outputTypeAX206USB, GetAX206DeviceFrameRuntimeStats())
 	for typeName, pushStats := range GetHTTPPushRuntimeStats() {
 		ensureOutputMetricItems(c, typeName, "HTTP push "+typeName)
+		setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
+	}
+	for typeName, pushStats := range GetTCPPushRuntimeStats() {
+		ensureOutputMetricItems(c, typeName, "TCP push "+typeName)
 		setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
 	}
 	return err

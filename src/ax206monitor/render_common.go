@@ -270,6 +270,16 @@ func resolveItemStaticColor(item *ItemConfig, config *MonitorConfig) string {
 	return resolveStyleColor(item, config, "color", "#f8fafc")
 }
 
+func resolveExplicitItemStaticColor(item *ItemConfig, config *MonitorConfig) string {
+	if item == nil {
+		return ""
+	}
+	if item.runtime.prepared {
+		return strings.TrimSpace(item.runtime.explicitStaticColor)
+	}
+	return strings.TrimSpace(resolveStyleOverrideColor(item, config, "color"))
+}
+
 func resolveUnitOverride(item *ItemConfig) string {
 	if item == nil {
 		return ""
@@ -281,100 +291,62 @@ func resolveUnitOverride(item *ItemConfig) string {
 	return unit
 }
 
+func resolveSystemDefaultValueColor(config *MonitorConfig) string {
+	if config == nil {
+		return "#f8fafc"
+	}
+	return config.GetDefaultTextColor()
+}
+
+func resolveMonitorValueColor(item *ItemConfig, monitorName string, value *CollectValue, numberValue float64, config *MonitorConfig) string {
+	if color := resolveExplicitItemStaticColor(item, config); color != "" {
+		return color
+	}
+	if group := findThresholdGroupForMonitor(config, monitorName); group != nil {
+		if color := resolveThresholdRangeColor(group, numberValue); color != "" {
+			return color
+		}
+	}
+	_ = value
+	return resolveSystemDefaultValueColor(config)
+}
+
+func resolveMonitorUnitColor(item *ItemConfig, monitorName string, value *CollectValue, numberValue float64, config *MonitorConfig) string {
+	if item != nil {
+		if item.runtime.prepared && item.runtime.explicitUnitColor != "" {
+			return item.runtime.explicitUnitColor
+		}
+		if color := strings.TrimSpace(resolveStyleOverrideColor(item, config, "unit_color")); color != "" {
+			return color
+		}
+	}
+	if color := resolveExplicitItemStaticColor(item, config); color != "" {
+		return color
+	}
+	if group := findThresholdGroupForMonitor(config, monitorName); group != nil {
+		if color := resolveThresholdRangeColor(group, numberValue); color != "" {
+			return color
+		}
+	}
+	_ = value
+	return resolveSystemDefaultValueColor(config)
+}
+
 func resolveMonitorColor(item *ItemConfig, monitor *RenderMonitorSnapshot, config *MonitorConfig) string {
-	if monitor == nil {
-		return resolveItemStaticColor(item, config)
+	if monitor == nil || monitor.value == nil {
+		if color := resolveExplicitItemStaticColor(item, config); color != "" {
+			return color
+		}
+		return resolveSystemDefaultValueColor(config)
 	}
-	value := monitor.value
-	if value == nil {
-		return resolveItemStaticColor(item, config)
-	}
-	numberValue, ok := tryGetFloat64(value.Value)
+	numberValue, ok := tryGetFloat64(monitor.value.Value)
 	if !ok {
-		return resolveItemStaticColor(item, config)
-	}
-
-	minValue, maxValue := resolveEffectiveMinMax(item, value, value.Min, value.Max)
-
-	thresholds := effectiveThresholds(item, minValue, maxValue, config)
-	colors := effectiveLevelColors(item, config)
-	if len(thresholds) == 0 || len(colors) == 0 {
-		return resolveItemStaticColor(item, config)
-	}
-
-	for idx, threshold := range thresholds {
-		if numberValue <= threshold {
-			if idx < len(colors) {
-				return colors[idx]
-			}
-			return colors[len(colors)-1]
+		if color := resolveExplicitItemStaticColor(item, config); color != "" {
+			return color
 		}
+		return resolveSystemDefaultValueColor(config)
 	}
-	return colors[len(colors)-1]
-}
-
-func resolveEffectiveMinMax(item *ItemConfig, monitorValue *CollectValue, fallbackMin float64, fallbackMax float64) (float64, float64) {
-	minValue := fallbackMin
-	maxValue := fallbackMax
-	if monitorValue != nil {
-		minValue = monitorValue.Min
-		maxValue = monitorValue.Max
-	}
-
-	if !hasExplicitItemRange(item) && isTemperatureMetric(item, monitorValue) {
-		minValue = 0
-		maxValue = 100
-	}
-
-	if item != nil {
-		if item.MinValue != nil {
-			minValue = *item.MinValue
-		}
-		if item.MaxValue != nil {
-			maxValue = *item.MaxValue
-		}
-		if item.Max > 0 {
-			maxValue = item.Max
-		}
-	}
-
-	if maxValue <= minValue {
-		maxValue = minValue + 1
-	}
-	return minValue, maxValue
-}
-
-func hasExplicitItemRange(item *ItemConfig) bool {
-	if item == nil {
-		return false
-	}
-	if item.MinValue != nil || item.MaxValue != nil {
-		return true
-	}
-	return item.Max > 0
-}
-
-func isTemperatureMetric(item *ItemConfig, monitorValue *CollectValue) bool {
-	unit := ""
-	if item != nil {
-		unitOverride := strings.TrimSpace(item.Unit)
-		if unitOverride != "" && !strings.EqualFold(unitOverride, "auto") {
-			unit = unitOverride
-		}
-	}
-	if unit == "" && monitorValue != nil {
-		unit = monitorValue.Unit
-	}
-	normalizedUnit := strings.ToLower(strings.TrimSpace(unit))
-	if strings.Contains(normalizedUnit, "°c") || strings.Contains(normalizedUnit, "℃") {
-		return true
-	}
-
-	if item == nil {
-		return false
-	}
-	name := strings.ToLower(strings.TrimSpace(item.Monitor))
-	return strings.Contains(name, "temp") || strings.Contains(name, "temperature")
+	return resolveMonitorValueColor(item, monitor.name, monitor.value, numberValue, config)
 }
 
 func resolveUnitColor(item *ItemConfig, config *MonitorConfig, fallback string) string {
@@ -382,7 +354,7 @@ func resolveUnitColor(item *ItemConfig, config *MonitorConfig, fallback string) 
 		if item.runtime.prepared && item.runtime.explicitUnitColor != "" {
 			return item.runtime.explicitUnitColor
 		}
-		if color := strings.TrimSpace(resolveStyleColor(item, config, "unit_color", "")); color != "" {
+		if color := strings.TrimSpace(resolveStyleOverrideColor(item, config, "unit_color")); color != "" {
 			return color
 		}
 	}
@@ -476,39 +448,16 @@ func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback 
 	return fallback
 }
 
-func effectiveLevelColors(item *ItemConfig, config *MonitorConfig) []string {
-	if item != nil && item.runtime.prepared {
-		switch item.Type {
-		case itemTypeSimpleChart:
-			if len(item.runtime.simpleChart.levelColors) > 0 {
-				return item.runtime.simpleChart.levelColors
-			}
-		case itemTypeFullChart:
-			if len(item.runtime.fullChart.levelColors) > 0 {
-				return item.runtime.fullChart.levelColors
-			}
-		}
+func resolveEffectiveMinMax(item *ItemConfig, monitorValue *CollectValue, fallbackMin float64, fallbackMax float64) (float64, float64) {
+	minValue := fallbackMin
+	maxValue := fallbackMax
+	if monitorValue != nil {
+		minValue = monitorValue.Min
+		maxValue = monitorValue.Max
 	}
-	colors := resolveStyleLevelColors(item, config)
-	return normalizeRenderLevelColors(colors)
-}
-
-func effectiveThresholds(item *ItemConfig, minValue, maxValue float64, config *MonitorConfig) []float64 {
-	percentages := []float64(nil)
-	if item != nil && item.runtime.prepared {
-		switch item.Type {
-		case itemTypeSimpleChart:
-			percentages = item.runtime.simpleChart.thresholdPercents
-		case itemTypeFullChart:
-			percentages = item.runtime.fullChart.thresholdPercents
-		}
+	if maxValue <= minValue {
+		maxValue = minValue + 1
 	}
-	if len(percentages) == 0 {
-		percentages = resolveStyleThresholdsPercent(item, config)
-	}
-	thresholds := normalizeThresholds(percentages, minValue, maxValue)
-	if len(thresholds) == 4 {
-		return thresholds
-	}
-	return buildAverageThresholds(minValue, maxValue)
+	_ = item
+	return minValue, maxValue
 }

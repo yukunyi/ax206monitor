@@ -50,13 +50,6 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 		lineWidth = clampRenderFloat(getItemAttrFloatCfg(item, config, "line_width", 1.5), 1)
 		enableThresholdColors = getItemAttrBoolCfg(item, config, "enable_threshold_colors", false)
 	}
-	thresholds := []float64{}
-	colors := []string{}
-	if enableThresholdColors {
-		thresholds = effectiveThresholds(item, minVal, maxVal, config)
-		colors = effectiveLevelColors(item, config)
-	}
-
 	padding := 2.0
 	chartX := float64(item.X) + padding
 	chartY := float64(item.Y) + padding
@@ -89,12 +82,12 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 		return nil
 	}
 
-	if enableThresholdColors && len(thresholds) > 0 && len(colors) > 0 {
+	if enableThresholdColors {
 		dc.SetLineWidth(lineWidth)
 		for idx := 1; idx < len(pointsOnChart); idx++ {
 			p0 := pointsOnChart[idx-1]
 			p1 := pointsOnChart[idx]
-			segmentColor := resolveChartThresholdColor((p0.v+p1.v)/2, thresholds, colors, lineColor)
+			segmentColor := resolveMonitorValueColor(item, monitor.name, value, (p0.v+p1.v)/2, config)
 			dc.SetColor(parseColor(segmentColor))
 			dc.DrawLine(p0.x, p0.y, p1.x, p1.y)
 			dc.Stroke()

@@ -5,8 +5,8 @@ import "ax206monitor/coolercontrol"
 type CoolerControlClient = coolercontrol.CoolerControlClient
 type CoolerControlMonitorOption = coolercontrol.CoolerControlMonitorOption
 
-func GetCoolerControlClient(baseURL, username, password string) *CoolerControlClient {
-	return coolercontrol.GetCoolerControlClient(baseURL, username, password)
+func GetCoolerControlClient(baseURL, password string) *CoolerControlClient {
+	return coolercontrol.GetCoolerControlClient(baseURL, password)
 }
 
 func coolerControlBuildShortLabel(deviceLabel string, metricText string) string {

@@ -26,7 +26,8 @@ func (v *ValueRenderer) Render(dc *gg.Context, item *ItemConfig, frame *RenderFr
 	_, unitFontSize := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 
 	itemColor := resolveMonitorColor(item, monitor, config)
-	unitColor := resolveUnitColor(item, config, itemColor)
+	numberValue, _ := tryGetFloat64(value.Value)
+	unitColor := resolveMonitorUnitColor(item, monitor.name, value, numberValue, config)
 	drawCenteredValueWithUnit(dc, valueText, unitText, item.X, item.Y, item.Width, item.Height, fontSize, itemColor, unitFontSize, unitColor, fontCache)
 	drawBaseItemBorder(dc, item, config, radius)
 

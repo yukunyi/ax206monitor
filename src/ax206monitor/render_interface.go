@@ -53,6 +53,19 @@ type renderFullChartRuntime struct {
 	levelColors           []string
 }
 
+type renderFullTableRuntime struct {
+	rows            []fullTableRowConfig
+	colCount        int
+	rowCount        int
+	rowGap          float64
+	rowRadius       float64
+	rowBg           string
+	rowAltBg        string
+	columnGap       float64
+	labelWidthRatio float64
+	showUnits       bool
+}
+
 type renderFullProgressRuntime struct {
 	style      string
 	barRadius  float64
@@ -82,34 +95,36 @@ type renderSpecialFormatRuntime struct {
 }
 
 type renderItemRuntime struct {
-	prepared          bool
-	historyKey        string
-	historyPoints     int
-	background        string
-	staticColor       string
-	explicitUnitColor string
-	borderWidth       float64
-	borderColor       string
-	radius            float64
-	hasCardRadius     bool
-	cardRadius        float64
-	hasPaddingX       bool
-	hasPaddingY       bool
-	paddingX          float64
-	paddingY          float64
-	valueFontSize     int
-	textFontSize      int
-	unitFontSize      int
-	titleText         string
-	labelText         string
-	text              string
-	fullCard          renderFullCardRuntime
-	simpleChart       renderSimpleChartRuntime
-	fullChart         renderFullChartRuntime
-	fullProgress      renderFullProgressRuntime
-	fullGauge         renderFullGaugeRuntime
-	simpleLine        renderSimpleLineRuntime
-	specialFormat     renderSpecialFormatRuntime
+	prepared            bool
+	historyKey          string
+	historyPoints       int
+	background          string
+	staticColor         string
+	explicitStaticColor string
+	explicitUnitColor   string
+	borderWidth         float64
+	borderColor         string
+	radius              float64
+	hasCardRadius       bool
+	cardRadius          float64
+	hasPaddingX         bool
+	hasPaddingY         bool
+	paddingX            float64
+	paddingY            float64
+	valueFontSize       int
+	textFontSize        int
+	unitFontSize        int
+	titleText           string
+	labelText           string
+	text                string
+	fullCard            renderFullCardRuntime
+	simpleChart         renderSimpleChartRuntime
+	fullChart           renderFullChartRuntime
+	fullTable           renderFullTableRuntime
+	fullProgress        renderFullProgressRuntime
+	fullGauge           renderFullGaugeRuntime
+	simpleLine          renderSimpleLineRuntime
+	specialFormat       renderSpecialFormatRuntime
 }
 
 type RenderMonitorSnapshot struct {
@@ -124,12 +139,14 @@ type renderItemState struct {
 }
 
 type RenderFrame struct {
+	registry *CollectorManager
 	monitors map[string]*RenderMonitorSnapshot
 	items    map[*ItemConfig]renderItemState
 }
 
 func newRenderFrame(registry *CollectorManager, renderers map[string]RenderItem, config *MonitorConfig) *RenderFrame {
 	frame := &RenderFrame{
+		registry: registry,
 		monitors: make(map[string]*RenderMonitorSnapshot),
 	}
 	if registry == nil || config == nil || len(config.Items) == 0 {
@@ -196,6 +213,13 @@ func (f *RenderFrame) AvailableItemValue(item *ItemConfig) (*RenderMonitorSnapsh
 	return state.monitor, state.monitor.value, true
 }
 
+func (f *RenderFrame) ResolveMonitor(name string) *RenderMonitorSnapshot {
+	if f == nil {
+		return nil
+	}
+	return resolveRenderMonitorSnapshot(f.monitors, f.registry, name)
+}
+
 type RenderResult struct {
 	Image image.Image
 
@@ -240,7 +264,9 @@ func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderM
 
 	fullHistory := newRenderHistoryStore()
 	rm.RegisterRenderer(NewFullChartRenderer(fullHistory))
-	rm.RegisterRenderer(NewFullProgressRenderer())
+	rm.RegisterRenderer(NewFullTableRenderer())
+	rm.RegisterRenderer(NewFullProgressRenderer(itemTypeFullProgressH, false))
+	rm.RegisterRenderer(NewFullProgressRenderer(itemTypeFullProgressV, true))
 	rm.RegisterRenderer(NewFullGaugeRenderer())
 
 	return rm

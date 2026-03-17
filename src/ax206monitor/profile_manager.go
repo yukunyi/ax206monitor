@@ -17,15 +17,12 @@ type ProfileInfo struct {
 	Path      string `json:"path"`
 	UpdatedAt string `json:"updated_at"`
 	Size      int64  `json:"size"`
-	ReadOnly  bool   `json:"readonly,omitempty"`
-	Builtin   bool   `json:"builtin,omitempty"`
 }
 
 type ProfileManager struct {
 	currentConfigPath string
 	profilesDir       string
 	activeProfileFile string
-	builtinProfiles   map[string]*MonitorConfig
 	mu                sync.RWMutex
 }
 
@@ -39,15 +36,10 @@ var (
 
 func NewProfileManager(currentConfigPath string) (*ProfileManager, error) {
 	configDir := filepath.Dir(currentConfigPath)
-	builtins, err := loadBuiltinProfiles()
-	if err != nil {
-		return nil, err
-	}
 	pm := &ProfileManager{
 		currentConfigPath: currentConfigPath,
 		profilesDir:       filepath.Join(configDir, "profiles"),
 		activeProfileFile: filepath.Join(configDir, "profiles", "active-profile"),
-		builtinProfiles:   builtins,
 	}
 	if err := os.MkdirAll(pm.profilesDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create profiles directory: %w", err)
@@ -91,9 +83,6 @@ func (pm *ProfileManager) Initialize(baseConfig *MonitorConfig) (*MonitorConfig,
 
 	if !pm.customProfileExistsUnsafe("default") {
 		seed := cloneMonitorConfig(baseConfig)
-		if builtin, ok := pm.builtinProfiles["builtin1"]; ok {
-			seed = cloneMonitorConfig(builtin)
-		}
 		if err := pm.saveProfileUnsafe("default", seed); err != nil {
 			return nil, err
 		}
@@ -146,9 +135,6 @@ func (pm *ProfileManager) List() ([]ProfileInfo, error) {
 func (pm *ProfileManager) SaveProfile(name string, cfg *MonitorConfig) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
-	}
 	return pm.saveProfileUnsafe(name, cfg)
 }
 
@@ -172,9 +158,6 @@ func (pm *ProfileManager) RenameProfile(oldName, newName string) (*MonitorConfig
 	}
 	if oldName == newName {
 		return nil, nil
-	}
-	if pm.isBuiltinProfileUnsafe(oldName) {
-		return nil, fmt.Errorf("built-in profile is read-only: %s", oldName)
 	}
 	if !pm.customProfileExistsUnsafe(oldName) {
 		return nil, fmt.Errorf("profile not found: %s", oldName)
@@ -226,9 +209,6 @@ func (pm *ProfileManager) DeleteProfile(name string) error {
 
 	if err := validateProfileName(name); err != nil {
 		return err
-	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
 	}
 	targetPath := pm.profilePath(name)
 	if _, err := os.Stat(targetPath); err != nil {
@@ -292,9 +272,6 @@ func (pm *ProfileManager) profileExistsUnsafe(name string) bool {
 	if err := validateProfileName(name); err != nil {
 		return false
 	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return true
-	}
 	_, err := os.Stat(pm.profilePath(name))
 	return err == nil
 }
@@ -307,20 +284,9 @@ func (pm *ProfileManager) customProfileExistsUnsafe(name string) bool {
 	return err == nil
 }
 
-func (pm *ProfileManager) isBuiltinProfileUnsafe(name string) bool {
-	if pm.builtinProfiles == nil {
-		return false
-	}
-	_, ok := pm.builtinProfiles[strings.TrimSpace(name)]
-	return ok
-}
-
 func (pm *ProfileManager) saveProfileUnsafe(name string, cfg *MonitorConfig) error {
 	if err := validateProfileName(name); err != nil {
 		return err
-	}
-	if pm.isBuiltinProfileUnsafe(name) {
-		return fmt.Errorf("built-in profile is read-only: %s", name)
 	}
 	normalizeMonitorConfig(cfg)
 	cfg.Name = name
@@ -337,12 +303,6 @@ func (pm *ProfileManager) saveProfileUnsafe(name string, cfg *MonitorConfig) err
 func (pm *ProfileManager) loadProfileUnsafe(name string) (*MonitorConfig, error) {
 	if err := validateProfileName(name); err != nil {
 		return nil, err
-	}
-	if builtin, ok := pm.builtinProfiles[name]; ok {
-		cfg := cloneMonitorConfig(builtin)
-		normalizeMonitorConfig(cfg)
-		cfg.Name = name
-		return cfg, nil
 	}
 	data, err := os.ReadFile(pm.profilePath(name))
 	if err != nil {
@@ -364,7 +324,7 @@ func (pm *ProfileManager) listUnsafe() ([]ProfileInfo, error) {
 		return nil, fmt.Errorf("failed to read profiles directory: %w", err)
 	}
 
-	items := make([]ProfileInfo, 0, len(entries)+len(pm.builtinProfiles))
+	items := make([]ProfileInfo, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -382,20 +342,6 @@ func (pm *ProfileManager) listUnsafe() ([]ProfileInfo, error) {
 			Path:      pm.profilePath(name),
 			UpdatedAt: info.ModTime().Format(time.RFC3339),
 			Size:      info.Size(),
-		})
-	}
-
-	for _, name := range sortedBuiltinProfileNames(pm.builtinProfiles) {
-		if pm.customProfileExistsUnsafe(name) {
-			continue
-		}
-		items = append(items, ProfileInfo{
-			Name:      name,
-			Path:      "[builtin]",
-			UpdatedAt: "",
-			Size:      0,
-			ReadOnly:  true,
-			Builtin:   true,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })

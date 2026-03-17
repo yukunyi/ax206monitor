@@ -1,7 +1,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import DeferredInput from "./deferred_input.vue";
+import DeferredInputNumber from "./deferred_input_number.vue";
 import StyleManagerForm from "./style_manager_form.vue";
 import { patchObjectKey } from "../composables/object_patch";
+import { normalizeFullTableRows, normalizePositiveInt } from "../config_normalizer";
 import { buildItemTypeOptions, getItemTypeLabel, isMonitorRequiredType } from "../item_types";
 
 const props = defineProps({
@@ -38,6 +41,7 @@ const AUTO_FIT_MARGIN = 20;
 const SNAP_CENTER_THRESHOLD = 6;
 const addType = ref("simple_value");
 const addMonitor = ref("");
+const tableEditorVisible = ref(false);
 
 let resizeObserver = null;
 let drag = null;
@@ -73,40 +77,39 @@ const addMonitorRequired = computed(() => {
 });
 
 const selectedType = computed(() => String(selectedItem.value?.type || ""));
+const selectedIsFullTable = computed(() => selectedType.value === "full_table");
 const selectedIsLabelText = computed(() => selectedType.value === "label_text");
 const selectedIsSimpleLabel = computed(() => selectedType.value === "simple_label");
 const selectedHasTitle = computed(
   () =>
     selectedType.value === "full_chart" ||
-    selectedType.value === "full_progress" ||
+    selectedType.value === "full_table" ||
+    selectedType.value === "full_progress_h" ||
+    selectedType.value === "full_progress_v" ||
     selectedType.value === "full_gauge",
 );
 const selectedSupportsFormat = computed(() => {
   const monitor = normalizeText(selectedItem.value?.monitor);
   if (!monitor) return false;
   return (
-    monitor === "alias.system.time" ||
     monitor === "go_native.system.current_time" ||
-    monitor === "alias.system.display" ||
     monitor === "go_native.system.display" ||
-    monitor === "alias.system.resolution" ||
     monitor === "go_native.system.resolution" ||
-    monitor === "alias.system.refresh_rate" ||
     monitor === "go_native.system.refresh_rate"
   );
 });
 const selectedFormatPlaceholder = computed(() => {
   const monitor = normalizeText(selectedItem.value?.monitor);
-  if (monitor === "alias.system.time" || monitor === "go_native.system.current_time") {
+  if (monitor === "go_native.system.current_time") {
     return "时间格式，例如 15:04:05 或 %H:%M:%S";
   }
-  if (monitor === "alias.system.resolution" || monitor === "go_native.system.resolution") {
+  if (monitor === "go_native.system.resolution") {
     return "例如 {resolution} 或 {width}x{height}";
   }
-  if (monitor === "alias.system.refresh_rate" || monitor === "go_native.system.refresh_rate") {
+  if (monitor === "go_native.system.refresh_rate") {
     return "例如 {refresh_rate}";
   }
-  if (monitor === "alias.system.display" || monitor === "go_native.system.display") {
+  if (monitor === "go_native.system.display") {
     return "例如 {resolution}@{refresh_rate}";
   }
   return "";
@@ -149,11 +152,13 @@ function monitorDisplayLabel(monitorName) {
 
 function fallbackItemName(item) {
   if (!item || typeof item !== "object") return "";
+  const title = normalizeText(item.render_attrs_map?.title);
+  if (normalizeText(item.type) === "full_table" && title) return title;
   const monitorLabel = monitorDisplayLabel(item.monitor);
   if (monitorLabel) return monitorLabel;
-  const rawLabel =
-    normalizeText(item.render_attrs_map?.label);
+  const rawLabel = normalizeText(item.render_attrs_map?.label);
   if (rawLabel) return rawLabel;
+  if (title) return title;
   const text = normalizeText(item.text);
   if (text) return text;
   return normalizeText(item.type) || "item";
@@ -355,6 +360,108 @@ function updateRenderAttr(key, value) {
   });
 }
 
+function resolveFullTableRows(item) {
+  return normalizeFullTableRows(resolveRenderAttrs(item).rows);
+}
+
+function resolveFullTableColCount(item) {
+  const attrs = resolveRenderAttrs(item);
+  return normalizePositiveInt(attrs.col_count, 1);
+}
+
+function resolveFullTableRowCount(item) {
+  const colCount = resolveFullTableColCount(item);
+  const fallback = Math.max(1, Math.ceil(resolveFullTableRows(item).length / colCount) || 1);
+  return normalizePositiveInt(resolveRenderAttrs(item).row_count, fallback);
+}
+
+const selectedTableColCount = computed(() => resolveFullTableColCount(selectedItem.value));
+const selectedTableRowCount = computed(() => resolveFullTableRowCount(selectedItem.value));
+const selectedTableCellCount = computed(() => selectedTableColCount.value * selectedTableRowCount.value);
+const selectedTableSlots = computed(() => {
+  const rows = [...resolveFullTableRows(selectedItem.value)];
+  while (rows.length < selectedTableCellCount.value) {
+    rows.push({ monitor: "", label: "" });
+  }
+  return rows.slice(0, selectedTableCellCount.value);
+});
+const selectedTableMatrix = computed(() => {
+  const matrix = [];
+  for (let rowIndex = 0; rowIndex < selectedTableRowCount.value; rowIndex += 1) {
+    const start = rowIndex * selectedTableColCount.value;
+    matrix.push(selectedTableSlots.value.slice(start, start + selectedTableColCount.value));
+  }
+  return matrix;
+});
+const selectedTableSummary = computed(
+  () => `${selectedTableColCount.value} 列 x ${selectedTableRowCount.value} 行`,
+);
+
+function patchFullTableLayout({
+  rows = selectedTableSlots.value,
+  colCount = selectedTableColCount.value,
+  rowCount = selectedTableRowCount.value,
+} = {}) {
+  if (props.readonlyProfile || props.selectedIndex < 0) return;
+  const item = selectedItem.value;
+  if (!item) return;
+  const normalizedColCount = normalizePositiveInt(colCount, 1);
+  const normalizedRowCount = normalizePositiveInt(rowCount, 1);
+  const cellCount = normalizedColCount * normalizedRowCount;
+  const nextRows = normalizeFullTableRows(rows).slice(0, cellCount);
+  while (nextRows.length < cellCount) {
+    nextRows.push({ monitor: "", label: "" });
+  }
+  const nextAttrs = {
+    ...resolveRenderAttrs(item),
+    rows: nextRows,
+  };
+  if (normalizedColCount > 1) {
+    nextAttrs.col_count = normalizedColCount;
+  } else {
+    delete nextAttrs.col_count;
+  }
+  if (normalizedRowCount > 1) {
+    nextAttrs.row_count = normalizedRowCount;
+  } else {
+    delete nextAttrs.row_count;
+  }
+  emit("patch-item", {
+    index: props.selectedIndex,
+    patch: { render_attrs_map: nextAttrs },
+  });
+}
+
+function updateFullTableGridSize(key, value) {
+  const nextColCount = key === "col_count"
+    ? normalizePositiveInt(value, 1)
+    : selectedTableColCount.value;
+  const nextRowCount = key === "row_count"
+    ? normalizePositiveInt(value, 1)
+    : selectedTableRowCount.value;
+  const rows = [...selectedTableSlots.value];
+  const cellCount = nextColCount * nextRowCount;
+  while (rows.length < cellCount) {
+    rows.push({ monitor: "", label: "" });
+  }
+  patchFullTableLayout({
+    rows: rows.slice(0, cellCount),
+    colCount: nextColCount,
+    rowCount: nextRowCount,
+  });
+}
+
+function updateFullTableCell(rowIndex, columnIndex, field, value) {
+  const rows = [...selectedTableSlots.value];
+  const slotIndex = rowIndex * selectedTableColCount.value + columnIndex;
+  if (!rows[slotIndex]) return;
+  rows[slotIndex] = {
+    ...rows[slotIndex],
+    [field]: String(value || "").trim(),
+  };
+  patchFullTableLayout({ rows });
+}
+
 function updateItemStyle(payload) {
   if (props.readonlyProfile || props.selectedIndex < 0) return;
   const item = selectedItem.value;
@@ -551,7 +658,7 @@ watch(
         <n-form label-placement="left" size="small" :label-width="84">
           <n-grid cols="2" :x-gap="6" :y-gap="2">
             <n-form-item-gi label="名称" :span="2">
-              <n-input
+              <DeferredInput
                 :value="selectedItem.edit_ui_name || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'edit_ui_name', value: String(v || '') })"
               />
@@ -564,7 +671,7 @@ watch(
                 @update:value="(v) => emit('change-item-field', { field: 'type', value: String(v || '') })"
               />
             </n-form-item-gi>
-            <n-form-item-gi label="监控项" :span="2">
+            <n-form-item-gi v-if="!selectedIsFullTable" label="监控项" :span="2">
               <n-select
                 filterable
                 :clearable="!selectedMonitorRequired"
@@ -586,68 +693,68 @@ watch(
               </n-space>
             </n-form-item-gi>
             <n-form-item-gi label="X">
-              <n-input-number
+              <DeferredInputNumber
                 :value="toNumber(selectedItem.x, 0)"
                 :show-button="false"
                 @update:value="(v) => emit('change-item-field', { field: 'x', value: toNumber(v, 0) })"
               />
             </n-form-item-gi>
             <n-form-item-gi label="Y">
-              <n-input-number
+              <DeferredInputNumber
                 :value="toNumber(selectedItem.y, 0)"
                 :show-button="false"
                 @update:value="(v) => emit('change-item-field', { field: 'y', value: toNumber(v, 0) })"
               />
             </n-form-item-gi>
             <n-form-item-gi label="宽度">
-              <n-input-number
+              <DeferredInputNumber
                 :value="toNumber(selectedItem.width, 10)"
                 :show-button="false"
                 @update:value="(v) => emit('change-item-field', { field: 'width', value: toNumber(v, 10) })"
               />
             </n-form-item-gi>
             <n-form-item-gi label="高度">
-              <n-input-number
+              <DeferredInputNumber
                 :value="toNumber(selectedItem.height, 10)"
                 :show-button="false"
                 @update:value="(v) => emit('change-item-field', { field: 'height', value: toNumber(v, 10) })"
               />
             </n-form-item-gi>
-            <n-form-item-gi v-if="selectedHasTitle" label="标题">
-              <n-input
+            <n-form-item-gi v-if="selectedHasTitle" label="标题" :span="selectedIsFullTable ? 2 : 1">
+              <DeferredInput
                 :value="renderAttrString('title', '')"
                 @update:value="(v) => updateRenderAttr('title', String(v || ''))"
               />
             </n-form-item-gi>
-            <n-form-item-gi v-if="selectedHasTitle" label="单位">
-              <n-input
+            <n-form-item-gi v-if="selectedHasTitle && !selectedIsFullTable" label="单位">
+              <DeferredInput
                 :value="selectedItem.unit || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'unit', value: String(v || '') })"
               />
             </n-form-item-gi>
-            <n-form-item-gi v-else label="单位" :span="2">
-              <n-input
+            <n-form-item-gi v-else-if="!selectedIsFullTable" label="单位" :span="2">
+              <DeferredInput
                 :value="selectedItem.unit || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'unit', value: String(v || '') })"
               />
             </n-form-item-gi>
             <n-form-item-gi v-if="selectedSupportsFormat" label="格式" :span="2">
-              <n-input
+              <DeferredInput
                 :value="renderAttrString('format', '')"
                 :placeholder="selectedFormatPlaceholder"
                 @update:value="(v) => updateRenderAttr('format', String(v || ''))"
               />
             </n-form-item-gi>
-            <n-form-item-gi label="最小值">
-              <n-input-number
+            <n-form-item-gi v-if="!selectedIsFullTable" label="最小值">
+              <DeferredInputNumber
                 clearable
                 :show-button="false"
                 :value="selectedItem.min_value ?? null"
                 @update:value="(v) => emit('change-item-field', { field: 'min_value', value: toOptionalNumber(v) })"
               />
             </n-form-item-gi>
-            <n-form-item-gi label="最大值">
-              <n-input-number
+            <n-form-item-gi v-if="!selectedIsFullTable" label="最大值">
+              <DeferredInputNumber
                 clearable
                 :show-button="false"
                 :value="selectedItem.max_value ?? null"
@@ -655,19 +762,92 @@ watch(
               />
             </n-form-item-gi>
             <n-form-item-gi v-if="selectedIsLabelText" label="标签" :span="2">
-              <n-input
+              <DeferredInput
                 :value="renderAttrString('label', '')"
                 @update:value="(v) => updateRenderAttr('label', String(v || ''))"
               />
             </n-form-item-gi>
             <n-form-item-gi v-else-if="selectedIsSimpleLabel" label="标签" :span="2">
-              <n-input
+              <DeferredInput
                 :value="selectedItem.text || ''"
                 @update:value="(v) => emit('change-item-field', { field: 'text', value: String(v || '') })"
               />
             </n-form-item-gi>
+            <n-form-item-gi v-if="selectedIsFullTable" label="表格配置" :span="2">
+              <div class="table_config_inline">
+                <n-text depth="3">{{ selectedTableSummary }}</n-text>
+                <n-button size="tiny" tertiary @click="tableEditorVisible = true">编辑表格</n-button>
+              </div>
+            </n-form-item-gi>
           </n-grid>
         </n-form>
+
+        <n-modal
+          v-if="selectedIsFullTable"
+          :show="tableEditorVisible"
+          preset="card"
+          title="表格配置"
+          style="width: min(1180px, 94vw)"
+          @update:show="(v) => { tableEditorVisible = !!v; }"
+        >
+          <div class="table_editor_modal">
+            <div class="table_editor_toolbar">
+              <div class="table_editor_toolbar_group">
+                <span class="table_editor_toolbar_label">列数</span>
+                <DeferredInputNumber
+                  :value="selectedTableColCount"
+                  :show-button="false"
+                  :min="1"
+                  @update:value="(v) => updateFullTableGridSize('col_count', v)"
+                />
+              </div>
+              <div class="table_editor_toolbar_group">
+                <span class="table_editor_toolbar_label">行数</span>
+                <DeferredInputNumber
+                  :value="selectedTableRowCount"
+                  :show-button="false"
+                  :min="1"
+                  @update:value="(v) => updateFullTableGridSize('row_count', v)"
+                />
+              </div>
+              <n-text depth="3">{{ selectedTableSummary }}</n-text>
+            </div>
+            <div class="table_editor_grid_wrap">
+              <table class="table_editor_grid">
+                <thead>
+                  <tr>
+                    <th class="table_editor_index">#</th>
+                    <th v-for="columnIndex in selectedTableColCount" :key="`head_${columnIndex}`">
+                      列 {{ columnIndex }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, rowIndex) in selectedTableMatrix" :key="`row_${rowIndex}`">
+                    <th class="table_editor_index">行 {{ rowIndex + 1 }}</th>
+                    <td v-for="(cell, columnIndex) in row" :key="`cell_${rowIndex}_${columnIndex}`">
+                      <div class="table_editor_cell">
+                        <n-select
+                          filterable
+                          clearable
+                          :value="cell.monitor"
+                          :options="monitorSelectOptions"
+                          placeholder="监控项"
+                          @update:value="(v) => updateFullTableCell(rowIndex, columnIndex, 'monitor', String(v || ''))"
+                        />
+                        <DeferredInput
+                          :value="cell.label"
+                          placeholder="标签"
+                          @update:value="(v) => updateFullTableCell(rowIndex, columnIndex, 'label', String(v || ''))"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </n-modal>
 
         <template v-if="selectedCustomStyleEnabled">
           <n-divider style="margin: 8px 0 6px" />

@@ -36,6 +36,8 @@ type rateSample struct {
 	value float64
 }
 
+const defaultThroughputRateWindow = 3 * time.Second
+
 func NewBaseCollectItem(name, label string, min, max float64, unit string, precision int) *BaseCollectItem {
 	return &BaseCollectItem{
 		name:       name,
@@ -304,7 +306,7 @@ func builtinRateWindow(name, unit string) time.Duration {
 		return 0
 	}
 	if strings.Contains(trimmedUnit, "/s") {
-		return 3 * time.Second
+		return defaultThroughputRateWindow
 	}
 	return 0
 }
@@ -409,6 +411,7 @@ type CollectorManagerStats struct {
 	OutputMaxMS  int64                                `json:"output_max_ms"`
 	OutputAvgMS  int64                                `json:"output_avg_ms"`
 	OutputStats  map[string]OutputHandlerRuntimeStats `json:"output_stats,omitempty"`
+	TCPPushStats map[string]TCPPushAvailabilityStats  `json:"tcp_push_stats,omitempty"`
 }
 
 type CollectorManager struct {
@@ -417,7 +420,6 @@ type CollectorManager struct {
 	collectorEnabled map[string]bool
 	items            map[string]*CollectItem
 	itemToCollector  map[string]string
-	aliasResolution  map[string]string
 	allItemsSnapshot map[string]*CollectItem
 	allNamesSnapshot []string
 	snapshotDirty    bool
@@ -486,7 +488,6 @@ func NewCollectorManager() *CollectorManager {
 		collectorEnabled: make(map[string]bool),
 		items:            make(map[string]*CollectItem),
 		itemToCollector:  make(map[string]string),
-		aliasResolution:  make(map[string]string),
 		snapshotDirty:    true,
 		requiredSet:      make(map[string]struct{}),
 		requiredResolved: make(map[string]struct{}),
@@ -563,7 +564,6 @@ func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector) {
 		m.items[key] = item
 		m.itemToCollector[key] = discoveredOwners[key]
 	}
-	m.aliasResolution = buildMonitorAliasResolution(m.items)
 	m.invalidateItemSnapshotsLocked()
 	m.rebuildRequiredResolvedLocked()
 	m.mutex.Unlock()
@@ -580,16 +580,9 @@ func (m *CollectorManager) rebuildItemSnapshotsLocked() {
 	if !m.snapshotDirty {
 		return
 	}
-	items := make(map[string]*CollectItem, len(m.items)+len(m.aliasResolution))
+	items := make(map[string]*CollectItem, len(m.items))
 	for name, item := range m.items {
 		items[name] = item
-	}
-	for aliasName, targetName := range m.aliasResolution {
-		item := m.items[targetName]
-		if item == nil {
-			continue
-		}
-		items[aliasName] = item
 	}
 	names := make([]string, 0, len(items))
 	for name := range items {
@@ -637,7 +630,7 @@ func (m *CollectorManager) setRequiredItems(names []string) {
 	if sig != "" {
 		for _, name := range strings.Split(sig, "\n") {
 			if name != "" {
-				m.requiredSet[normalizeMonitorAliasInput(name)] = struct{}{}
+				m.requiredSet[normalizeMonitorNameInput(name)] = struct{}{}
 			}
 		}
 	}
@@ -660,40 +653,20 @@ func (m *CollectorManager) requiredItemsSnapshot() []string {
 func (m *CollectorManager) rebuildRequiredResolvedLocked() {
 	m.requiredResolved = make(map[string]struct{}, len(m.requiredSet))
 	for name := range m.requiredSet {
-		trimmed := normalizeMonitorAliasInput(name)
+		trimmed := normalizeMonitorNameInput(name)
 		if trimmed == "" {
 			continue
 		}
-		if _, exists := m.items[trimmed]; exists {
-			m.requiredResolved[trimmed] = struct{}{}
-			continue
-		}
-		resolved := resolveMonitorAliasWithItems(trimmed, m.items)
-		if resolved != "" {
-			if _, exists := m.items[resolved]; exists {
-				m.requiredResolved[resolved] = struct{}{}
-				continue
-			}
-		}
-		if !isMonitorAliasName(trimmed) {
-			m.requiredResolved[trimmed] = struct{}{}
-		}
+		m.requiredResolved[trimmed] = struct{}{}
 	}
 }
 
 func (m *CollectorManager) isRequiredItemSatisfiedLocked(name string) bool {
-	trimmed := normalizeMonitorAliasInput(name)
+	trimmed := normalizeMonitorNameInput(name)
 	if trimmed == "" {
 		return true
 	}
-	if _, exists := m.items[trimmed]; exists {
-		return true
-	}
-	resolved := resolveMonitorAliasWithItems(trimmed, m.items)
-	if resolved == "" || resolved == trimmed {
-		return false
-	}
-	_, exists := m.items[resolved]
+	_, exists := m.items[trimmed]
 	return exists
 }
 
@@ -1177,18 +1150,11 @@ func (m *CollectorManager) WaitForEpoch(epochID int64, maxWait time.Duration) (b
 func (m *CollectorManager) Get(name string) *CollectItem {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	normalized := normalizeMonitorAliasInput(name)
+	normalized := normalizeMonitorNameInput(name)
 	if normalized == "" {
 		return nil
 	}
-	if item, exists := m.items[normalized]; exists {
-		return item
-	}
-	target, ok := m.aliasResolution[normalized]
-	if !ok {
-		return nil
-	}
-	return m.items[target]
+	return m.items[normalized]
 }
 
 func (m *CollectorManager) GetAll() map[string]*CollectItem {
@@ -1386,6 +1352,7 @@ func (m *CollectorManager) Stats() CollectorManagerStats {
 		OutputMaxMS:  outputStats.MaxMS,
 		OutputAvgMS:  outputStats.AvgMS,
 		OutputStats:  outputStats.Handlers,
+		TCPPushStats: GetTCPPushAvailabilityStats(),
 	}
 }
 
@@ -1414,7 +1381,6 @@ type CollectorManagerConfig struct {
 func getCollectorManagerConfig() *CollectorManagerConfig {
 	names := []string{
 		"go_native.cpu.usage",
-		"go_native.cpu.temp",
 		"go_native.cpu.freq",
 		"go_native.cpu.max_freq",
 		"go_native.cpu.model",
@@ -1443,11 +1409,16 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.system.output.httppush.last_ms",
 		"go_native.system.output.httppush.max_ms",
 		"go_native.system.output.httppush.avg_ms",
+		"go_native.system.output.tcppush.last_ms",
+		"go_native.system.output.tcppush.max_ms",
+		"go_native.system.output.tcppush.avg_ms",
 		"go_native.system.output.ax206usb.last_ms",
 		"go_native.system.output.ax206usb.max_ms",
 		"go_native.system.output.ax206usb.avg_ms",
 	}
-	names = append(names, monitorAliasNames()...)
+	if runtime.GOOS != "windows" {
+		names = append(names, "go_native.cpu.temp")
+	}
 	items := make([]CollectItemConfig, 0, len(names))
 	for _, name := range names {
 		items = append(items, CollectItemConfig{Name: name, Required: true})

@@ -234,6 +234,7 @@ function onNativeColorInput(event) {
             :value="draft"
             placeholder="rgba(59,130,246,0.8) / #3b82f6"
             @update:value="onDraftInput"
+            @blur="onApplyDraft"
             @keydown.enter.prevent="onApplyDraft"
           />
           <n-button size="small" :disabled="disabled" @click="onApplyDraft">应用</n-button>

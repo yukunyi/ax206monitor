@@ -38,19 +38,18 @@ type ConfigStore struct {
 }
 
 type WebMetaResponse struct {
-	ConfigPath           string            `json:"config_path"`
-	Platform             string            `json:"platform,omitempty"`
-	Monitors             []string          `json:"monitors"`
-	MonitorAliasLabels   map[string]string `json:"monitor_alias_labels,omitempty"`
-	Collectors           []string          `json:"collectors,omitempty"`
-	ItemTypes            []string          `json:"item_types"`
-	StyleKeys            []StyleKeyMeta    `json:"style_keys,omitempty"`
-	OutputTypes          []string          `json:"output_types"`
-	FontFamilies         []string          `json:"font_families"`
-	NetworkInterfaces    []string          `json:"network_interfaces"`
-	CustomMonitorTypes   []string          `json:"custom_monitor_types"`
-	CustomAggregateTypes []string          `json:"custom_aggregate_types"`
-	ActiveProfile        string            `json:"active_profile,omitempty"`
+	ConfigPath           string         `json:"config_path"`
+	Platform             string         `json:"platform,omitempty"`
+	Monitors             []string       `json:"monitors"`
+	Collectors           []string       `json:"collectors,omitempty"`
+	ItemTypes            []string       `json:"item_types"`
+	StyleKeys            []StyleKeyMeta `json:"style_keys,omitempty"`
+	OutputTypes          []string       `json:"output_types"`
+	FontFamilies         []string       `json:"font_families"`
+	NetworkInterfaces    []string       `json:"network_interfaces"`
+	CustomMonitorTypes   []string       `json:"custom_monitor_types"`
+	CustomAggregateTypes []string       `json:"custom_aggregate_types"`
+	ActiveProfile        string         `json:"active_profile,omitempty"`
 }
 
 type WebConfigResponse struct {
@@ -357,9 +356,6 @@ func RunWebServer(options WebServerOptions) error {
 		}
 
 		normalizeMonitorConfig(payload.Config)
-		if active := store.profiles.ActiveName(); active != "" && store.profiles.isBuiltinProfileUnsafe(active) {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("active profile '%s' is built-in read-only, copy it first", active)})
-		}
 		if err := saveUserConfig(store.path, payload.Config); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -683,7 +679,6 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 		ConfigPath:           store.path,
 		Platform:             goruntime.GOOS,
 		Monitors:             collectMonitorNames(config, store.runtime),
-		MonitorAliasLabels:   monitorAliasLabels(),
 		Collectors:           store.collectorNames(),
 		ItemTypes:            webItemTypes(),
 		StyleKeys:            styleKeys,
@@ -726,9 +721,6 @@ func collectMonitorNames(config *MonitorConfig, runtimeState *WebAPI) []string {
 	for _, monitor := range registryConfig.Items {
 		monitorSet[monitor.Name] = struct{}{}
 	}
-	for _, aliasName := range monitorAliasNames() {
-		monitorSet[aliasName] = struct{}{}
-	}
 	if goruntime.GOOS == "windows" && config != nil && config.IsRTSSCollectEnabled() {
 		for _, option := range rtsssource.GetRTSSClient().ListMonitorOptions() {
 			if strings.TrimSpace(option.Name) == "" {
@@ -745,8 +737,11 @@ func collectMonitorNames(config *MonitorConfig, runtimeState *WebAPI) []string {
 
 	if config != nil {
 		for _, item := range config.Items {
-			if strings.TrimSpace(item.Monitor) != "" {
-				monitorSet[item.Monitor] = struct{}{}
+			for _, name := range collectItemMonitorRefs(&item) {
+				if name == "" {
+					continue
+				}
+				monitorSet[name] = struct{}{}
 			}
 		}
 		for _, custom := range config.CustomMonitors {
@@ -823,11 +818,22 @@ func collectFontFamilies(config *MonitorConfig) []string {
 }
 
 func getUserConfigPath() (string, error) {
+	configDir, err := getUserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "config.json"), nil
+}
+
+func getUserConfigDir() (string, error) {
+	if xdgDir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdgDir != "" {
+		return filepath.Join(xdgDir, "ax206monitor"), nil
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".config", "ax206monitor", "config.json"), nil
+	return filepath.Join(homeDir, ".config", "ax206monitor"), nil
 }
 
 func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
@@ -870,23 +876,29 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 			collectorLibreHardwareMonitor: {Enabled: boolPtr(false), Options: map[string]interface{}{"url": defaultLibreHardwareMonitorURL}},
 			collectorRTSS:                 {Enabled: boolPtr(false), Options: map[string]interface{}{}},
 		},
-		Items: []ItemConfig{
-			{
-				Type:    itemTypeSimpleValue,
-				Monitor: "go_native.cpu.temp",
-				Unit:    "auto",
-				X:       12,
-				Y:       12,
-				Width:   180,
-				Height:  56,
-			},
-		},
+		Items: []ItemConfig{},
 	}
+	defaultMonitor := "go_native.cpu.temp"
+	if goruntime.GOOS == "windows" {
+		defaultMonitor = "go_native.cpu.usage"
+	}
+	cfg.Items = append(cfg.Items, ItemConfig{
+		Type:    itemTypeSimpleValue,
+		Monitor: defaultMonitor,
+		Unit:    "auto",
+		X:       12,
+		Y:       12,
+		Width:   180,
+		Height:  56,
+	})
 	normalizeMonitorConfig(cfg)
 	return cfg, nil
 }
 
 func saveUserConfig(path string, cfg *MonitorConfig) error {
+	if cfg != nil {
+		normalizeMonitorConfig(cfg)
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
@@ -907,21 +919,19 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	if cfg.CollectorConfig == nil {
 		cfg.CollectorConfig = make(map[string]CollectorConfig)
 	}
-	builtinCooler, builtinLibre, builtinRTSS := builtinCollectorDefaults(cfg.Name)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeCPU, true)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeMemory, true)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeSystem, true)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeDisk, true)
 	ensureCollectorConfigDefault(cfg, collectorGoNativeNetwork, true)
 	ensureCollectorConfigDefault(cfg, collectorCustomAll, true)
-	ensureCollectorConfigDefault(cfg, collectorCoolerControl, builtinCooler)
-	ensureCollectorConfigDefault(cfg, collectorLibreHardwareMonitor, builtinLibre)
-	defaultRTSS := builtinRTSS
+	ensureCollectorConfigDefault(cfg, collectorCoolerControl, false)
+	ensureCollectorConfigDefault(cfg, collectorLibreHardwareMonitor, false)
+	defaultRTSS := false
 	if goruntime.GOOS == "windows" {
 		defaultRTSS = true
 	}
 	ensureCollectorConfigDefault(cfg, collectorRTSS, defaultRTSS)
-	applyBuiltinCollectorDefaults(cfg, builtinCooler, builtinLibre, builtinRTSS)
 	if goruntime.GOOS == "windows" && configNeedsRTSS(cfg) {
 		setCollectorEnabled(cfg, collectorRTSS, true)
 	}
@@ -1010,14 +1020,13 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.DefaultFont = getDefaultFontName()
 	}
 	sanitizeFontConfig(cfg)
-	if len(cfg.Outputs) == 0 {
+	if cfg.Outputs == nil {
 		if len(cfg.OutputTypes) > 0 {
 			cfg.Outputs = outputConfigsFromTypes(cfg.OutputTypes)
 		}
 	}
-	outputSummary := describeOutputConfigs(normalizeOutputConfigs(cfg.Outputs))
-	cfg.Outputs = outputSummary.Configs
-	cfg.OutputTypes = outputSummary.Types
+	cfg.Outputs = normalizeOutputConfigs(cfg.Outputs)
+	cfg.OutputTypes = outputEnabledTypeNames(cfg.Outputs)
 	cfg.NetworkInterface = strings.TrimSpace(cfg.NetworkInterface)
 	if strings.EqualFold(cfg.NetworkInterface, "auto") {
 		cfg.NetworkInterface = ""
@@ -1045,13 +1054,22 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		cfg.HistorySize = cfg.DefaultHistoryPoints
 	}
 	ensureTypeDefaults(cfg)
+	cfg.ThresholdGroups = normalizeThresholdGroups(cfg.ThresholdGroups)
 	normalizeStyleConfiguration(cfg)
 	setCollectorOptionDefault(cfg, collectorCoolerControl, "url", defaultCoolerControlURL)
 	setCollectorOptionDefault(cfg, collectorLibreHardwareMonitor, "url", defaultLibreHardwareMonitorURL)
+	removeCollectorOption(cfg, collectorCoolerControl, "username")
 
 	usedItemIDs := make(map[string]struct{}, len(cfg.Items))
+	normalizedItems := make([]ItemConfig, 0, len(cfg.Items))
 	for idx := range cfg.Items {
 		item := &cfg.Items[idx]
+		rawType := strings.TrimSpace(item.Type)
+		itemType := normalizeItemType(rawType)
+		if itemType == "" {
+			logWarnModule("config", "skip item idx=%d invalid type=%q", idx, rawType)
+			continue
+		}
 		item.ID = strings.TrimSpace(item.ID)
 		if item.ID == "" {
 			item.ID = generateItemID(idx)
@@ -1060,7 +1078,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 			item.ID = generateItemID(idx)
 		}
 		usedItemIDs[item.ID] = struct{}{}
-		item.Type = normalizeItemType(item.Type)
+		item.Type = itemType
 		item.Monitor = normalizeMonitorAlias(item.Monitor)
 		item.EditUIName = defaultEditUIName(item.EditUIName, idx, item)
 		if !cfg.AllowCustomStyle {
@@ -1072,21 +1090,28 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		if item.Height <= 0 {
 			item.Height = 40
 		}
-		if isCollectorItemType(item.Type) {
+		if item.Type == itemTypeFullTable {
+			item.Unit = ""
+			normalizeFullTableItemAttrs(item)
+		} else if isCollectorItemType(item.Type) {
 			if strings.TrimSpace(item.Unit) == "" {
 				item.Unit = "auto"
 			}
 		} else {
 			item.Unit = ""
-		}
-		if !isRangeItemType(item.Type) {
-			item.Max = 0
-			item.MaxValue = nil
-			item.MinValue = nil
+			if item.RenderAttrsMap != nil {
+				delete(item.RenderAttrsMap, "rows")
+				delete(item.RenderAttrsMap, "columns")
+				delete(item.RenderAttrsMap, "column_count")
+				delete(item.RenderAttrsMap, "col_count")
+				delete(item.RenderAttrsMap, "row_count")
+			}
 		}
 		normalizeItemStyleConfiguration(cfg, item)
 		prepareRenderItemRuntime(cfg, item)
+		normalizedItems = append(normalizedItems, *item)
 	}
+	cfg.Items = normalizedItems
 
 	for idx := range cfg.CustomMonitors {
 		custom := &cfg.CustomMonitors[idx]
@@ -1148,29 +1173,6 @@ func boolPtr(value bool) *bool {
 	return &v
 }
 
-func builtinCollectorDefaults(profileName string) (cooler bool, libre bool, rtss bool) {
-	if !isBuiltinProfileName(profileName) {
-		return false, false, false
-	}
-	switch goruntime.GOOS {
-	case "windows":
-		return false, true, true
-	case "linux":
-		return true, false, false
-	default:
-		return false, false, false
-	}
-}
-
-func applyBuiltinCollectorDefaults(cfg *MonitorConfig, cooler, libre, rtss bool) {
-	if cfg == nil || !isBuiltinProfileName(cfg.Name) {
-		return
-	}
-	setCollectorEnabled(cfg, collectorCoolerControl, cooler)
-	setCollectorEnabled(cfg, collectorLibreHardwareMonitor, libre)
-	setCollectorEnabled(cfg, collectorRTSS, rtss)
-}
-
 func setCollectorEnabled(cfg *MonitorConfig, name string, enabled bool) {
 	if cfg == nil {
 		return
@@ -1183,37 +1185,24 @@ func setCollectorEnabled(cfg *MonitorConfig, name string, enabled bool) {
 	cfg.CollectorConfig[name] = entry
 }
 
-func isBuiltinProfileName(name string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(name))
-	switch trimmed {
-	case "builtin1", "builtin2", "builtin3", "builtin4":
-		return true
-	default:
-		return false
-	}
-}
-
 func configNeedsRTSS(cfg *MonitorConfig) bool {
 	if cfg == nil {
 		return false
 	}
 	for _, item := range cfg.Items {
-		name := strings.ToLower(strings.TrimSpace(item.Monitor))
-		if name == "" {
-			continue
-		}
-		if name == "alias.gpu.fps" || strings.HasPrefix(name, "rtss_") {
-			return true
+		for _, name := range collectItemMonitorRefs(&item) {
+			if isRTSSMonitorRef(name) {
+				return true
+			}
 		}
 	}
 	for _, custom := range cfg.CustomMonitors {
 		name := strings.ToLower(strings.TrimSpace(custom.Name))
-		if name == "alias.gpu.fps" || strings.HasPrefix(name, "rtss_") {
+		if isRTSSMonitorRef(name) {
 			return true
 		}
 		for _, source := range custom.Sources {
-			src := strings.ToLower(strings.TrimSpace(source))
-			if src == "alias.gpu.fps" || strings.HasPrefix(src, "rtss_") {
+			if isRTSSMonitorRef(source) {
 				return true
 			}
 		}
@@ -1266,6 +1255,18 @@ func setCollectorOptionDefault(cfg *MonitorConfig, collectorName, optionKey, val
 	cfg.CollectorConfig[collectorName] = entry
 }
 
+func removeCollectorOption(cfg *MonitorConfig, collectorName, optionKey string) {
+	if cfg == nil {
+		return
+	}
+	entry, exists := cfg.CollectorConfig[collectorName]
+	if !exists || entry.Options == nil {
+		return
+	}
+	delete(entry.Options, optionKey)
+	cfg.CollectorConfig[collectorName] = entry
+}
+
 func defaultEditUIName(current string, idx int, item *ItemConfig) string {
 	_ = idx
 	_ = item
@@ -1280,11 +1281,14 @@ func generateItemID(idx int) string {
 }
 
 func normalizeItemType(itemType string) string {
-	return normalizeItemTypeName(itemType)
-}
-
-func normalizeMonitorAlias(name string) string {
-	return normalizeMonitorAliasInput(name)
+	trimmed := strings.ToLower(strings.TrimSpace(itemType))
+	if trimmed == "" {
+		return ""
+	}
+	if _, ok := allItemTypeSet[trimmed]; ok {
+		return trimmed
+	}
+	return ""
 }
 
 func normalizeLevelColors(colors []string, fallback []string) []string {

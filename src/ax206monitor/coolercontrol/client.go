@@ -99,7 +99,6 @@ type coolerControlMonitorEntry struct {
 
 type CoolerControlClient struct {
 	baseURL  string
-	username string
 	password string
 
 	apiClient    *http.Client
@@ -125,12 +124,17 @@ var (
 	coolerControlCPUModelRegex = regexp.MustCompile(`(?i)\b(i[3579]-\d{4,5}[a-z]{0,3}|\d{4,5}[a-z]{0,4})\b`)
 	coolerControlGPUModelRegex = regexp.MustCompile(`(?i)\b((?:RTX|GTX)\s*\d{3,4}(?:\s*(?:ti|super))?|RX\s*\d{3,4}(?:\s*(?:xtx|xt|gre))?)\b`)
 
+	coolerControlSessionUsername = "CCAdmin"
 	errCoolerControlUnauthorized = errors.New("coolercontrol unauthorized")
 )
 
-func GetCoolerControlClient(baseURL, username, password string) *CoolerControlClient {
+func SessionUsername() string {
+	return coolerControlSessionUsername
+}
+
+func GetCoolerControlClient(baseURL, password string) *CoolerControlClient {
 	url := strings.TrimRight(baseURL, "/")
-	key := fmt.Sprintf("%s|%s|%s", url, username, password)
+	key := fmt.Sprintf("%s|%s", url, password)
 
 	coolerControlClientsMu.Lock()
 	defer coolerControlClientsMu.Unlock()
@@ -142,7 +146,6 @@ func GetCoolerControlClient(baseURL, username, password string) *CoolerControlCl
 	jar, _ := cookiejar.New(nil)
 	client := &CoolerControlClient{
 		baseURL:  url,
-		username: username,
 		password: password,
 		apiClient: &http.Client{
 			Timeout: 5 * time.Second,
@@ -316,7 +319,7 @@ func (c *CoolerControlClient) runSSELoop() {
 				c.setLastError(nil)
 				retryDelay = time.Second
 			}
-			if errors.Is(err, errCoolerControlUnauthorized) && c.username != "" && c.password != "" {
+			if errors.Is(err, errCoolerControlUnauthorized) && c.password != "" {
 				if loginErr := c.login(); loginErr != nil {
 					c.setLastError(loginErr)
 					logWarnModule("coolercontrol", "login failed: %v", loginErr)
@@ -414,7 +417,7 @@ func (c *CoolerControlClient) getStatus() (*coolerControlStatusResponse, error) 
 		return status, nil
 	}
 
-	if statusCode == http.StatusUnauthorized && c.username != "" && c.password != "" {
+	if statusCode == http.StatusUnauthorized && c.password != "" {
 		if loginErr := c.login(); loginErr != nil {
 			return nil, loginErr
 		}
@@ -542,11 +545,12 @@ func (c *CoolerControlClient) fetchDeviceMeta() (map[string]coolerControlDeviceN
 }
 
 func (c *CoolerControlClient) login() error {
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/login", nil)
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/login", strings.NewReader("{}"))
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(coolerControlSessionUsername, c.password)
 
 	resp, err := c.apiClient.Do(req)
 	if err != nil {

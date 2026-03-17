@@ -225,17 +225,14 @@ func parseEnvBool(raw string) bool {
 }
 
 func getRequiredMonitors(config *MonitorConfig) []string {
-	monitors := make(map[string]bool)
+	if config == nil {
+		return nil
+	}
+	monitors := make(map[string]struct{})
 	queue := make([]string, 0, len(config.Items))
 	for _, item := range config.Items {
-		name := normalizeMonitorAlias(item.Monitor)
-		if name == "" {
-			continue
-		}
-		if !monitors[name] {
-			queue = append(queue, name)
-		}
-		monitors[name] = true
+		refs := collectItemMonitorRefs(&item)
+		queue = appendUniqueMonitorRefs(queue, monitors, refs)
 	}
 
 	customByName := make(map[string]CustomMonitorConfig)
@@ -261,10 +258,13 @@ func getRequiredMonitors(config *MonitorConfig) []string {
 
 		for _, source := range custom.Sources {
 			source = normalizeMonitorAlias(source)
-			if source == "" || monitors[source] {
+			if source == "" {
 				continue
 			}
-			monitors[source] = true
+			if _, exists := monitors[source]; exists {
+				continue
+			}
+			monitors[source] = struct{}{}
 			queue = append(queue, source)
 		}
 	}

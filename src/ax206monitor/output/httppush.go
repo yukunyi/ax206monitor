@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,11 +29,14 @@ type HTTPPushOutputHandler struct {
 }
 
 func NewHTTPPushOutputHandler(cfg OutputConfig, typeName string) *HTTPPushOutputHandler {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	handler := &HTTPPushOutputHandler{
 		cfg:      cfg,
 		typeName: typeName,
 		client: &http.Client{
-			Timeout: 5 * time.Second,
+			Transport: transport,
+			Timeout:   time.Duration(cfg.TimeoutMS) * time.Millisecond,
 		},
 		stopCh:  make(chan struct{}),
 		frameCh: make(chan *OutputFrame, 1),
@@ -98,11 +104,22 @@ func (h *HTTPPushOutputHandler) doRequest(body []byte, contentType string) error
 	ctx, cancel := context.WithTimeout(context.Background(), h.client.Timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.cfg.URL, bytes.NewReader(body))
+	payload, requestContentType, err := h.buildRequestPayload(body, contentType)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", contentType)
+
+	req, err := http.NewRequestWithContext(ctx, h.cfg.Method, h.cfg.URL, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	if requestContentType != "" {
+		req.Header.Set("Content-Type", requestContentType)
+	}
+	h.applyAuth(req)
+	for _, header := range h.cfg.Headers {
+		req.Header.Set(header.Key, header.Value)
+	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -110,10 +127,95 @@ func (h *HTTPPushOutputHandler) doRequest(body []byte, contentType string) error
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode >= http.StatusBadRequest {
+	if !h.isSuccessStatus(resp.StatusCode) {
 		return fmt.Errorf("unexpected status: %s", resp.Status)
 	}
 	return nil
+}
+
+func (h *HTTPPushOutputHandler) buildRequestPayload(body []byte, encodedContentType string) ([]byte, string, error) {
+	switch h.cfg.BodyMode {
+	case "multipart":
+		return h.buildMultipartPayload(body, encodedContentType)
+	default:
+		return body, h.binaryContentType(encodedContentType), nil
+	}
+}
+
+func (h *HTTPPushOutputHandler) buildMultipartPayload(body []byte, encodedContentType string) ([]byte, string, error) {
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+
+	for _, field := range h.cfg.FormFields {
+		if err := writer.WriteField(field.Key, field.Value); err != nil {
+			return nil, "", err
+		}
+	}
+
+	partHeader := make(textproto.MIMEHeader)
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeMultipartValue(h.cfg.FileField), escapeMultipartValue(h.fileName())))
+	partHeader.Set("Content-Type", h.filePartContentType(encodedContentType))
+	partWriter, err := writer.CreatePart(partHeader)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := partWriter.Write(body); err != nil {
+		return nil, "", err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+
+	return buffer.Bytes(), writer.FormDataContentType(), nil
+}
+
+func (h *HTTPPushOutputHandler) binaryContentType(encodedContentType string) string {
+	if strings.TrimSpace(h.cfg.ContentType) != "" {
+		return h.cfg.ContentType
+	}
+	return encodedContentType
+}
+
+func (h *HTTPPushOutputHandler) filePartContentType(encodedContentType string) string {
+	if strings.TrimSpace(h.cfg.ContentType) != "" {
+		return h.cfg.ContentType
+	}
+	return encodedContentType
+}
+
+func (h *HTTPPushOutputHandler) fileName() string {
+	if strings.TrimSpace(h.cfg.FileName) != "" {
+		return filepath.Base(h.cfg.FileName)
+	}
+	switch h.cfg.Format {
+	case "png":
+		return "frame.png"
+	default:
+		return "frame.jpg"
+	}
+}
+
+func (h *HTTPPushOutputHandler) applyAuth(req *http.Request) {
+	switch h.cfg.AuthType {
+	case "basic":
+		req.SetBasicAuth(h.cfg.AuthUsername, h.cfg.AuthPassword)
+	case "bearer":
+		if strings.TrimSpace(h.cfg.AuthToken) != "" {
+			req.Header.Set("Authorization", "Bearer "+h.cfg.AuthToken)
+		}
+	}
+}
+
+func (h *HTTPPushOutputHandler) isSuccessStatus(statusCode int) bool {
+	if len(h.cfg.SuccessCodes) == 0 {
+		return statusCode >= 200 && statusCode < 300
+	}
+	for _, code := range h.cfg.SuccessCodes {
+		if code == statusCode {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *HTTPPushOutputHandler) encodeFrame(frame *OutputFrame) ([]byte, string, error) {
@@ -124,6 +226,12 @@ func (h *HTTPPushOutputHandler) encodeFrame(frame *OutputFrame) ([]byte, string,
 			return nil, "", err
 		}
 		return data, "image/png", nil
+	case "jpeg_baseline":
+		data, err := frame.JPEGBaseline(h.cfg.Quality)
+		if err != nil {
+			return nil, "", err
+		}
+		return data, "image/jpeg", nil
 	default:
 		data, err := frame.JPEG(h.cfg.Quality)
 		if err != nil {
@@ -147,6 +255,11 @@ func enqueueLatestHTTPPushFrame(ch chan *OutputFrame, frame *OutputFrame) {
 	case ch <- frame:
 	default:
 	}
+}
+
+func escapeMultipartValue(value string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+	return replacer.Replace(value)
 }
 
 func (h *HTTPPushOutputHandler) logError(format string, args ...interface{}) {

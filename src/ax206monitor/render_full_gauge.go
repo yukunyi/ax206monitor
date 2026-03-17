@@ -139,7 +139,7 @@ func (r *FullGaugeRenderer) drawBody(
 	}
 
 	valueFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
-	labelFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleLabel, 16, 8)
+	textFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleText, 16, 8)
 	unitFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 
 	if textGap < 0 {
@@ -162,15 +162,32 @@ func (r *FullGaugeRenderer) drawBody(
 	if textGap < 0 {
 		textGap = 0
 	}
-	laneHeight := (availableHeight - textGap) / 2
-	if laneHeight < 1 {
-		laneHeight = 1
+	valueMetrics := baseMeasureText(valueFace, valueText)
+	unitMetrics := baseMeasureText(unitFace, unitText)
+	textMetrics := baseMeasureText(textFace, label)
+	valueHeight := math.Max(valueMetrics.ascent+valueMetrics.descent, unitMetrics.ascent+unitMetrics.descent)
+	if valueHeight < 1 {
+		valueHeight = 1
 	}
-	topCenterY := textTop + laneHeight/2
-	bottomCenterY := textTop + laneHeight + textGap + laneHeight/2
+	textHeight := textMetrics.ascent + textMetrics.descent
+	if textHeight < 1 {
+		textHeight = 1
+	}
+	topCenterY := (textTop + textBottom) / 2
+	bottomCenterY := topCenterY + valueHeight/2 + textGap + textHeight/2
+	if bottomCenterY+textHeight/2 > textBottom {
+		shiftUp := bottomCenterY + textHeight/2 - textBottom
+		topCenterY -= shiftUp
+		bottomCenterY -= shiftUp
+	}
+	if topCenterY-valueHeight/2 < textTop {
+		shiftDown := textTop - (topCenterY - valueHeight/2)
+		topCenterY += shiftDown
+		bottomCenterY += shiftDown
+	}
 
 	valueColor := lineColor
-	unitColor := resolveUnitColor(item, config, valueColor)
+	unitColor := resolveMonitorUnitColor(item, monitor.name, value, numberValue, config)
 	dc.SetColor(parseColor(textColor))
 	if strings.TrimSpace(unitText) == "" {
 		drawBaseMetricAnchoredText(dc, valueFace, valueText, cx, topCenterY, 0.5)
@@ -192,5 +209,5 @@ func (r *FullGaugeRenderer) drawBody(
 	}
 
 	dc.SetColor(parseColor(textColor))
-	drawBaseMetricAnchoredText(dc, labelFace, label, cx, bottomCenterY, 0.5)
+	drawBaseMetricAnchoredText(dc, textFace, label, cx, bottomCenterY, 0.5)
 }

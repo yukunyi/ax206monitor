@@ -385,8 +385,63 @@ body {
   font-size: 12px;
 }
 
-.basic_tab .collector_table .n-input {
-  width: min(100%, 320px);
+.basic_tab .collector_table .n-input,
+.basic_tab .collector_table .n-input-number,
+.basic_tab .collector_table .n-base-selection {
+  width: 100%;
+}
+
+.basic_tab .output_param_stack {
+  width: 100%;
+}
+
+.basic_tab .output_basic_grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 224px 96px 72px;
+  gap: 8px;
+  align-items: end;
+}
+
+.basic_tab .output_basic_grid_ax206 {
+  grid-template-columns: 180px;
+}
+
+.basic_tab .output_basic_cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.basic_tab .output_basic_cell > .n-text {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.basic_tab .output_basic_cell .n-input,
+.basic_tab .output_basic_cell .n-input-number,
+.basic_tab .output_basic_cell .n-base-selection {
+  width: 100%;
+}
+
+.basic_tab .output_basic_cell_action .n-button {
+  width: 100%;
+}
+
+.basic_tab .output_basic_status {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.basic_tab .output_basic_status .n-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .basic_tab .collector_table th,
@@ -395,7 +450,40 @@ body {
 }
 
 .basic_tab .collector_table td {
-  vertical-align: middle;
+  vertical-align: top;
+}
+
+.output_advanced_modal .n-card {
+  max-height: 82vh;
+}
+
+.output_advanced_modal .n-card__content {
+  overflow: auto;
+}
+
+.output_advanced_form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.output_advanced_section {
+  padding: 10px 12px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.output_advanced_section_title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  color: #dbe4ef;
+}
+
+.output_advanced_form .n-form-item-label {
+  padding-bottom: 3px;
 }
 
 .global_defaults_modal .n-card {
@@ -423,6 +511,23 @@ body {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .basic_tab .output_basic_grid {
+    grid-template-columns: minmax(0, 1fr) 220px 92px;
+  }
+
+  .basic_tab .output_basic_cell_url {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .basic_tab .output_basic_grid,
+  .basic_tab .output_basic_grid_ax206 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .global_defaults_swatch {
@@ -642,6 +747,91 @@ body {
   max-width: none;
 }
 
+.table_config_inline {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.table_editor_modal {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.table_editor_toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table_editor_toolbar_group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.table_editor_toolbar_group .n-input-number {
+  width: 72px;
+}
+
+.table_editor_toolbar_label {
+  color: var(--ui-text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.table_editor_grid_wrap {
+  overflow: auto;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.table_editor_grid {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table_editor_grid th,
+.table_editor_grid td {
+  border: 1px solid var(--ui-border-soft);
+  padding: 8px;
+  vertical-align: top;
+}
+
+.table_editor_grid thead th,
+.table_editor_grid .table_editor_index {
+  background: rgba(15, 23, 42, 0.42);
+  color: var(--ui-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.table_editor_index {
+  width: 74px;
+  white-space: nowrap;
+}
+
+.table_editor_cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.table_editor_cell .n-base-selection,
+.table_editor_cell .n-input {
+  width: 100%;
+  max-width: none;
+}
+
 .compact_style_form .n-form-item {
   margin-bottom: 0;
 }
@@ -742,7 +932,7 @@ body {
 
 .runtime_layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 400px minmax(0, 1fr);
   gap: 8px;
   padding: 8px 10px 10px;
   height: 100%;
@@ -779,7 +969,7 @@ body {
 
 .runtime_sys_name {
   flex: 1;
-  min-width: 0;
+  min-width: 220px;
   font-size: 12px;
   line-height: 1.2;
   color: var(--ui-text-soft);

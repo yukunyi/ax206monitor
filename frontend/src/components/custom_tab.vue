@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import DeferredInput from "./deferred_input.vue";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -70,14 +71,14 @@ const aggregateOptions = [
           <n-form label-placement="top" size="small">
             <n-grid cols="2" :x-gap="8" :y-gap="6">
               <n-form-item-gi label="Name">
-                <n-input
+                <DeferredInput
                   :value="item.name || ''"
                   :disabled="readonlyProfile"
                   @update:value="(v) => emit('change-custom', { index: idx, field: 'name', value: String(v || '') })"
                 />
               </n-form-item-gi>
               <n-form-item-gi label="Label">
-                <n-input
+                <DeferredInput
                   :value="item.label || ''"
                   :disabled="readonlyProfile"
                   @update:value="(v) => emit('change-custom', { index: idx, field: 'label', value: String(v || '') })"
@@ -92,7 +93,7 @@ const aggregateOptions = [
                 />
               </n-form-item-gi>
               <n-form-item-gi label="Unit">
-                <n-input
+                <DeferredInput
                   :value="item.unit || ''"
                   :disabled="readonlyProfile"
                   @update:value="(v) => emit('change-custom', { index: idx, field: 'unit', value: String(v || '') })"
@@ -100,7 +101,7 @@ const aggregateOptions = [
               </n-form-item-gi>
 
               <n-form-item-gi v-if="item.type === 'file'" label="Path" :span="2">
-                <n-input
+                <DeferredInput
                   :value="item.path || ''"
                   :disabled="readonlyProfile"
                   @update:value="(v) => emit('change-custom', { index: idx, field: 'path', value: String(v || '') })"

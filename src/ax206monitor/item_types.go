@@ -12,9 +12,11 @@ const (
 	itemTypeSimpleCircle   = "simple_circle"
 	itemTypeLabelText      = "label_text"
 
-	itemTypeFullChart    = "full_chart"
-	itemTypeFullProgress = "full_progress"
-	itemTypeFullGauge    = "full_gauge"
+	itemTypeFullChart     = "full_chart"
+	itemTypeFullTable     = "full_table"
+	itemTypeFullProgressH = "full_progress_h"
+	itemTypeFullProgressV = "full_progress_v"
+	itemTypeFullGauge     = "full_gauge"
 )
 
 var simpleItemTypes = []string{
@@ -30,7 +32,9 @@ var simpleItemTypes = []string{
 
 var fullItemTypes = []string{
 	itemTypeFullChart,
-	itemTypeFullProgress,
+	itemTypeFullTable,
+	itemTypeFullProgressH,
+	itemTypeFullProgressV,
 	itemTypeFullGauge,
 }
 
@@ -49,7 +53,8 @@ var rangeItemTypeSet = toItemTypeSet([]string{
 	itemTypeSimpleProgress,
 	itemTypeSimpleChart,
 	itemTypeFullChart,
-	itemTypeFullProgress,
+	itemTypeFullProgressH,
+	itemTypeFullProgressV,
 	itemTypeFullGauge,
 })
 

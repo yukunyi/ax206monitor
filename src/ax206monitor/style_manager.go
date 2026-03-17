@@ -46,17 +46,15 @@ var styleMetaList = []StyleKeyMeta{
 	{Key: "border_width", Label: "边框宽度", Kind: "float", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
 	{Key: "border_color", Label: "边框颜色", Kind: "color", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
 	{Key: "radius", Label: "圆角", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}},
-	{Key: "thresholds", Label: "阈值(%)", Kind: "float4", Scopes: []string{styleScopeBase, styleScopeItem}},
-	{Key: "level_colors", Label: "等级颜色", Kind: "color4", Scopes: []string{styleScopeBase, styleScopeItem}},
 	{Key: "history_points", Label: "历史点数", Kind: "int", Scopes: []string{styleScopeBase, styleScopeType, styleScopeItem}, Types: []string{itemTypeSimpleChart, itemTypeFullChart}},
-	{Key: "content_padding_x", Label: "左右边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
-	{Key: "content_padding_y", Label: "上下边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
-	{Key: "body_gap", Label: "标题间距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "header_height", Label: "标题栏高度", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "header_divider", Label: "标题分隔线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "header_divider_width", Label: "分隔线宽", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "header_divider_offset", Label: "分隔线偏移", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
-	{Key: "header_divider_color", Label: "分隔线颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress}},
+	{Key: "content_padding_x", Label: "左右边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH, itemTypeFullProgressV, itemTypeFullGauge}},
+	{Key: "content_padding_y", Label: "上下边距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeLabelText, itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH, itemTypeFullProgressV, itemTypeFullGauge}},
+	{Key: "body_gap", Label: "标题间距", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
+	{Key: "header_height", Label: "标题栏高度", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
+	{Key: "header_divider", Label: "标题分隔线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
+	{Key: "header_divider_width", Label: "分隔线宽", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
+	{Key: "header_divider_offset", Label: "分隔线偏移", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
+	{Key: "header_divider_color", Label: "分隔线颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH}},
 	{Key: "show_segment_lines", Label: "分段线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "show_grid_lines", Label: "网格线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "grid_lines", Label: "网格线数量", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
@@ -67,13 +65,20 @@ var styleMetaList = []StyleKeyMeta{
 	{Key: "chart_color", Label: "折线颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "chart_area_bg", Label: "图表区背景", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "chart_area_border_color", Label: "图表区边框", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
-	{Key: "progress_style", Label: "进度样式", Kind: "select", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress}, Options: []StyleOption{{Label: "gradient", Value: "gradient"}, {Label: "solid", Value: "solid"}, {Label: "segmented", Value: "segmented"}, {Label: "stripes", Value: "stripes"}}},
-	{Key: "bar_height", Label: "条高度", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress}},
-	{Key: "bar_radius", Label: "条圆角", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress}},
-	{Key: "track_color", Label: "轨道颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress, itemTypeFullGauge}},
-	{Key: "segments", Label: "分段数量", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress}},
-	{Key: "segment_gap", Label: "分段间隔", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgress}},
-	{Key: "card_radius", Label: "外框圆角", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullProgress, itemTypeFullGauge}},
+	{Key: "progress_style", Label: "进度样式", Kind: "select", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}, Options: []StyleOption{{Label: "gradient", Value: "gradient"}, {Label: "solid", Value: "solid"}, {Label: "segmented", Value: "segmented"}, {Label: "stripes", Value: "stripes"}}},
+	{Key: "bar_height", Label: "条高度", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}},
+	{Key: "bar_radius", Label: "条圆角", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}},
+	{Key: "track_color", Label: "轨道颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV, itemTypeFullGauge}},
+	{Key: "segments", Label: "分段数量", Kind: "int", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}},
+	{Key: "segment_gap", Label: "分段间隔", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}},
+	{Key: "card_radius", Label: "外框圆角", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart, itemTypeFullTable, itemTypeFullProgressH, itemTypeFullProgressV, itemTypeFullGauge}},
+	{Key: "table_row_gap", Label: "行间距", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_row_radius", Label: "行圆角", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_row_bg", Label: "行背景", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_row_alt_bg", Label: "交替行背景", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_column_gap", Label: "列间距", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_label_width_ratio", Label: "标签列比例", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
+	{Key: "table_show_units", Label: "显示单位", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullTable}},
 	{Key: "gauge_thickness", Label: "仪表盘厚度", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullGauge}},
 	{Key: "gauge_gap_degrees", Label: "底部缺口角度", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullGauge}},
 	{Key: "gauge_text_gap", Label: "文字间距", Kind: "float", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullGauge}},
@@ -243,15 +248,11 @@ func normalizeStyleValueByKey(key string, value interface{}) interface{} {
 	case "progress_style":
 		text := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", value)))
 		switch text {
-		case "solid", "segmented", "stripes":
+		case "solid", "segmented", "stripes", "vertical":
 			return text
 		default:
 			return "gradient"
 		}
-	case "thresholds":
-		return normalizeThresholdPercentageArray(value)
-	case "level_colors":
-		return normalizeLevelColorArrayValue(value)
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", value))
 	}
@@ -341,21 +342,17 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "unit_color":
 		return "#f8fafc", true
 	case "border_width":
-		if itemType == itemTypeSimpleChart || itemType == itemTypeFullChart {
+		if itemType == itemTypeSimpleChart || itemType == itemTypeLabelText || isFullItemType(itemType) {
 			return 1.0, true
 		}
 		return 0.0, true
 	case "border_color":
-		if itemType == itemTypeSimpleChart || itemType == itemTypeFullChart {
+		if itemType == itemTypeSimpleChart || itemType == itemTypeLabelText || isFullItemType(itemType) {
 			return "#cbd5e1", true
 		}
 		return "#475569", true
 	case "radius":
 		return 0, true
-	case "thresholds":
-		return []float64{25, 50, 75, 100}, true
-	case "level_colors":
-		return []string{"#22c55e", "#eab308", "#f97316", "#ef4444"}, true
 	case "history_points":
 		return 150, true
 	case "content_padding_x", "content_padding_y":
@@ -391,7 +388,7 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 	case "line_orientation":
 		return "horizontal", true
 	case "show_avg_line":
-		return true, true
+		return false, true
 	case "chart_color":
 		return "#38bdf8", true
 	case "chart_area_bg":
@@ -401,6 +398,20 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 		return "", true
 	case "chart_area_border_color":
 		return "", true
+	case "table_row_gap":
+		return 0.0, true
+	case "table_row_radius":
+		return 0.0, true
+	case "table_row_bg":
+		return "", true
+	case "table_row_alt_bg":
+		return "", true
+	case "table_column_gap":
+		return 0.0, true
+	case "table_label_width_ratio":
+		return 0.46, true
+	case "table_show_units":
+		return true, true
 	case "progress_style":
 		return "gradient", true
 	case "bar_height":
@@ -522,6 +533,41 @@ func resolveStyleColor(item *ItemConfig, config *MonitorConfig, key string, fall
 		return fallback
 	}
 	return color
+}
+
+func resolveStyleOverrideRaw(item *ItemConfig, config *MonitorConfig, key string) (interface{}, bool) {
+	normalizedKey := strings.TrimSpace(key)
+	if normalizedKey == "" || !isKnownStyleKey(normalizedKey) {
+		return nil, false
+	}
+	itemType := ""
+	if item != nil {
+		itemType = normalizeItemTypeName(item.Type)
+	}
+	if canUseItemCustomStyle(item, config) {
+		if value, ok := readStyleMapValue(item.Style, normalizedKey); ok {
+			return value, true
+		}
+	}
+	if config != nil && itemType != "" {
+		defaults := config.GetTypeDefaults(itemType)
+		if value, ok := readStyleMapValue(defaults.Style, normalizedKey); ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func resolveStyleOverrideString(item *ItemConfig, config *MonitorConfig, key string) string {
+	raw, exists := resolveStyleOverrideRaw(item, config, key)
+	if !exists {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", raw))
+}
+
+func resolveStyleOverrideColor(item *ItemConfig, config *MonitorConfig, key string) string {
+	return resolveStyleOverrideString(item, config, key)
 }
 
 func resolveStyleThresholdsPercent(item *ItemConfig, config *MonitorConfig) []float64 {
