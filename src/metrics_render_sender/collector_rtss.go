@@ -1,8 +1,8 @@
 package main
 
 import (
-	"metricsrendersender/rtsssource"
 	"fmt"
+	"metrics_render_sender/rtsssource"
 	"runtime"
 	"strings"
 	"sync"

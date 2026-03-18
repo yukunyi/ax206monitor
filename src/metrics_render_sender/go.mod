@@ -1,4 +1,4 @@
-module metricsrendersender
+module metrics_render_sender
 
 go 1.21
 

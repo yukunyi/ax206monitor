@@ -95,30 +95,30 @@ Release packages are published automatically by GitHub Actions when a tag such a
 Linux:
 
 ```bash
-tar -xzf metricsrendersender-linux-amd64-vX.Y.Z.tar.gz
-cd metricsrendersender-linux-amd64-vX.Y.Z
-./metricsrendersender
+tar -xzf metrics_render_sender-linux-amd64-vX.Y.Z.tar.gz
+cd metrics_render_sender-linux-amd64-vX.Y.Z
+./metrics_render_sender
 ```
 
 Windows:
 
 1. Download `metrics_render_sender.zip` from GitHub Releases
 2. Extract the archive
-3. Run `metricsrendersender.exe`
+3. Run `metrics_render_sender.exe`
 
 If you need the Web UI immediately, start with:
 
 Linux:
 
 ```bash
-METRICS_RENDER_SENDER_WEB=1 ./metricsrendersender --port 18086
+METRICS_RENDER_SENDER_WEB=1 ./metrics_render_sender --port 18086
 ```
 
 Windows:
 
 ```powershell
 $env:METRICS_RENDER_SENDER_WEB="1"
-.\metricsrendersender.exe --port 18086
+.\metrics_render_sender.exe --port 18086
 ```
 
 ### Install From Source
@@ -142,13 +142,13 @@ Build from source:
 
 ```bash
 ./build.sh
-./dist/metricsrendersender-linux-amd64 --list-monitors
+./dist/metrics_render_sender-linux-amd64 --list-monitors
 ```
 
 Run the Web UI with the embedded frontend:
 
 ```bash
-METRICS_RENDER_SENDER_WEB=1 ./dist/metricsrendersender-linux-amd64 --port 18086
+METRICS_RENDER_SENDER_WEB=1 ./dist/metrics_render_sender-linux-amd64 --port 18086
 ```
 
 Development mode with Vite:
@@ -162,7 +162,7 @@ npm run dev
 In another shell:
 
 ```bash
-METRICS_RENDER_SENDER_DEV_URL=http://127.0.0.1:18087 ./dist/metricsrendersender-linux-amd64 --port 18086
+METRICS_RENDER_SENDER_DEV_URL=http://127.0.0.1:18087 ./dist/metrics_render_sender-linux-amd64 --port 18086
 ```
 
 Open `http://127.0.0.1:18086`.
@@ -180,13 +180,13 @@ Legacy `AX206_MONITOR_*` environment variables are still accepted for compatibil
 Runtime config path:
 
 ```text
-$HOME/.config/metricsrendersender/config.json
+$HOME/.config/metrics_render_sender/config.json
 ```
 
 Config directory layout:
 
 ```text
-$HOME/.config/metricsrendersender/
+$HOME/.config/metrics_render_sender/
 ├── config.json
 ├── history/
 └── profiles/
@@ -237,7 +237,7 @@ The embedded Web UI provides:
 Frontend build output is embedded into:
 
 ```text
-src/metricsrendersender/webassets/webdist
+src/metrics_render_sender/webassets/webdist
 ```
 
 ## CLI Notes
@@ -252,7 +252,7 @@ Useful runtime flags:
 For AX206 on Linux, run the udev helper once if needed:
 
 ```bash
-sudo ./dist/metricsrendersender-linux-amd64 --add-udev-rule
+sudo ./dist/metrics_render_sender-linux-amd64 --add-udev-rule
 ```
 
 ## Packaging
@@ -266,9 +266,9 @@ Create release artifacts:
 Artifacts:
 
 ```text
-dist/metricsrendersender-linux-amd64
-dist/metricsrendersender-windows-amd64.exe
-dist/metricsrendersender-linux-amd64-v1.0.0.tar.gz
+dist/metrics_render_sender-linux-amd64
+dist/metrics_render_sender-windows-amd64.exe
+dist/metrics_render_sender-linux-amd64-v1.0.0.tar.gz
 dist/windows/metrics_render_sender/
 dist/windows/metrics_render_sender.zip
 ```
@@ -293,4 +293,4 @@ git push origin v1.2.3
 
 ## Repository
 
-https://github.com/yukunyi/metricsrendersender
+https://github.com/yukunyi/metrics_render_sender

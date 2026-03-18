@@ -1,6 +1,6 @@
 package main
 
-import "metricsrendersender/coolercontrol"
+import "metrics_render_sender/coolercontrol"
 
 type CoolerControlClient = coolercontrol.CoolerControlClient
 type CoolerControlMonitorOption = coolercontrol.CoolerControlMonitorOption

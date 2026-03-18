@@ -1,6 +1,6 @@
 package main
 
-import "metricsrendersender/platformops"
+import "metrics_render_sender/platformops"
 
 type ServiceInstallOptions = platformops.ServiceInstallOptions
 
@@ -11,10 +11,10 @@ func InstallService(options ServiceInstallOptions) error {
 	}
 	if result.UserMode {
 		logInfo("Installed user service: %s", result.ServicePath)
-		logInfo("Check status: systemctl --user status %s", "metricsrendersender")
+		logInfo("Check status: systemctl --user status %s", "metrics_render_sender")
 	} else {
 		logInfo("Installed system service: %s", result.ServicePath)
-		logInfo("Check status: systemctl status %s", "metricsrendersender")
+		logInfo("Check status: systemctl status %s", "metrics_render_sender")
 	}
 	return nil
 }
@@ -23,7 +23,7 @@ func UninstallService() error {
 	if err := platformops.UninstallService(); err != nil {
 		return err
 	}
-	logInfo("Service uninstalled: %s", "metricsrendersender")
+	logInfo("Service uninstalled: %s", "metrics_render_sender")
 	return nil
 }
 

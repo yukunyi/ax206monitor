@@ -18,7 +18,7 @@ var (
 const (
 	RefreshInterval = 1 * time.Second
 	RetryInterval   = 3 * time.Second
-	RepositoryURL   = "https://github.com/yukunyi/metricsrendersender"
+	RepositoryURL   = "https://github.com/yukunyi/metrics_render_sender"
 )
 
 func main() {

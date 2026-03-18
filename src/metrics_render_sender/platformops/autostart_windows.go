@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const windowsAutoStartFile = "metricsrendersender.cmd"
+const windowsAutoStartFile = "metrics_render_sender.cmd"
 
 func IsAutoStartEnabled() (bool, error) {
 	path, err := autoStartScriptPath()

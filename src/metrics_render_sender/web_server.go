@@ -1,12 +1,12 @@
 package main
 
 import (
-	"metricsrendersender/rtsssource"
-	"metricsrendersender/webui"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"metrics_render_sender/rtsssource"
+	"metrics_render_sender/webui"
 	"net"
 	"net/http"
 	"os"
@@ -827,13 +827,13 @@ func getUserConfigPath() (string, error) {
 
 func getUserConfigDir() (string, error) {
 	if xdgDir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdgDir != "" {
-		return filepath.Join(xdgDir, "metricsrendersender"), nil
+		return filepath.Join(xdgDir, "metrics_render_sender"), nil
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".config", "metricsrendersender"), nil
+	return filepath.Join(homeDir, ".config", "metrics_render_sender"), nil
 }
 
 func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {

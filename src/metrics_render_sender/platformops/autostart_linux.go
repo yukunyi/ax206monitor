@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const linuxAutoStartFile = "metricsrendersender.desktop"
+const linuxAutoStartFile = "metrics_render_sender.desktop"
 
 func IsAutoStartEnabled() (bool, error) {
 	path, err := autoStartDesktopPath()

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"metricsrendersender/monitorutil"
+	"metrics_render_sender/monitorutil"
 	"time"
 )
 

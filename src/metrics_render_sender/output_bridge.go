@@ -1,8 +1,8 @@
 package main
 
 import (
-	"metricsrendersender/output"
 	"image"
+	"metrics_render_sender/output"
 )
 
 type OutputHandler = output.OutputHandler

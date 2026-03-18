@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-const serviceName = "metricsrendersender"
+const serviceName = "metrics_render_sender"
 
 type ServiceInstallOptions struct {
 }
@@ -114,10 +114,10 @@ func UninstallService() error {
 
 func resolveServicePaths(rootMode bool, homeDir string) (binPath, servicePath, wantedBy string) {
 	if rootMode {
-		return "/usr/local/bin/metricsrendersender", "/etc/systemd/system/metricsrendersender.service", "multi-user.target"
+		return "/usr/local/bin/metrics_render_sender", "/etc/systemd/system/metrics_render_sender.service", "multi-user.target"
 	}
-	return filepath.Join(homeDir, ".local", "bin", "metricsrendersender"),
-		filepath.Join(homeDir, ".config", "systemd", "user", "metricsrendersender.service"),
+	return filepath.Join(homeDir, ".local", "bin", "metrics_render_sender"),
+		filepath.Join(homeDir, ".config", "systemd", "user", "metrics_render_sender.service"),
 		"default.target"
 }
 

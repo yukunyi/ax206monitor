@@ -68,6 +68,6 @@
     {"type": "value", "monitor": "net_default_upload", "x": 162, "y": 237, "width": 155, "height": 56, "font_size": 12, "bg": "#0f172a"},
     {"type": "value", "monitor": "net_default_download", "x": 319, "y": 237, "width": 156, "height": 56, "font_size": 12, "bg": "#0f172a"},
 
-    {"type": "text", "text": "Repository: https://github.com/yukunyi/metricsrendersender", "x": 5, "y": 295, "width": 470, "height": 20, "font_size": 10, "bg": "#1e293b"}
+    {"type": "text", "text": "Repository: https://github.com/yukunyi/metrics_render_sender", "x": 5, "y": 295, "width": 470, "height": 20, "font_size": 10, "bg": "#1e293b"}
   ]
 }

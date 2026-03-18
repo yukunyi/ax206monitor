@@ -1,9 +1,9 @@
 package main
 
 import (
-	"metricsrendersender/rtsssource"
 	"fmt"
 	"math"
+	"metrics_render_sender/rtsssource"
 	"sort"
 	"strings"
 	"sync"

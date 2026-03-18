@@ -1,10 +1,10 @@
 package main
 
 import (
-	"metricsrendersender/coolercontrol"
-	"metricsrendersender/output"
 	"fmt"
 	"io"
+	"metrics_render_sender/coolercontrol"
+	"metrics_render_sender/output"
 	"os"
 	"path/filepath"
 	"runtime"

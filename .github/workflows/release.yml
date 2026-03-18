@@ -1,5 +1,8 @@
 name: Release
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     tags:
@@ -26,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: src/metricsrendersender/go.mod
+          go-version-file: src/metrics_render_sender/go.mod
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -70,8 +73,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-release-assets
+          if-no-files-found: error
           path: |
-            dist/metricsrendersender-linux-amd64-v*.tar.gz
+            dist/metrics_render_sender-linux-amd64-v*.tar.gz
 
   package-windows:
     runs-on: windows-latest
@@ -128,9 +132,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-assets
+          if-no-files-found: error
           path: |
             dist/windows/metrics_render_sender.zip
-            dist/windows/metrics_render_sender.tar.gz
 
   release:
     runs-on: ubuntu-24.04

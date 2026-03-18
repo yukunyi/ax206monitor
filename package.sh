@@ -3,12 +3,12 @@
 set -e
 
 VERSION="${VERSION:-1.0.0}"
-LINUX_PACKAGE="metricsrendersender-linux-amd64-v${VERSION}"
+LINUX_PACKAGE="metrics_render_sender-linux-amd64-v${VERSION}"
 DIST_DIR="dist"
 WINDOWS_DIST_DIR="$DIST_DIR/windows/metrics_render_sender"
 WINDOWS_ZIP_PATH="$DIST_DIR/windows/metrics_render_sender.zip"
 FRONTEND_DIR="frontend"
-EMBED_DIST_DIR="src/metricsrendersender/webassets/webdist"
+EMBED_DIST_DIR="src/metrics_render_sender/webassets/webdist"
 BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
 WINDOWS_CC="${WINDOWS_CC:-x86_64-w64-mingw32-gcc}"
 WINDOWS_CXX="${WINDOWS_CXX:-x86_64-w64-mingw32-g++}"
@@ -150,17 +150,17 @@ mkdir -p dist
 echo "Cleaning previous build files..."
 rm -rf dist/*
 
-cd src/metricsrendersender
+cd src/metrics_render_sender
 
 if [ ! -f go.mod ]; then
     echo "Initializing Go module..."
-    go mod init metricsrendersender
+    go mod init metrics_render_sender
 fi
 
 echo "Downloading dependencies..."
 go mod tidy
 
-cd ../../src/metricsrendersender
+cd ../../src/metrics_render_sender
 
 if has_build_target "linux"; then
     echo "Compiling Linux version..."
@@ -168,7 +168,7 @@ if has_build_target "linux"; then
         -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
         -buildmode=exe \
-        -o ../../dist/metricsrendersender-linux-amd64 .
+        -o ../../dist/metrics_render_sender-linux-amd64 .
 fi
 
 if has_build_target "windows"; then
@@ -187,13 +187,13 @@ if has_build_target "windows"; then
     GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
         -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
-        -o ../../dist/metricsrendersender-windows-amd64.exe .
+        -o ../../dist/metrics_render_sender-windows-amd64.exe .
 fi
 
 cd ../..
 
 if has_build_target "linux"; then
-    chmod +x dist/metricsrendersender-linux-amd64
+    chmod +x dist/metrics_render_sender-linux-amd64
 fi
 
 if has_build_target "linux"; then
@@ -202,12 +202,12 @@ if has_build_target "linux"; then
     mkdir -p "$LINUX_PACKAGE"
 
     echo "Copying files to Linux package directory..."
-    cp dist/metricsrendersender-linux-amd64 "$LINUX_PACKAGE/metricsrendersender"
+    cp dist/metrics_render_sender-linux-amd64 "$LINUX_PACKAGE/metrics_render_sender"
     if [ -f README.md ]; then
         cp README.md "$LINUX_PACKAGE/"
     fi
 
-    chmod +x "$LINUX_PACKAGE/metricsrendersender"
+    chmod +x "$LINUX_PACKAGE/metrics_render_sender"
 fi
 
 if has_build_target "windows"; then
@@ -215,14 +215,14 @@ if has_build_target "windows"; then
     mkdir -p "$WINDOWS_DIST_DIR"
 
     echo "Copying files to Windows package directory..."
-    cp dist/metricsrendersender-windows-amd64.exe "$WINDOWS_DIST_DIR/metricsrendersender.exe"
+    cp dist/metrics_render_sender-windows-amd64.exe "$WINDOWS_DIST_DIR/metrics_render_sender.exe"
     if [ -f README.md ]; then
         cp README.md "$WINDOWS_DIST_DIR/"
     fi
     if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
         cp docs/LIBRE_HARDWARE_MONITOR.md "$WINDOWS_DIST_DIR/"
     fi
-    copy_windows_runtime_deps "$WINDOWS_DIST_DIR/metricsrendersender.exe" "$WINDOWS_DIST_DIR"
+    copy_windows_runtime_deps "$WINDOWS_DIST_DIR/metrics_render_sender.exe" "$WINDOWS_DIST_DIR"
 fi
 
 if has_build_target "linux"; then
@@ -280,15 +280,15 @@ if has_build_target "linux"; then
     echo "Linux:"
     echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
     echo "2. Enter directory: cd $LINUX_PACKAGE"
-    echo "3. Run in foreground: ./metricsrendersender"
+    echo "3. Run in foreground: ./metrics_render_sender"
     echo ""
 fi
 if has_build_target "windows"; then
     echo "Windows:"
     echo "1. Use directory: $WINDOWS_DIST_DIR"
     echo "2. Or extract zip: $WINDOWS_ZIP_PATH"
-    echo "3. Run metricsrendersender.exe"
-    echo "4. Use Web UI if needed: set METRICS_RENDER_SENDER_WEB=1 && metricsrendersender.exe --port 18086"
+    echo "3. Run metrics_render_sender.exe"
+    echo "4. Use Web UI if needed: set METRICS_RENDER_SENDER_WEB=1 && metrics_render_sender.exe --port 18086"
 fi
 
 echo ""

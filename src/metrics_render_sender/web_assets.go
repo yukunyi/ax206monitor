@@ -1,8 +1,8 @@
 package main
 
 import (
-	"metricsrendersender/webassets"
 	"io/fs"
+	"metrics_render_sender/webassets"
 )
 
 func getEmbeddedWebAssetsFS() (fs.FS, error) {

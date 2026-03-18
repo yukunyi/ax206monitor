@@ -1,7 +1,7 @@
 package main
 
 import (
-	"metricsrendersender/output"
+	"metrics_render_sender/output"
 )
 
 const (

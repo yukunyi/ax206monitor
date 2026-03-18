@@ -1,5 +1,5 @@
 {
-  "name": "metricsrendersender-frontend",
+  "name": "metrics_render_sender-frontend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
