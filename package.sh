@@ -9,6 +9,23 @@ WINDOWS_DIST_DIR="$DIST_DIR/windows/metrics_render_sender"
 WINDOWS_ZIP_PATH="$DIST_DIR/windows/metrics_render_sender.zip"
 FRONTEND_DIR="frontend"
 EMBED_DIST_DIR="src/metricsrendersender/webassets/webdist"
+BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
+WINDOWS_CC="${WINDOWS_CC:-x86_64-w64-mingw32-gcc}"
+WINDOWS_CXX="${WINDOWS_CXX:-x86_64-w64-mingw32-g++}"
+WINDOWS_PKG_CONFIG="${WINDOWS_PKG_CONFIG:-x86_64-w64-mingw32-pkg-config}"
+WINDOWS_OBJDUMP="${WINDOWS_OBJDUMP:-x86_64-w64-mingw32-objdump}"
+MINGW_ROOT="${MINGW_ROOT:-/usr/x86_64-w64-mingw32}"
+
+has_build_target() {
+    local needle="$1"
+    local target
+    for target in $BUILD_TARGETS; do
+        if [ "$target" = "$needle" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 echo "MetricsRenderSender - Package Script"
 echo "===================================="
@@ -36,10 +53,16 @@ resolve_windows_dll() {
     local dll="$1"
     local search_dirs=()
     local gcc_dll_dir
-    gcc_dll_dir="$(dirname "$(x86_64-w64-mingw32-gcc -print-file-name=libgcc_s_seh-1.dll)")"
+    gcc_dll_dir="$(dirname "$("$WINDOWS_CC" -print-file-name=libgcc_s_seh-1.dll 2>/dev/null)")"
+    search_dirs+=("$MINGW_ROOT/bin")
+    search_dirs+=("$MINGW_ROOT/lib")
     search_dirs+=("/usr/x86_64-w64-mingw32/bin")
     search_dirs+=("/usr/x86_64-w64-mingw32/lib")
-    search_dirs+=("$gcc_dll_dir")
+    search_dirs+=("/mingw64/bin")
+    search_dirs+=("/mingw64/lib")
+    if [ -n "$gcc_dll_dir" ] && [ "$gcc_dll_dir" != "." ]; then
+        search_dirs+=("$gcc_dll_dir")
+    fi
     local dir
     for dir in "${search_dirs[@]}"; do
         if [ -f "$dir/$dll" ]; then
@@ -86,7 +109,7 @@ copy_windows_runtime_deps() {
             cp -f "$dll_path" "$target_dir/$dll"
             queue+=("$dll_path")
             queue_len=$((queue_len + 1))
-        done < <(x86_64-w64-mingw32-objdump -p "$current" | awk '/DLL Name:/{print $3}')
+        done < <("$WINDOWS_OBJDUMP" -p "$current" | awk '/DLL Name:/{print $3}')
     done
 }
 
@@ -104,7 +127,11 @@ fi
 
 echo "Building Vite frontend..."
 pushd "$FRONTEND_DIR" > /dev/null
-npm install
+if [ -f package-lock.json ]; then
+    npm ci --include=dev
+else
+    npm install --include=dev
+fi
 npm run build
 popd > /dev/null
 
@@ -135,105 +162,134 @@ go mod tidy
 
 cd ../../src/metricsrendersender
 
-echo "Compiling Linux version..."
-GOOS=linux GOARCH=amd64 go build \
-    -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-    -trimpath \
-    -buildmode=exe \
-    -o ../../dist/metricsrendersender-linux-amd64 .
+if has_build_target "linux"; then
+    echo "Compiling Linux version..."
+    GOOS=linux GOARCH=amd64 go build \
+        -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        -trimpath \
+        -buildmode=exe \
+        -o ../../dist/metricsrendersender-linux-amd64 .
+fi
 
-echo "Compiling Windows version..."
-if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
-    echo "Error: x86_64-w64-mingw32-gcc not found, cannot cross-compile windows with cgo"
-    exit 1
+if has_build_target "windows"; then
+    echo "Compiling Windows version..."
+    if ! command -v "$WINDOWS_CC" &> /dev/null; then
+        echo "Error: $WINDOWS_CC not found, cannot compile windows with cgo"
+        exit 1
+    fi
+    if ! command -v "$WINDOWS_CXX" &> /dev/null; then
+        echo "Error: $WINDOWS_CXX not found, cannot compile windows with cgo"
+        exit 1
+    fi
+    CC="$WINDOWS_CC" \
+    CXX="$WINDOWS_CXX" \
+    PKG_CONFIG="$WINDOWS_PKG_CONFIG" \
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
+        -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        -trimpath \
+        -o ../../dist/metricsrendersender-windows-amd64.exe .
 fi
-if ! command -v x86_64-w64-mingw32-g++ &> /dev/null; then
-    echo "Error: x86_64-w64-mingw32-g++ not found, cannot cross-compile windows with cgo"
-    exit 1
-fi
-CC=x86_64-w64-mingw32-gcc \
-CXX=x86_64-w64-mingw32-g++ \
-GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
-    -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-    -trimpath \
-    -o ../../dist/metricsrendersender-windows-amd64.exe .
 
 cd ../..
 
-chmod +x dist/metricsrendersender-linux-amd64
-
-echo "Creating Linux package directory..."
-rm -rf "$LINUX_PACKAGE"
-mkdir -p "$LINUX_PACKAGE"
-
-echo "Copying files to Linux package directory..."
-cp dist/metricsrendersender-linux-amd64 "$LINUX_PACKAGE/metricsrendersender"
-if [ -f README.md ]; then
-    cp README.md "$LINUX_PACKAGE/"
+if has_build_target "linux"; then
+    chmod +x dist/metricsrendersender-linux-amd64
 fi
 
-chmod +x "$LINUX_PACKAGE/metricsrendersender"
+if has_build_target "linux"; then
+    echo "Creating Linux package directory..."
+    rm -rf "$LINUX_PACKAGE"
+    mkdir -p "$LINUX_PACKAGE"
 
-echo "Creating Windows package directory..."
-mkdir -p "$WINDOWS_DIST_DIR"
+    echo "Copying files to Linux package directory..."
+    cp dist/metricsrendersender-linux-amd64 "$LINUX_PACKAGE/metricsrendersender"
+    if [ -f README.md ]; then
+        cp README.md "$LINUX_PACKAGE/"
+    fi
 
-echo "Copying files to Windows package directory..."
-cp dist/metricsrendersender-windows-amd64.exe "$WINDOWS_DIST_DIR/metricsrendersender.exe"
-if [ -f README.md ]; then
-    cp README.md "$WINDOWS_DIST_DIR/"
+    chmod +x "$LINUX_PACKAGE/metricsrendersender"
 fi
-if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
-    cp docs/LIBRE_HARDWARE_MONITOR.md "$WINDOWS_DIST_DIR/"
+
+if has_build_target "windows"; then
+    echo "Creating Windows package directory..."
+    mkdir -p "$WINDOWS_DIST_DIR"
+
+    echo "Copying files to Windows package directory..."
+    cp dist/metricsrendersender-windows-amd64.exe "$WINDOWS_DIST_DIR/metricsrendersender.exe"
+    if [ -f README.md ]; then
+        cp README.md "$WINDOWS_DIST_DIR/"
+    fi
+    if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
+        cp docs/LIBRE_HARDWARE_MONITOR.md "$WINDOWS_DIST_DIR/"
+    fi
+    copy_windows_runtime_deps "$WINDOWS_DIST_DIR/metricsrendersender.exe" "$WINDOWS_DIST_DIR"
 fi
-copy_windows_runtime_deps "$WINDOWS_DIST_DIR/metricsrendersender.exe" "$WINDOWS_DIST_DIR"
 
-echo "Verifying Linux package contents..."
-echo "Linux package directory contents:"
-ls -la "$LINUX_PACKAGE/"
+if has_build_target "linux"; then
+    echo "Verifying Linux package contents..."
+    echo "Linux package directory contents:"
+    ls -la "$LINUX_PACKAGE/"
+fi
 
-echo "Verifying Windows package contents..."
-echo "Windows package directory contents:"
-ls -la "$WINDOWS_DIST_DIR/"
+if has_build_target "windows"; then
+    echo "Verifying Windows package contents..."
+    echo "Windows package directory contents:"
+    ls -la "$WINDOWS_DIST_DIR/"
+fi
 
-echo "Creating Linux tar archive..."
-tar -czf "dist/$LINUX_PACKAGE.tar.gz" "$LINUX_PACKAGE"
+if has_build_target "linux"; then
+    echo "Creating Linux tar archive..."
+    tar -czf "dist/$LINUX_PACKAGE.tar.gz" "$LINUX_PACKAGE"
+fi
 
-echo "Creating Windows zip archive..."
-if command -v zip &> /dev/null; then
-    pushd "$DIST_DIR/windows" > /dev/null
-    zip -r "metrics_render_sender.zip" "metrics_render_sender"
-    popd > /dev/null
-else
-    echo "Warning: zip command not found, creating tar archive instead"
-    tar -czf "$DIST_DIR/windows/metrics_render_sender.tar.gz" -C "$DIST_DIR/windows" "metrics_render_sender"
+if has_build_target "windows"; then
+    echo "Creating Windows zip archive..."
+    if command -v zip &> /dev/null; then
+        pushd "$DIST_DIR/windows" > /dev/null
+        zip -r "metrics_render_sender.zip" "metrics_render_sender"
+        popd > /dev/null
+    else
+        echo "Warning: zip command not found, creating tar archive instead"
+        tar -czf "$DIST_DIR/windows/metrics_render_sender.tar.gz" -C "$DIST_DIR/windows" "metrics_render_sender"
+    fi
 fi
 
 echo "Cleaning up temporary package directories..."
-rm -rf "$LINUX_PACKAGE"
+if has_build_target "linux"; then
+    rm -rf "$LINUX_PACKAGE"
+fi
 
 echo ""
 echo "Packages created successfully!"
 echo "Output files:"
-ls -la "$DIST_DIR/$LINUX_PACKAGE.tar.gz"
-if [ -f "$WINDOWS_ZIP_PATH" ]; then
-    ls -la "$WINDOWS_ZIP_PATH"
-elif [ -f "$DIST_DIR/windows/metrics_render_sender.tar.gz" ]; then
-    ls -la "$DIST_DIR/windows/metrics_render_sender.tar.gz"
+if has_build_target "linux"; then
+    ls -la "$DIST_DIR/$LINUX_PACKAGE.tar.gz"
+fi
+if has_build_target "windows"; then
+    if [ -f "$WINDOWS_ZIP_PATH" ]; then
+        ls -la "$WINDOWS_ZIP_PATH"
+    elif [ -f "$DIST_DIR/windows/metrics_render_sender.tar.gz" ]; then
+        ls -la "$DIST_DIR/windows/metrics_render_sender.tar.gz"
+    fi
 fi
 
 echo ""
 echo "Installation Instructions:"
 echo ""
-echo "Linux:"
-echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
-echo "2. Enter directory: cd $LINUX_PACKAGE"
-echo "3. Run in foreground: ./metricsrendersender"
-echo ""
-echo "Windows:"
-echo "1. Use directory: $WINDOWS_DIST_DIR"
-echo "2. Or extract zip: $WINDOWS_ZIP_PATH"
-echo "3. Run metricsrendersender.exe"
-echo "4. Use Web UI if needed: set METRICS_RENDER_SENDER_WEB=1 && metricsrendersender.exe --port 18086"
+if has_build_target "linux"; then
+    echo "Linux:"
+    echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
+    echo "2. Enter directory: cd $LINUX_PACKAGE"
+    echo "3. Run in foreground: ./metricsrendersender"
+    echo ""
+fi
+if has_build_target "windows"; then
+    echo "Windows:"
+    echo "1. Use directory: $WINDOWS_DIST_DIR"
+    echo "2. Or extract zip: $WINDOWS_ZIP_PATH"
+    echo "3. Run metricsrendersender.exe"
+    echo "4. Use Web UI if needed: set METRICS_RENDER_SENDER_WEB=1 && metricsrendersender.exe --port 18086"
+fi
 
 echo ""
 echo "Note: Configure the required output targets before production use"

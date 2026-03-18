@@ -12,6 +12,9 @@ DIST_DIR="${DIST_DIR:-dist}"
 BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
 SKIP_FRONTEND_BUILD="${SKIP_FRONTEND_BUILD:-0}"
 SKIP_GO_MOD_TIDY="${SKIP_GO_MOD_TIDY:-0}"
+WINDOWS_CC="${WINDOWS_CC:-x86_64-w64-mingw32-gcc}"
+WINDOWS_CXX="${WINDOWS_CXX:-x86_64-w64-mingw32-g++}"
+WINDOWS_PKG_CONFIG="${WINDOWS_PKG_CONFIG:-x86_64-w64-mingw32-pkg-config}"
 
 has_build_target() {
     local needle="$1"
@@ -62,7 +65,11 @@ build_frontend_assets() {
 
     echo "Building Vite frontend..."
     pushd "$FRONTEND_DIR" > /dev/null
-    npm install
+    if [ -f package-lock.json ]; then
+        npm ci --include=dev
+    else
+        npm install --include=dev
+    fi
     npm run build
     popd > /dev/null
 
@@ -100,17 +107,18 @@ compile_linux() {
 # Compile for Windows
 compile_windows() {
     echo "Compiling Windows version..."
-    if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
-        echo "Error: x86_64-w64-mingw32-gcc not found, cannot cross-compile windows with cgo"
+    if ! command -v "$WINDOWS_CC" &> /dev/null; then
+        echo "Error: $WINDOWS_CC not found, cannot compile windows with cgo"
         exit 1
     fi
-    if ! command -v x86_64-w64-mingw32-g++ &> /dev/null; then
-        echo "Error: x86_64-w64-mingw32-g++ not found, cannot cross-compile windows with cgo"
+    if ! command -v "$WINDOWS_CXX" &> /dev/null; then
+        echo "Error: $WINDOWS_CXX not found, cannot compile windows with cgo"
         exit 1
     fi
     cd src/metricsrendersender
-    CC=x86_64-w64-mingw32-gcc \
-    CXX=x86_64-w64-mingw32-g++ \
+    CC="$WINDOWS_CC" \
+    CXX="$WINDOWS_CXX" \
+    PKG_CONFIG="$WINDOWS_PKG_CONFIG" \
     GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
         -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \

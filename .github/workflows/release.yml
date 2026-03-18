@@ -14,9 +14,8 @@ permissions:
   contents: write
 
 jobs:
-  package-and-release:
+  package-linux:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,12 +35,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install packaging dependencies
+      - name: Install Linux packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc-mingw-w64-x86-64 \
-            g++-mingw-w64-x86-64 \
             libayatana-appindicator3-dev \
             libgtk-3-dev \
             libusb-1.0-0-dev \
@@ -63,10 +60,98 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build release packages
+      - name: Build Linux release package
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TARGETS: linux
         run: ./package.sh
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-assets
+          path: |
+            dist/metricsrendersender-linux-amd64-v*.tar.gz
+
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Set up MSYS2 build environment
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-go
+            mingw-w64-x86_64-nodejs
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-pkgconf
+            zip
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          version="${tag#v}"
+          if [ -z "$version" ] || [ "$version" = "$tag" ]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build Windows release package
+        shell: msys2 {0}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TARGETS: windows
+          WINDOWS_CC: gcc
+          WINDOWS_CXX: g++
+          WINDOWS_PKG_CONFIG: pkg-config
+          WINDOWS_OBJDUMP: objdump
+          MINGW_ROOT: /mingw64
+        run: ./package.sh
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: |
+            dist/windows/metrics_render_sender.zip
+            dist/windows/metrics_render_sender.tar.gz
+
+  release:
+    runs-on: ubuntu-24.04
+    needs:
+      - package-linux
+      - package-windows
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Resolve release tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -74,6 +159,5 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: |
-            dist/metricsrendersender-linux-amd64-v*.tar.gz
-            dist/windows/metrics_render_sender.zip
-            dist/windows/metrics_render_sender.tar.gz
+            release-assets/linux-release-assets/*
+            release-assets/windows-release-assets/*
