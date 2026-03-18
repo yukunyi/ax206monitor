@@ -128,7 +128,15 @@ Requirements:
 - Go
 - Node.js and npm
 - Linux desktop builds additionally need the systray/appindicator development libraries
+- AX206 USB builds additionally need `libusb-1.0` development headers
 - Windows cross-builds additionally need MinGW-w64
+
+On Debian or Ubuntu, the common build dependencies are:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libayatana-appindicator3-dev libgtk-3-dev libusb-1.0-0-dev
+```
 
 Build from source:
 
