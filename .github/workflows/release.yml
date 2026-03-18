@@ -134,7 +134,7 @@ jobs:
           name: windows-release-assets
           if-no-files-found: error
           path: |
-            dist/windows/metrics_render_sender.zip
+            dist/windows/metrics_render_sender-windows-amd64-v*.zip
 
   release:
     runs-on: ubuntu-24.04
@@ -146,6 +146,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "Release assets:"
+          ls -la release-assets
 
       - name: Resolve release tag
         id: version
@@ -163,5 +169,5 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: |
-            release-assets/linux-release-assets/*
-            release-assets/windows-release-assets/*
+            release-assets/*.tar.gz
+            release-assets/*.zip

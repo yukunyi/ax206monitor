@@ -5,8 +5,9 @@ set -e
 VERSION="${VERSION:-1.0.0}"
 LINUX_PACKAGE="metrics_render_sender-linux-amd64-v${VERSION}"
 DIST_DIR="dist"
-WINDOWS_DIST_DIR="$DIST_DIR/windows/metrics_render_sender"
-WINDOWS_ZIP_PATH="$DIST_DIR/windows/metrics_render_sender.zip"
+WINDOWS_PACKAGE="metrics_render_sender-windows-amd64-v${VERSION}"
+WINDOWS_DIST_DIR="$DIST_DIR/windows/$WINDOWS_PACKAGE"
+WINDOWS_ZIP_PATH="$DIST_DIR/windows/$WINDOWS_PACKAGE.zip"
 FRONTEND_DIR="frontend"
 EMBED_DIST_DIR="src/metrics_render_sender/webassets/webdist"
 BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
@@ -246,11 +247,11 @@ if has_build_target "windows"; then
     echo "Creating Windows zip archive..."
     if command -v zip &> /dev/null; then
         pushd "$DIST_DIR/windows" > /dev/null
-        zip -r "metrics_render_sender.zip" "metrics_render_sender"
+        zip -r "$WINDOWS_PACKAGE.zip" "$WINDOWS_PACKAGE"
         popd > /dev/null
     else
         echo "Warning: zip command not found, creating tar archive instead"
-        tar -czf "$DIST_DIR/windows/metrics_render_sender.tar.gz" -C "$DIST_DIR/windows" "metrics_render_sender"
+        tar -czf "$DIST_DIR/windows/$WINDOWS_PACKAGE.tar.gz" -C "$DIST_DIR/windows" "$WINDOWS_PACKAGE"
     fi
 fi
 
@@ -268,8 +269,8 @@ fi
 if has_build_target "windows"; then
     if [ -f "$WINDOWS_ZIP_PATH" ]; then
         ls -la "$WINDOWS_ZIP_PATH"
-    elif [ -f "$DIST_DIR/windows/metrics_render_sender.tar.gz" ]; then
-        ls -la "$DIST_DIR/windows/metrics_render_sender.tar.gz"
+    elif [ -f "$DIST_DIR/windows/$WINDOWS_PACKAGE.tar.gz" ]; then
+        ls -la "$DIST_DIR/windows/$WINDOWS_PACKAGE.tar.gz"
     fi
 fi
 

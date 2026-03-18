@@ -102,7 +102,7 @@ cd metrics_render_sender-linux-amd64-vX.Y.Z
 
 Windows:
 
-1. Download `metrics_render_sender.zip` from GitHub Releases
+1. Download `metrics_render_sender-windows-amd64-vX.Y.Z.zip` from GitHub Releases
 2. Extract the archive
 3. Run `metrics_render_sender.exe`
 
@@ -269,8 +269,8 @@ Artifacts:
 dist/metrics_render_sender-linux-amd64
 dist/metrics_render_sender-windows-amd64.exe
 dist/metrics_render_sender-linux-amd64-v1.0.0.tar.gz
-dist/windows/metrics_render_sender/
-dist/windows/metrics_render_sender.zip
+dist/windows/metrics_render_sender-windows-amd64-v1.0.0/
+dist/windows/metrics_render_sender-windows-amd64-v1.0.0.zip
 ```
 
 ## GitHub Release Automation
