@@ -1,8 +1,8 @@
 package main
 
 import (
-	"ax206monitor/rtsssource"
-	"ax206monitor/webui"
+	"metricsrendersender/rtsssource"
+	"metricsrendersender/webui"
 	"context"
 	"encoding/json"
 	"errors"
@@ -827,13 +827,13 @@ func getUserConfigPath() (string, error) {
 
 func getUserConfigDir() (string, error) {
 	if xdgDir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdgDir != "" {
-		return filepath.Join(xdgDir, "ax206monitor"), nil
+		return filepath.Join(xdgDir, "metricsrendersender"), nil
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".config", "ax206monitor"), nil
+	return filepath.Join(homeDir, ".config", "metricsrendersender"), nil
 }
 
 func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {

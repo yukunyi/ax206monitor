@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"ax206monitor/rtss"
+	"metricsrendersender/rtss"
 )
 
 type RTSSMonitorOption struct {

@@ -49,8 +49,8 @@ func StartTray(webController *WebServerProcess) (TrayHandle, error) {
 
 func (t *linuxTray) onReady() {
 	systray.SetIcon(trayIconPNG)
-	systray.SetTitle("AX206 Monitor")
-	systray.SetTooltip("AX206 Monitor")
+	systray.SetTitle("MetricsRenderSender")
+	systray.SetTooltip("MetricsRenderSender")
 
 	t.openWeb = systray.AddMenuItem("Open Web Server", "Start web configuration server")
 	t.openUI = systray.AddMenuItem("Open Web Editor", "Open web editor in browser")

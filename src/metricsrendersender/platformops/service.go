@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-const serviceName = "ax206monitor"
+const serviceName = "metricsrendersender"
 
 type ServiceInstallOptions struct {
 }
@@ -114,16 +114,16 @@ func UninstallService() error {
 
 func resolveServicePaths(rootMode bool, homeDir string) (binPath, servicePath, wantedBy string) {
 	if rootMode {
-		return "/usr/local/bin/ax206monitor", "/etc/systemd/system/ax206monitor.service", "multi-user.target"
+		return "/usr/local/bin/metricsrendersender", "/etc/systemd/system/metricsrendersender.service", "multi-user.target"
 	}
-	return filepath.Join(homeDir, ".local", "bin", "ax206monitor"),
-		filepath.Join(homeDir, ".config", "systemd", "user", "ax206monitor.service"),
+	return filepath.Join(homeDir, ".local", "bin", "metricsrendersender"),
+		filepath.Join(homeDir, ".config", "systemd", "user", "metricsrendersender.service"),
 		"default.target"
 }
 
 func buildServiceContent(binaryPath, homeDir, wantedBy string) string {
 	return fmt.Sprintf(`[Unit]
-Description=AX206 Monitor
+Description=MetricsRenderSender
 After=network.target
 
 [Service]

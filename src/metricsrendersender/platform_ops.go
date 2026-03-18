@@ -1,6 +1,6 @@
 package main
 
-import "ax206monitor/platformops"
+import "metricsrendersender/platformops"
 
 type ServiceInstallOptions = platformops.ServiceInstallOptions
 
@@ -11,10 +11,10 @@ func InstallService(options ServiceInstallOptions) error {
 	}
 	if result.UserMode {
 		logInfo("Installed user service: %s", result.ServicePath)
-		logInfo("Check status: systemctl --user status %s", "ax206monitor")
+		logInfo("Check status: systemctl --user status %s", "metricsrendersender")
 	} else {
 		logInfo("Installed system service: %s", result.ServicePath)
-		logInfo("Check status: systemctl status %s", "ax206monitor")
+		logInfo("Check status: systemctl status %s", "metricsrendersender")
 	}
 	return nil
 }
@@ -23,7 +23,7 @@ func UninstallService() error {
 	if err := platformops.UninstallService(); err != nil {
 		return err
 	}
-	logInfo("Service uninstalled: %s", "ax206monitor")
+	logInfo("Service uninstalled: %s", "metricsrendersender")
 	return nil
 }
 

@@ -2,16 +2,16 @@
 
 set -e
 
-VERSION="1.0.0"
-LINUX_PACKAGE="ax206monitor-linux-amd64-v${VERSION}"
+VERSION="${VERSION:-1.0.0}"
+LINUX_PACKAGE="metricsrendersender-linux-amd64-v${VERSION}"
 DIST_DIR="dist"
-WINDOWS_DIST_DIR="$DIST_DIR/windows/ax206_monitor"
-WINDOWS_ZIP_PATH="$DIST_DIR/windows/ax206_monitor.zip"
+WINDOWS_DIST_DIR="$DIST_DIR/windows/metrics_render_sender"
+WINDOWS_ZIP_PATH="$DIST_DIR/windows/metrics_render_sender.zip"
 FRONTEND_DIR="frontend"
-EMBED_DIST_DIR="src/ax206monitor/webassets/webdist"
+EMBED_DIST_DIR="src/metricsrendersender/webassets/webdist"
 
-echo "AX206 System Monitor - Package Script"
-echo "====================================="
+echo "MetricsRenderSender - Package Script"
+echo "===================================="
 echo "Version: $VERSION"
 echo "Linux Package: $LINUX_PACKAGE"
 echo "Windows Package Dir: $WINDOWS_DIST_DIR"
@@ -123,24 +123,24 @@ mkdir -p dist
 echo "Cleaning previous build files..."
 rm -rf dist/*
 
-cd src/ax206monitor
+cd src/metricsrendersender
 
 if [ ! -f go.mod ]; then
     echo "Initializing Go module..."
-    go mod init ax206monitor
+    go mod init metricsrendersender
 fi
 
 echo "Downloading dependencies..."
 go mod tidy
 
-cd ../../src/ax206monitor
+cd ../../src/metricsrendersender
 
 echo "Compiling Linux version..."
 GOOS=linux GOARCH=amd64 go build \
     -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     -trimpath \
     -buildmode=exe \
-    -o ../../dist/ax206monitor-linux-amd64 .
+    -o ../../dist/metricsrendersender-linux-amd64 .
 
 echo "Compiling Windows version..."
 if ! command -v x86_64-w64-mingw32-gcc &> /dev/null; then
@@ -156,36 +156,36 @@ CXX=x86_64-w64-mingw32-g++ \
 GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
     -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     -trimpath \
-    -o ../../dist/ax206monitor-windows-amd64.exe .
+    -o ../../dist/metricsrendersender-windows-amd64.exe .
 
 cd ../..
 
-chmod +x dist/ax206monitor-linux-amd64
+chmod +x dist/metricsrendersender-linux-amd64
 
 echo "Creating Linux package directory..."
 rm -rf "$LINUX_PACKAGE"
 mkdir -p "$LINUX_PACKAGE"
 
 echo "Copying files to Linux package directory..."
-cp dist/ax206monitor-linux-amd64 "$LINUX_PACKAGE/ax206monitor"
+cp dist/metricsrendersender-linux-amd64 "$LINUX_PACKAGE/metricsrendersender"
 if [ -f README.md ]; then
     cp README.md "$LINUX_PACKAGE/"
 fi
 
-chmod +x "$LINUX_PACKAGE/ax206monitor"
+chmod +x "$LINUX_PACKAGE/metricsrendersender"
 
 echo "Creating Windows package directory..."
 mkdir -p "$WINDOWS_DIST_DIR"
 
 echo "Copying files to Windows package directory..."
-cp dist/ax206monitor-windows-amd64.exe "$WINDOWS_DIST_DIR/ax206monitor.exe"
+cp dist/metricsrendersender-windows-amd64.exe "$WINDOWS_DIST_DIR/metricsrendersender.exe"
 if [ -f README.md ]; then
     cp README.md "$WINDOWS_DIST_DIR/"
 fi
 if [ -f docs/LIBRE_HARDWARE_MONITOR.md ]; then
     cp docs/LIBRE_HARDWARE_MONITOR.md "$WINDOWS_DIST_DIR/"
 fi
-copy_windows_runtime_deps "$WINDOWS_DIST_DIR/ax206monitor.exe" "$WINDOWS_DIST_DIR"
+copy_windows_runtime_deps "$WINDOWS_DIST_DIR/metricsrendersender.exe" "$WINDOWS_DIST_DIR"
 
 echo "Verifying Linux package contents..."
 echo "Linux package directory contents:"
@@ -201,11 +201,11 @@ tar -czf "dist/$LINUX_PACKAGE.tar.gz" "$LINUX_PACKAGE"
 echo "Creating Windows zip archive..."
 if command -v zip &> /dev/null; then
     pushd "$DIST_DIR/windows" > /dev/null
-    zip -r "ax206_monitor.zip" "ax206_monitor"
+    zip -r "metrics_render_sender.zip" "metrics_render_sender"
     popd > /dev/null
 else
     echo "Warning: zip command not found, creating tar archive instead"
-    tar -czf "$DIST_DIR/windows/ax206_monitor.tar.gz" -C "$DIST_DIR/windows" "ax206_monitor"
+    tar -czf "$DIST_DIR/windows/metrics_render_sender.tar.gz" -C "$DIST_DIR/windows" "metrics_render_sender"
 fi
 
 echo "Cleaning up temporary package directories..."
@@ -217,8 +217,8 @@ echo "Output files:"
 ls -la "$DIST_DIR/$LINUX_PACKAGE.tar.gz"
 if [ -f "$WINDOWS_ZIP_PATH" ]; then
     ls -la "$WINDOWS_ZIP_PATH"
-elif [ -f "$DIST_DIR/windows/ax206_monitor.tar.gz" ]; then
-    ls -la "$DIST_DIR/windows/ax206_monitor.tar.gz"
+elif [ -f "$DIST_DIR/windows/metrics_render_sender.tar.gz" ]; then
+    ls -la "$DIST_DIR/windows/metrics_render_sender.tar.gz"
 fi
 
 echo ""
@@ -227,13 +227,13 @@ echo ""
 echo "Linux:"
 echo "1. Extract: tar -xzf dist/$LINUX_PACKAGE.tar.gz"
 echo "2. Enter directory: cd $LINUX_PACKAGE"
-echo "3. Run in foreground: ./ax206monitor"
+echo "3. Run in foreground: ./metricsrendersender"
 echo ""
 echo "Windows:"
 echo "1. Use directory: $WINDOWS_DIST_DIR"
 echo "2. Or extract zip: $WINDOWS_ZIP_PATH"
-echo "3. Run ax206monitor.exe"
-echo "4. Use Web UI if needed: set AX206_MONITOR_WEB=1 && ax206monitor.exe --port 18086"
+echo "3. Run metricsrendersender.exe"
+echo "4. Use Web UI if needed: set METRICS_RENDER_SENDER_WEB=1 && metricsrendersender.exe --port 18086"
 
 echo ""
-echo "Note: Ensure AX206 device is connected with proper USB permissions before running"
+echo "Note: Configure the required output targets before production use"

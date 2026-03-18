@@ -1,120 +1,149 @@
-# AX206 Monitor
+# MetricsRenderSender
 
-A lightweight system monitoring tool for AX206 USB displays and memimg output.
+MetricsRenderSender collects runtime metrics, renders them into fixed-size images, and sends frames to one or more output targets.
 
-## Features
+The system is built around a simple pipeline:
 
-- Real-time system monitoring (CPU, Memory, GPU, Network, Temperature)
-- Multiple display layouts optimized for different screen sizes
-- Support for AX206 USB displays and memimg output
-- Desktop tray integration (Linux / Windows)
-- User auto-start toggle from tray menu
+1. Collect metrics from local or external sources
+2. Render those metrics into a configured image layout
+3. Send the generated frame to the targets that matter in your environment
 
-## Quick Installation
+## What It Does
+
+MetricsRenderSender is a runtime image delivery system for metrics dashboards.
+
+It is designed to answer one practical question:
+
+How do you turn live machine metrics into rendered frames and continuously deliver those frames to real output targets?
+
+In practical terms, the system can:
+
+- collect live system and hardware metrics from multiple sources
+- normalize those values into a unified monitor registry
+- render the current metric state into a fixed-size image frame
+- keep layouts, widgets, colors, thresholds, and preview behavior configurable
+- send the rendered frame to one or more output targets at runtime
+
+## Collect
+
+The collection layer can gather data from both local collectors and external providers.
+
+Supported collection capabilities include:
+
+- CPU usage, temperature, frequency, load, and runtime state
+- memory, swap, disk temperature, disk throughput, and network throughput
+- GPU usage, temperature, memory usage, and frequency
+- system time, host data, and derived values
+- Libre Hardware Monitor integration on Windows
+- CoolerControl integration
+- RTSS integration
+- custom monitors defined through `file`, `mixed`, `coolercontrol`, and `librehardwaremonitor`
+
+This gives the system a single metric space that rendering and output stages can consume without caring where the raw value came from.
+
+## Render
+
+The rendering layer turns the current metric snapshot into a deterministic image frame.
+
+Rendering capabilities include:
+
+- fixed-size dashboard images for device screens, HTTP targets, TCP targets, and previews
+- value widgets, labels, charts, gauges, tables, progress bars, and text blocks
+- configurable item placement, dimensions, typography, colors, thresholds, and styles
+- live preview rendering from the Go backend
+- reusable profiles, history rollback, and visual editing from the embedded Web UI
+
+Render is not treated as a side feature here. It is the stage that converts metric state into a sendable frame.
+
+## Output
+
+The output layer is responsible for delivering rendered frames to real destinations.
+
+Supported output targets:
+
+- `ax206usb`: direct delivery to AX206 USB displays
+- `memimg`: in-memory image target for preview or bridge scenarios
+- `httppush`: push rendered images to HTTP endpoints
+- `tcppush`: stream frames to TCP receivers in supported payload formats
+
+This is the project boundary now: not just showing metrics locally, but continuously sending rendered metric images to target systems.
+
+## End-to-End Capabilities
+
+- Real-time metric collection for CPU, memory, disks, GPU, network, temperatures, clock, load, and more
+- External data ingestion from Libre Hardware Monitor, CoolerControl, RTSS, and custom monitor definitions
+- Image rendering pipeline with value widgets, charts, gauges, labels, tables, and layout presets
+- Multi-target output support: `ax206usb`, `memimg`, `httppush`, `tcppush`
+- Embedded Web UI for visual editing, live preview, profile management, history rollback, and output configuration
+- Tray integration and autostart controls on Linux and Windows
+
+## Output Targets
+
+- `ax206usb`: send frames directly to AX206 USB displays
+- `memimg`: keep a local in-memory image target for preview or bridge workflows
+- `httppush`: push rendered images to HTTP endpoints
+- `tcppush`: stream frames to TCP receivers with multiple payload formats
+
+AX206 is now one output target among several, not the project boundary.
+
+## Installation
+
+### Install From GitHub Releases
+
+Release packages are published automatically by GitHub Actions when a tag such as `v1.2.3` is pushed.
+
+Linux:
 
 ```bash
-# Download and extract the latest release
-tar -xzf ax206monitor-linux-amd64-v1.0.0.tar.gz
-cd ax206monitor-linux-amd64-v1.0.0
-
-# Run directly
-./ax206monitor
+tar -xzf metricsrendersender-linux-amd64-vX.Y.Z.tar.gz
+cd metricsrendersender-linux-amd64-vX.Y.Z
+./metricsrendersender
 ```
 
-## Windows Package Layout
+Windows:
 
-After `./package.sh`, Windows release files are placed at:
+1. Download `metrics_render_sender.zip` from GitHub Releases
+2. Extract the archive
+3. Run `metricsrendersender.exe`
 
-```text
-dist/windows/ax206_monitor/
-├── ax206monitor.exe
-├── README.md
-└── (required DLL dependencies, e.g. libusb-1.0.dll)
-```
+If you need the Web UI immediately, start with:
 
-`package.sh` also generates `dist/windows/ax206_monitor.zip`.
-
-## Configuration
-
-Runtime config path: `$HOME/.config/ax206monitor/config.json`.
-
-Config directory layout:
-
-```text
-$HOME/.config/ax206monitor/
-├── config.json
-├── history/
-└── profiles/
-    ├── active-profile
-    └── *.json
-```
-
-### Custom monitors
-
-You can define custom monitor sources with `custom_monitors`:
-
-- `file`: read value from a sysfs file (supports millidegree auto conversion)
-- `mixed`: aggregate multiple monitors (`max` / `min` / `avg`)
-- `coolercontrol`: read sensor values from CoolerControl SSE stream (`/sse/status`, with `/status` fallback)
-
-```json
-{
-  "coolercontrol_url": "http://127.0.0.1:11987",
-  "custom_monitors": [
-    {
-      "name": "chipset_temp",
-      "label": "Chipset",
-      "type": "file",
-      "path": "/sys/class/hwmon/hwmon6/temp1_input"
-    },
-    {
-      "name": "board_temp_max",
-      "label": "Board Max",
-      "type": "mixed",
-      "sources": ["cpu_temp", "chipset_temp", "disk_default_temp"],
-      "aggregate": "max"
-    },
-    {
-      "name": "cc_gpu_temp",
-      "label": "CC GPU",
-      "type": "coolercontrol",
-      "device_uid": "GPU-1234",
-      "temp_name": "gpu_temp"
-    }
-  ]
-}
-```
-
-## Web Configuration UI
-
-AX206 Monitor now supports a web configuration backend (Echo) and Vite frontend editor.
-
-### Start web UI
+Linux:
 
 ```bash
-# Release mode: serve embedded frontend resources
-AX206_MONITOR_WEB=1 ./dist/ax206monitor-linux-amd64 --port 18086
-
-# Development mode: proxy frontend requests to Vite dev server
-AX206_MONITOR_DEV_URL=http://127.0.0.1:18087 ./dist/ax206monitor-linux-amd64 --port 18086
+METRICS_RENDER_SENDER_WEB=1 ./metricsrendersender --port 18086
 ```
 
-Open: `http://127.0.0.1:18086`
+Windows:
 
-Web UI features:
-- Configure all top-level `MonitorConfig` fields (including `font_sizes`, `colors`, `labels`, `units`, `color_thresholds`)
-- Configure `custom_monitors` (`file` / `mixed` / `coolercontrol`)
-- Visual editor for `items` (add/clone, select, drag-move, resize, align, property editing, preview)
-- Preview image is rendered by Go backend (`/api/preview`, PNG)
-- Save config to `$HOME/.config/ax206monitor/config.json`
-- Structured map editors for `colors`, `labels`, `units`, `color_thresholds`
-- Import/export JSON and rollback to history versions (`~/.config/ax206monitor/history`)
-- Multi-profile management (create/switch/save-as/delete profile)
-  - Profiles directory: `~/.config/ax206monitor/profiles`
-  - Active profile marker: `~/.config/ax206monitor/profiles/active-profile`
-  - Switching profile updates `~/.config/ax206monitor/config.json`
+```powershell
+$env:METRICS_RENDER_SENDER_WEB="1"
+.\metricsrendersender.exe --port 18086
+```
 
-### Frontend development
+### Install From Source
+
+Requirements:
+
+- Go
+- Node.js and npm
+- Linux desktop builds additionally need the systray/appindicator development libraries
+- Windows cross-builds additionally need MinGW-w64
+
+Build from source:
+
+```bash
+./build.sh
+./dist/metricsrendersender-linux-amd64 --list-monitors
+```
+
+Run the Web UI with the embedded frontend:
+
+```bash
+METRICS_RENDER_SENDER_WEB=1 ./dist/metricsrendersender-linux-amd64 --port 18086
+```
+
+Development mode with Vite:
 
 ```bash
 cd frontend
@@ -122,22 +151,138 @@ npm install
 npm run dev
 ```
 
-### Build embedding
-
-`build.sh` / `package.sh` now automatically:
-1. Build Vite frontend (`frontend/dist`)
-2. Sync built assets to `src/ax206monitor/webassets/webdist`
-3. Embed assets into Go binary via `go:embed`
-
-## Building from Source
+In another shell:
 
 ```bash
-git clone https://github.com/yukunyi/ax206monitor.git
-cd ax206monitor
-./build.sh
-./dist/ax206monitor-linux-amd64
+METRICS_RENDER_SENDER_DEV_URL=http://127.0.0.1:18087 ./dist/metricsrendersender-linux-amd64 --port 18086
+```
+
+Open `http://127.0.0.1:18086`.
+
+For frontend-only development, the Vite dev server reads:
+
+```bash
+METRICS_RENDER_SENDER_API_URL=http://127.0.0.1:18086
+```
+
+Legacy `AX206_MONITOR_*` environment variables are still accepted for compatibility.
+
+## Configuration Paths
+
+Runtime config path:
+
+```text
+$HOME/.config/metricsrendersender/config.json
+```
+
+Config directory layout:
+
+```text
+$HOME/.config/metricsrendersender/
+├── config.json
+├── history/
+└── profiles/
+    ├── active-profile
+    └── *.json
+```
+
+## Minimal Config Example
+
+```json
+{
+  "name": "demo",
+  "width": 480,
+  "height": 320,
+  "refresh_interval": 1000,
+  "outputs": [
+    { "type": "ax206usb", "enabled": true, "reconnect_ms": 3000 },
+    { "type": "httppush", "enabled": true, "url": "http://127.0.0.1:9000/frame", "method": "POST", "format": "jpeg", "quality": 85 }
+  ],
+  "items": [
+    { "type": "value", "monitor": "go_native.cpu.temp", "x": 5, "y": 5, "width": 150, "height": 60 },
+    { "type": "value", "monitor": "go_native.cpu.usage", "x": 160, "y": 5, "width": 150, "height": 60 },
+    { "type": "chart", "monitor": "net_default_download", "x": 5, "y": 70, "width": 305, "height": 80 }
+  ]
+}
+```
+
+## Data Sources
+
+Built-in and external data sources include:
+
+- Go-native collectors for system, CPU, memory, disk, network, and load metrics
+- Libre Hardware Monitor HTTP integration on Windows
+- CoolerControl sensor ingestion
+- RTSS integration
+- Custom monitors via `file`, `mixed`, `coolercontrol`, and `librehardwaremonitor`
+
+## Web UI
+
+The embedded Web UI provides:
+
+- Visual layout editing with drag, resize, clone, align, and preview
+- Output target configuration for HTTP push, TCP push, AX206 USB, and preview flows
+- Structured editors for style maps, thresholds, labels, units, and collector settings
+- Profile create/switch/save-as/delete workflows
+- Config import/export and rollback from history snapshots
+
+Frontend build output is embedded into:
+
+```text
+src/metricsrendersender/webassets/webdist
+```
+
+## CLI Notes
+
+Useful runtime flags:
+
+- `--list-monitors`: print all available monitor names and exit
+- `--dump N`: dump monitor values for `N` seconds
+- `--port 18086`: set Web UI listen port
+- `--add-udev-rule`: install the AX206 USB udev rule on Linux
+
+For AX206 on Linux, run the udev helper once if needed:
+
+```bash
+sudo ./dist/metricsrendersender-linux-amd64 --add-udev-rule
+```
+
+## Packaging
+
+Create release artifacts:
+
+```bash
+./package.sh
+```
+
+Artifacts:
+
+```text
+dist/metricsrendersender-linux-amd64
+dist/metricsrendersender-windows-amd64.exe
+dist/metricsrendersender-linux-amd64-v1.0.0.tar.gz
+dist/windows/metrics_render_sender/
+dist/windows/metrics_render_sender.zip
+```
+
+## GitHub Release Automation
+
+The repository includes a GitHub Actions workflow at `.github/workflows/release.yml`.
+
+It will:
+
+- build the frontend
+- package Linux and Windows release artifacts
+- create or update the matching GitHub Release
+- upload the generated archives as release assets
+
+The release workflow is triggered by pushing a tag in the form `v*`, for example:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
 ```
 
 ## Repository
 
-https://github.com/yukunyi/ax206monitor
+https://github.com/yukunyi/metricsrendersender

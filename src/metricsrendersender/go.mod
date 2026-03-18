@@ -1,4 +1,4 @@
-module ax206monitor
+module metricsrendersender
 
 go 1.21
 

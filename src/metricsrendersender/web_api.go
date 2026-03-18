@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ax206monitor/rtsssource"
+	"metricsrendersender/rtsssource"
 	"fmt"
 	"math"
 	"sort"

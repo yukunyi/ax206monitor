@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const linuxAutoStartFile = "ax206monitor.desktop"
+const linuxAutoStartFile = "metricsrendersender.desktop"
 
 func IsAutoStartEnabled() (bool, error) {
 	path, err := autoStartDesktopPath()
@@ -45,8 +45,8 @@ func EnableAutoStart() error {
 
 	content := fmt.Sprintf(`[Desktop Entry]
 Type=Application
-Name=AX206 Monitor
-Comment=AX206 Monitor
+Name=MetricsRenderSender
+Comment=MetricsRenderSender
 Exec=%q
 Terminal=false
 X-GNOME-Autostart-enabled=true

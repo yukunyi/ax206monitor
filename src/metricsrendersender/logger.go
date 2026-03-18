@@ -1,8 +1,8 @@
 package main
 
 import (
-	"ax206monitor/coolercontrol"
-	"ax206monitor/output"
+	"metricsrendersender/coolercontrol"
+	"metricsrendersender/output"
 	"fmt"
 	"io"
 	"os"

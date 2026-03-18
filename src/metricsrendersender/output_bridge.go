@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ax206monitor/output"
+	"metricsrendersender/output"
 	"image"
 )
 

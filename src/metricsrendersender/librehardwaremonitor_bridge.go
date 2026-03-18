@@ -1,6 +1,6 @@
 package main
 
-import "ax206monitor/librehardwaremonitor"
+import "metricsrendersender/librehardwaremonitor"
 
 type LibreHardwareMonitorNode = librehardwaremonitor.LibreHardwareMonitorNode
 type LibreHardwareMonitorSensorSnapshot = librehardwaremonitor.LibreHardwareMonitorSensorSnapshot

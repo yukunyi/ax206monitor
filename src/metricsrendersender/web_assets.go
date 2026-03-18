@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ax206monitor/webassets"
+	"metricsrendersender/webassets"
 	"io/fs"
 )
 

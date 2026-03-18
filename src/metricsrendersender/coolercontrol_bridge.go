@@ -1,6 +1,6 @@
 package main
 
-import "ax206monitor/coolercontrol"
+import "metricsrendersender/coolercontrol"
 
 type CoolerControlClient = coolercontrol.CoolerControlClient
 type CoolerControlMonitorOption = coolercontrol.CoolerControlMonitorOption

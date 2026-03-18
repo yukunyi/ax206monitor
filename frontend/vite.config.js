@@ -1,7 +1,10 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
-const apiTarget = process.env.AX206_MONITOR_API_URL || "http://127.0.0.1:18086";
+const apiTarget =
+  process.env.METRICS_RENDER_SENDER_API_URL ||
+  process.env.AX206_MONITOR_API_URL ||
+  "http://127.0.0.1:18086";
 
 export default defineConfig({
   plugins: [vue()],

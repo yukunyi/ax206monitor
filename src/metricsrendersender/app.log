@@ -83,3 +83,8 @@
 [ WARN 2026-03-17 17:21:35] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
 [ WARN 2026-03-17 17:21:35] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
 [ WARN 2026-03-17 17:21:35] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
+[ INFO 2026-03-18 12:04:23] [         log] log file: /home/user01/Workspace/golang/ax206monitor/src/metricsrendersender/app.log
+[ WARN 2026-03-18 12:04:23] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
+[ WARN 2026-03-18 12:04:23] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
+[ WARN 2026-03-18 12:04:23] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC
+[ WARN 2026-03-18 12:04:23] [        font] configured default font not found, fallback to system defaults: Noto Sans CJK SC

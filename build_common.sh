@@ -4,10 +4,10 @@
 
 set -e
 
-VERSION="1.0.0"
+VERSION="${VERSION:-1.0.0}"
 
 FRONTEND_DIR="frontend"
-EMBED_DIST_DIR="src/ax206monitor/webassets/webdist"
+EMBED_DIST_DIR="src/metricsrendersender/webassets/webdist"
 DIST_DIR="${DIST_DIR:-dist}"
 BUILD_TARGETS="${BUILD_TARGETS:-linux windows}"
 SKIP_FRONTEND_BUILD="${SKIP_FRONTEND_BUILD:-0}"
@@ -34,10 +34,10 @@ check_go() {
 
 # Initialize Go module if needed
 init_go_module() {
-    cd src/ax206monitor
+    cd src/metricsrendersender
     if [ ! -f go.mod ]; then
         echo "Initializing Go module..."
-        go mod init ax206monitor
+        go mod init metricsrendersender
     fi
     if [ "$SKIP_GO_MOD_TIDY" = "1" ]; then
         echo "Skipping dependency tidy"
@@ -87,14 +87,14 @@ clean_dist() {
 # Compile for Linux
 compile_linux() {
     echo "Compiling Linux version..."
-    cd src/ax206monitor
+    cd src/metricsrendersender
     GOOS=linux GOARCH=amd64 go build \
         -ldflags "-s -w -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
         -buildmode=exe \
-        -o ../../"$DIST_DIR"/ax206monitor-linux-amd64 .
+        -o ../../"$DIST_DIR"/metricsrendersender-linux-amd64 .
     cd ../..
-    chmod +x "$DIST_DIR"/ax206monitor-linux-amd64
+    chmod +x "$DIST_DIR"/metricsrendersender-linux-amd64
 }
 
 # Compile for Windows
@@ -108,13 +108,13 @@ compile_windows() {
         echo "Error: x86_64-w64-mingw32-g++ not found, cannot cross-compile windows with cgo"
         exit 1
     fi
-    cd src/ax206monitor
+    cd src/metricsrendersender
     CC=x86_64-w64-mingw32-gcc \
     CXX=x86_64-w64-mingw32-g++ \
     GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build \
         -ldflags "-s -w -H=windowsgui -X main.Version=$VERSION -X main.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
         -trimpath \
-        -o ../../"$DIST_DIR"/ax206monitor-windows-amd64.exe .
+        -o ../../"$DIST_DIR"/metricsrendersender-windows-amd64.exe .
     cd ../..
 }
 
@@ -149,10 +149,10 @@ show_build_results() {
     ls -la "$DIST_DIR"/
     echo ""
     echo "Usage Instructions:"
-    echo "Linux: ./$DIST_DIR/ax206monitor-linux-amd64"
-    echo "Windows: $DIST_DIR/ax206monitor-windows-amd64.exe"
+    echo "Linux: ./$DIST_DIR/metricsrendersender-linux-amd64"
+    echo "Windows: $DIST_DIR/metricsrendersender-windows-amd64.exe"
     echo ""
-    echo "Note: Ensure AX206 device is connected with proper USB permissions before running"
+    echo "Note: Configure at least one output target before production use"
 }
 
 # Common build steps

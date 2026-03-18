@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	AX206UdevRulePath = "/etc/udev/rules.d/99-ax206monitor.rules"
+	AX206UdevRulePath = "/etc/udev/rules.d/99-metricsrendersender.rules"
 	ax206VendorID     = "1908"
 	ax206ProductID    = "0102"
 )
@@ -67,7 +67,7 @@ func InstallAX206UdevRule() (UdevInstallResult, error) {
 func BuildSudoAddUdevRuleHint() string {
 	base := filepath.Base(strings.TrimSpace(os.Args[0]))
 	if base == "" || base == "." || base == string(filepath.Separator) {
-		base = "ax206monitor"
+		base = "metricsrendersender"
 	}
 	return fmt.Sprintf("sudo %s --add-udev-rule", base)
 }
@@ -96,7 +96,7 @@ func ResolveUdevRuleTargetUser() (string, error) {
 
 func BuildAX206UdevRuleContent(targetUser string) string {
 	return fmt.Sprintf(
-		"# Added by ax206monitor --add-udev-rule\n"+
+		"# Added by metricsrendersender --add-udev-rule\n"+
 			`SUBSYSTEM=="usb", ATTR{idVendor}=="%s", ATTR{idProduct}=="%s", OWNER="%s", MODE="0660"`+"\n",
 		ax206VendorID, ax206ProductID, targetUser,
 	)

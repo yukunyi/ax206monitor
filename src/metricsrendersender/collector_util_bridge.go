@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ax206monitor/monitorutil"
+	"metricsrendersender/monitorutil"
 	"time"
 )
 

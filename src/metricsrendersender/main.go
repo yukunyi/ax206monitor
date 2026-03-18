@@ -18,13 +18,13 @@ var (
 const (
 	RefreshInterval = 1 * time.Second
 	RetryInterval   = 3 * time.Second
-	RepositoryURL   = "https://github.com/yukunyi/ax206monitor"
+	RepositoryURL   = "https://github.com/yukunyi/metricsrendersender"
 )
 
 func main() {
 	initLogger()
 
-	logInfo("AX206 Monitor - Repository: %s", RepositoryURL)
+	logInfo("MetricsRenderSender - Repository: %s", RepositoryURL)
 
 	listMonitorsFlag := flag.Bool("list-monitors", false, "List all available monitor items and exit")
 	portFlag := flag.Int("port", 18086, "Web UI listen port (tray/env web mode)")
@@ -184,7 +184,7 @@ func main() {
 	renderWaitMax := config.GetRenderWaitMaxDuration()
 
 	logInfo("started, pid is %d", os.Getpid())
-	logInfo("AX206 Monitor v%s", Version)
+	logInfo("MetricsRenderSender v%s", Version)
 	logInfo(
 		"Config: %s | Output: %s | Tick: %v | RenderWaitMax: %v",
 		configSource,
@@ -209,10 +209,19 @@ func main() {
 }
 
 func resolveWebModeFromEnv() (bool, bool, string) {
-	devURL := strings.TrimSpace(os.Getenv("AX206_MONITOR_DEV_URL"))
-	webEnabled := parseEnvBool(os.Getenv("AX206_MONITOR_WEB"))
+	devURL := firstNonEmptyEnv("METRICS_RENDER_SENDER_DEV_URL", "AX206_MONITOR_DEV_URL")
+	webEnabled := parseEnvBool(firstNonEmptyEnv("METRICS_RENDER_SENDER_WEB", "AX206_MONITOR_WEB"))
 	webDevEnabled := devURL != ""
 	return webEnabled, webDevEnabled, devURL
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parseEnvBool(raw string) bool {
