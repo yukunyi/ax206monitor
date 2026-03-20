@@ -7,11 +7,10 @@ import (
 )
 
 type FullChartRenderer struct {
-	history *renderHistoryStore
 }
 
-func NewFullChartRenderer(history *renderHistoryStore) *FullChartRenderer {
-	return &FullChartRenderer{history: history}
+func NewFullChartRenderer() *FullChartRenderer {
+	return &FullChartRenderer{}
 }
 
 func (r *FullChartRenderer) GetType() string {
@@ -44,21 +43,18 @@ func (r *FullChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, "", textColor, valueColor)
 	drawFullHeaderValueWithUnit(dc, headerRect, valueFace, unitFace, valueText, unitText, valueColor, unitColor)
 
-	r.drawBody(dc, item, value, numberValue, lineColor, bodyRect, config)
+	r.drawBody(dc, item, frame, value, numberValue, lineColor, bodyRect, config)
 	drawBaseItemBorder(dc, item, config, cardRadius)
 	return nil
 }
 
-func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
-	history := appendRenderHistory(r.history, item, numberValue)
+func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, frame *RenderFrame, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
+	history := appendFrameRenderHistory(frame, item, numberValue)
 	if len(history) == 0 {
 		return
 	}
 
-	minValue, maxValue := resolveEffectiveMinMax(item, value, historyMin(history), historyMax(history))
-	if maxValue <= minValue {
-		maxValue = minValue + 1
-	}
+	minValue, maxValue := resolveEffectiveMinMax(item, value, history, numberValue)
 
 	chartAreaBg := item.runtime.fullChart.chartAreaBg
 	chartAreaBorder := item.runtime.fullChart.chartAreaBorder

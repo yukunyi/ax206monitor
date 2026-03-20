@@ -175,11 +175,15 @@ function tcpPushStatusEntry(type) {
   return stats[String(type || "").trim().toLowerCase()] || null;
 }
 
+function tcpPushBusyWait(entry) {
+  return !!(entry?.busy_wait || entry?.probe_mode);
+}
+
 function tcpPushStatusTagType(type) {
   const entry = tcpPushStatusEntry(type);
   if (!entry) return "default";
   if (entry.can_send) return "success";
-  if (entry.probe_mode) return "warning";
+  if (tcpPushBusyWait(entry)) return "warning";
   if (entry.connected) return "info";
   return "error";
 }
@@ -188,7 +192,7 @@ function tcpPushStatusLabel(type) {
   const entry = tcpPushStatusEntry(type);
   if (!entry) return "无状态";
   if (entry.can_send) return "可发送";
-  if (entry.probe_mode) return "探测中";
+  if (tcpPushBusyWait(entry)) return "忙等待";
   if (entry.connected) return "已连接";
   return "未连接";
 }
@@ -721,6 +725,15 @@ function formatSuccessCodes(codes) {
                     size="small"
                     :show-button="false"
                     @update:value="(v) => patchOutputByType(outputAdvancedType, { idle_timeout_sec: Number(v || 120) })"
+                  />
+                </n-form-item-gi>
+                <n-form-item-gi label="Busy Check MS">
+                  <DeferredInputNumber
+                    :value="Number(outputEntryValue(outputAdvancedType, 'busy_check_ms', 1000))"
+                    :disabled="outputFieldDisabled(outputAdvancedType)"
+                    size="small"
+                    :show-button="false"
+                    @update:value="(v) => patchOutputByType(outputAdvancedType, { busy_check_ms: Number(v || 1000) })"
                   />
                 </n-form-item-gi>
                 <n-form-item-gi label="Success Codes">

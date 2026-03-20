@@ -132,6 +132,7 @@ func TestNormalizeConfigsPreservesTCPPushBinaryFields(t *testing.T) {
 		UploadToken:    " token ",
 		TimeoutMS:      80,
 		IdleTimeoutSec: 2,
+		BusyCheckMS:    20,
 		FileName:       " frame.jpg ",
 		SuccessCodes:   []int{202, 200, 202},
 	}})
@@ -151,6 +152,9 @@ func TestNormalizeConfigsPreservesTCPPushBinaryFields(t *testing.T) {
 	}
 	if cfg.IdleTimeoutSec != 5 {
 		t.Fatalf("unexpected idle timeout: %#v", cfg)
+	}
+	if cfg.BusyCheckMS != 100 {
+		t.Fatalf("unexpected busy check: %#v", cfg)
 	}
 	if cfg.UploadToken != "token" {
 		t.Fatalf("unexpected upload token: %#v", cfg)

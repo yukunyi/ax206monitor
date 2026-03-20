@@ -1,17 +1,8 @@
 import { normalizeThresholdGroups } from "./config_normalizer";
 import { normalizeMonitorName } from "./monitor_aliases";
+import { inferUnitRangeProfile, normalizeRangeUnitToken } from "./range_profiles";
 
 const AUTO_RANGE_COLORS = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-const TEMPERATURE_GROUP = Object.freeze({
-  name: "temperature_30_110",
-  min: 30,
-  max: 110,
-});
-const PERCENT_GROUP = Object.freeze({
-  name: "percent_0_100",
-  min: 0,
-  max: 100,
-});
 const THROUGHPUT_MAX_BYTES_PER_SEC = 100 * 1024 * 1024;
 const RPM_GROUP_BASE = Object.freeze({
   family: "rpm",
@@ -28,10 +19,6 @@ function normalizeSearchText(value) {
   return normalizeText(value).toLowerCase();
 }
 
-function normalizeUnitToken(unit) {
-  return normalizeSearchText(unit).replace(/\s+/g, "");
-}
-
 function parseFiniteNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -44,12 +31,12 @@ function formatNumberToken(value) {
 }
 
 function isPercentUnit(unit) {
-  const normalized = normalizeUnitToken(unit);
+  const normalized = normalizeRangeUnitToken(unit);
   return normalized === "%" || normalized === "percent" || normalized === "percentage" || normalized === "pct";
 }
 
 function isTemperatureCandidate(unit, name, label) {
-  const normalizedUnit = normalizeUnitToken(unit);
+  const normalizedUnit = normalizeRangeUnitToken(unit);
   if (normalizedUnit === "°c" || normalizedUnit === "℃" || normalizedUnit === "celsius" || normalizedUnit === "c") {
     return true;
   }
@@ -61,7 +48,7 @@ function isTemperatureCandidate(unit, name, label) {
 }
 
 function isPercentCandidate(unit, name, label) {
-  const normalizedUnit = normalizeUnitToken(unit);
+  const normalizedUnit = normalizeRangeUnitToken(unit);
   if (isPercentUnit(normalizedUnit)) return true;
   if (normalizedUnit) return false;
   const text = `${normalizeSearchText(name)} ${normalizeSearchText(label)}`;
@@ -69,7 +56,7 @@ function isPercentCandidate(unit, name, label) {
 }
 
 function throughputUnitScale(unit) {
-  switch (normalizeUnitToken(unit)) {
+  switch (normalizeRangeUnitToken(unit)) {
     case "b/s":
       return 1;
     case "kb/s":
@@ -90,7 +77,7 @@ function throughputUnitScale(unit) {
 }
 
 function frequencyUnitScale(unit) {
-  switch (normalizeUnitToken(unit)) {
+  switch (normalizeRangeUnitToken(unit)) {
     case "hz":
       return 1;
     case "khz":
@@ -121,7 +108,7 @@ function inferThroughputSpec(unit) {
 }
 
 function inferRPMSpec(unit, name, label) {
-  const normalizedUnit = normalizeUnitToken(unit);
+  const normalizedUnit = normalizeRangeUnitToken(unit);
   if (normalizedUnit === "rpm") {
     return buildNamedRangeSpec(RPM_GROUP_BASE.family, RPM_GROUP_BASE.min, RPM_GROUP_BASE.max);
   }
@@ -203,11 +190,15 @@ function collectMonitorMeta({ config, snapshot, monitorOptions }) {
 function inferThresholdSpec(candidate) {
   if (!candidate || !candidate.name) return null;
   const { name, label, unit, min, max } = candidate;
+  const unitProfile = inferUnitRangeProfile(unit);
+  if (unitProfile) {
+    return unitProfile;
+  }
   if (isTemperatureCandidate(unit, name, label)) {
-    return TEMPERATURE_GROUP;
+    return inferUnitRangeProfile("°C");
   }
   if (isPercentCandidate(unit, name, label)) {
-    return PERCENT_GROUP;
+    return inferUnitRangeProfile("%");
   }
   const throughputSpec = inferThroughputSpec(unit);
   if (throughputSpec) {

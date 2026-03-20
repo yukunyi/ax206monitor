@@ -24,7 +24,8 @@ func (p *ProgressRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rende
 		return nil
 	}
 
-	minValue, maxValue := resolveEffectiveMinMax(item, value, 0, 100)
+	history := appendFrameRenderHistory(frame, item, val)
+	minValue, maxValue := resolveEffectiveMinMax(item, value, history, val)
 	if val < minValue {
 		val = minValue
 	}

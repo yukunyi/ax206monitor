@@ -26,7 +26,6 @@ func NewCustomCollector(cfg *MonitorConfig, lookup func(string) *CollectItem) *C
 		lookup:        lookup,
 		items:         make(map[string]customEntry),
 	}
-	collector.ApplyConfig(cfg)
 	return collector
 }
 
@@ -61,7 +60,16 @@ func (c *CustomCollector) rebuildItemsLocked() {
 
 func (c *CustomCollector) GetAllItems() map[string]*CollectItem {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
+	entries := make([]customEntry, 0, len(c.items))
+	for _, entry := range c.items {
+		entries = append(entries, entry)
+	}
+	lookup := c.lookup
+	c.mu.RUnlock()
+
+	for _, entry := range entries {
+		refreshCustomItemStaticUnit(entry, lookup)
+	}
 	return c.ItemsSnapshot()
 }
 
@@ -166,9 +174,6 @@ func (c *CustomCollector) UpdateItems() error {
 				item.SetAvailable(false)
 				continue
 			}
-			if strings.TrimSpace(custom.Unit) == "" && strings.TrimSpace(value.Unit) != "" {
-				item.SetUnit(value.Unit)
-			}
 			item.SetValue(value.Value)
 			item.SetAvailable(true)
 		default:
@@ -177,6 +182,33 @@ func (c *CustomCollector) UpdateItems() error {
 	}
 
 	return nil
+}
+
+func refreshCustomItemStaticUnit(entry customEntry, lookup func(string) *CollectItem) {
+	item := entry.item
+	if item == nil {
+		return
+	}
+	custom := entry.cfg
+	if strings.TrimSpace(custom.Unit) != "" || lookup == nil {
+		return
+	}
+	switch normalizeCustomMonitorType(custom.Type) {
+	case "coolercontrol", "librehardwaremonitor":
+		sourceKey := strings.TrimSpace(custom.Source)
+		if sourceKey == "" {
+			return
+		}
+		source := lookup(sourceKey)
+		if source == nil {
+			return
+		}
+		value := source.GetValue()
+		if value == nil || strings.TrimSpace(value.Unit) == "" {
+			return
+		}
+		item.SetUnit(value.Unit)
+	}
 }
 
 func buildCustomCollectItem(

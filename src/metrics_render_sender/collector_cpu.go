@@ -76,7 +76,6 @@ func (c *GoNativeCPUCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	_ = c.GetAllItems()
 
 	now := time.Now()
 	c.maybeRefreshTemp(now)

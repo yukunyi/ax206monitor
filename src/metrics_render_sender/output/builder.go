@@ -41,6 +41,7 @@ type OutputConfig struct {
 	UploadToken    string         `json:"upload_token,omitempty"`
 	TimeoutMS      int            `json:"timeout_ms,omitempty"`
 	IdleTimeoutSec int            `json:"idle_timeout_sec,omitempty"`
+	BusyCheckMS    int            `json:"busy_check_ms,omitempty"`
 	FileField      string         `json:"file_field,omitempty"`
 	FileName       string         `json:"file_name,omitempty"`
 	FormFields     []HTTPKeyValue `json:"form_fields,omitempty"`
@@ -132,6 +133,19 @@ func normalizeTCPPushIdleTimeoutSec(idleTimeoutSec int) int {
 		return 3600
 	}
 	return idleTimeoutSec
+}
+
+func normalizeTCPPushBusyCheckMS(busyCheckMS int) int {
+	if busyCheckMS <= 0 {
+		return 1000
+	}
+	if busyCheckMS < 100 {
+		return 100
+	}
+	if busyCheckMS > 600000 {
+		return 600000
+	}
+	return busyCheckMS
 }
 
 func normalizeHTTPPushQuality(quality int) int {
@@ -278,6 +292,7 @@ func normalizeSingleConfig(raw OutputConfig) (OutputConfig, bool) {
 		cfg.UploadToken = strings.TrimSpace(raw.UploadToken)
 		cfg.TimeoutMS = normalizeHTTPPushTimeoutMS(raw.TimeoutMS)
 		cfg.IdleTimeoutSec = normalizeTCPPushIdleTimeoutSec(raw.IdleTimeoutSec)
+		cfg.BusyCheckMS = normalizeTCPPushBusyCheckMS(raw.BusyCheckMS)
 		cfg.FileName = normalizeHTTPPushFileName(raw.FileName)
 		cfg.SuccessCodes = normalizeHTTPPushSuccessCodes(raw.SuccessCodes)
 		return cfg, true

@@ -22,6 +22,7 @@ type RenderManager struct {
 	renderers map[string]RenderItem
 	fontCache *FontCache
 	registry  *CollectorManager
+	history   *renderHistoryStore
 }
 
 type renderFullCardRuntime struct {
@@ -142,12 +143,14 @@ type RenderFrame struct {
 	registry *CollectorManager
 	monitors map[string]*RenderMonitorSnapshot
 	items    map[*ItemConfig]renderItemState
+	history  *renderHistoryStore
 }
 
-func newRenderFrame(registry *CollectorManager, renderers map[string]RenderItem, config *MonitorConfig) *RenderFrame {
+func newRenderFrame(registry *CollectorManager, history *renderHistoryStore, renderers map[string]RenderItem, config *MonitorConfig) *RenderFrame {
 	frame := &RenderFrame{
 		registry: registry,
 		monitors: make(map[string]*RenderMonitorSnapshot),
+		history:  history,
 	}
 	if registry == nil || config == nil || len(config.Items) == 0 {
 		frame.items = make(map[*ItemConfig]renderItemState)
@@ -251,6 +254,7 @@ func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderM
 		renderers: make(map[string]RenderItem),
 		fontCache: fontCache,
 		registry:  registry,
+		history:   newRenderHistoryStore(),
 	}
 
 	rm.RegisterRenderer(NewValueRenderer())
@@ -262,8 +266,7 @@ func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderM
 	rm.RegisterRenderer(NewCircleRenderer())
 	rm.RegisterRenderer(NewLabelTextRenderer(itemTypeLabelText))
 
-	fullHistory := newRenderHistoryStore()
-	rm.RegisterRenderer(NewFullChartRenderer(fullHistory))
+	rm.RegisterRenderer(NewFullChartRenderer())
 	rm.RegisterRenderer(NewFullTableRenderer())
 	rm.RegisterRenderer(NewFullProgressRenderer(itemTypeFullProgressH, false))
 	rm.RegisterRenderer(NewFullProgressRenderer(itemTypeFullProgressV, true))
@@ -280,7 +283,7 @@ func (rm *RenderManager) Render(config *MonitorConfig) (*RenderResult, error) {
 	dc := gg.NewContext(config.Width, config.Height)
 	dc.SetColor(parseColor(config.GetDefaultBackgroundColor()))
 	dc.Clear()
-	frame := newRenderFrame(rm.registry, rm.renderers, config)
+	frame := newRenderFrame(rm.registry, rm.history, rm.renderers, config)
 
 	for idx := range config.Items {
 		item := &config.Items[idx]

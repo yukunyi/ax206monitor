@@ -44,7 +44,7 @@ func (r *FullProgressRenderer) Render(dc *gg.Context, item *ItemConfig, frame *R
 	unitColor := resolveMonitorUnitColor(item, monitor.name, value, numberValue, config)
 
 	if r.vertical {
-		r.drawVertical(dc, item, fontCache, value, numberValue, labelText, valueText, unitText, lineColor, textColor, valueColor, unitColor, config)
+		r.drawVertical(dc, item, frame, fontCache, value, numberValue, labelText, valueText, unitText, lineColor, textColor, valueColor, unitColor, config)
 		drawBaseItemBorder(dc, item, config, cardRadius)
 		return nil
 	}
@@ -54,13 +54,13 @@ func (r *FullProgressRenderer) Render(dc *gg.Context, item *ItemConfig, frame *R
 	unitFace, _ := resolveRoleFontFace(fontCache, item, config, TextRoleUnit, 14, 8)
 	drawFullHeader(dc, item, config, headerRect, labelFace, valueFace, labelText, "", textColor, valueColor)
 	drawFullHeaderValueWithUnit(dc, headerRect, valueFace, unitFace, valueText, unitText, valueColor, unitColor)
-	r.drawHorizontalBody(dc, item, value, numberValue, lineColor, bodyRect, config)
+	r.drawHorizontalBody(dc, item, frame, value, numberValue, lineColor, bodyRect, config)
 	drawBaseItemBorder(dc, item, config, cardRadius)
 	return nil
 }
 
-func (r *FullProgressRenderer) drawHorizontalBody(dc *gg.Context, item *ItemConfig, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
-	progress, style, barRadius, barHeight, trackColor, segments, segmentGap := resolveFullProgressLayout(item, value, numberValue, config)
+func (r *FullProgressRenderer) drawHorizontalBody(dc *gg.Context, item *ItemConfig, frame *RenderFrame, value *CollectValue, numberValue float64, lineColor string, body fullRect, config *MonitorConfig) {
+	progress, style, barRadius, barHeight, trackColor, segments, segmentGap := resolveFullProgressLayout(item, frame, value, numberValue, config)
 	if barHeight <= 0 || barHeight > body.h {
 		barHeight = body.h
 	}
@@ -84,6 +84,7 @@ func (r *FullProgressRenderer) drawHorizontalBody(dc *gg.Context, item *ItemConf
 func (r *FullProgressRenderer) drawVertical(
 	dc *gg.Context,
 	item *ItemConfig,
+	frame *RenderFrame,
 	fontCache *FontCache,
 	value *CollectValue,
 	numberValue float64,
@@ -96,7 +97,7 @@ func (r *FullProgressRenderer) drawVertical(
 	unitColor string,
 	config *MonitorConfig,
 ) {
-	progress, style, barRadius, barWidth, trackColor, segments, segmentGap := resolveFullProgressLayout(item, value, numberValue, config)
+	progress, style, barRadius, barWidth, trackColor, segments, segmentGap := resolveFullProgressLayout(item, frame, value, numberValue, config)
 	contentPaddingX, contentPaddingY := resolveContentPaddingXY(item, config, 2, 2, 0, 0)
 
 	valueFace, valueFontSize := resolveRoleFontFace(fontCache, item, config, TextRoleValue, 18, 8)
@@ -183,8 +184,9 @@ func (r *FullProgressRenderer) drawVertical(
 	drawBaseMetricAnchoredText(dc, textFace, labelText, labelRect.x+labelRect.w/2, labelRect.y+labelRect.h/2, 0.5)
 }
 
-func resolveFullProgressLayout(item *ItemConfig, value *CollectValue, numberValue float64, config *MonitorConfig) (float64, string, float64, float64, string, int, float64) {
-	minValue, maxValue := resolveEffectiveMinMax(item, value, 0, 100)
+func resolveFullProgressLayout(item *ItemConfig, frame *RenderFrame, value *CollectValue, numberValue float64, config *MonitorConfig) (float64, string, float64, float64, string, int, float64) {
+	history := appendFrameRenderHistory(frame, item, numberValue)
+	minValue, maxValue := resolveEffectiveMinMax(item, value, history, numberValue)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 
 	style := item.runtime.fullProgress.style

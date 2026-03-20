@@ -35,7 +35,7 @@ const (
 	tcpPushMaxHeight = 480
 	tcpPushMaxPixels = 6000000
 
-	tcpPushAvailabilityProbeInterval = time.Second
+	tcpPushSocketBufferBytes = 4 * 1024 * 1024
 )
 
 type TCPPushOutputHandler struct {
@@ -60,14 +60,13 @@ type TCPPushOutputHandler struct {
 	lastErrorAt time.Time
 
 	ackLogMu          sync.Mutex
-	ackLogged         bool
 	lastAckStatusCode int
 	lastAckStage      string
 
 	availabilityMu               sync.Mutex
-	availabilityProbeMode        bool
+	availabilityBusyWait         bool
 	availabilityInitialized      bool
-	nextAvailabilityProbeAt      time.Time
+	nextAvailabilityCheckAt      time.Time
 	lastAvailabilityStateLogged  bool
 	lastAvailabilityCanSend      bool
 	lastAvailabilityReason       string
@@ -200,6 +199,10 @@ func (h *TCPPushOutputHandler) push(frame *OutputFrame) {
 	err := h.doRequestFromFrame(frame)
 	recordTCPPushRuntime(h.typeName, time.Since(startedAt), err)
 	if err != nil {
+		if isTimeoutError(err) {
+			h.logError("push timeout: %v", err)
+			return
+		}
 		h.logError("push failed: %v", err)
 	}
 }
@@ -225,8 +228,8 @@ func (h *TCPPushOutputHandler) doRequestFromFrame(frame *OutputFrame) error {
 		h.logAckSuccess(response)
 		return nil
 	}
-	if requiresAvailabilityProbe(response) {
-		h.enterAvailabilityProbeMode(response)
+	if requiresBusyWait(response) {
+		h.enterBusyWaitMode(response)
 		return nil
 	}
 	return buildTCPPushStatusError(response)
@@ -307,17 +310,37 @@ func (h *TCPPushOutputHandler) doRequest(request *tcpPushRequest) (*tcpPushRespo
 }
 
 func (h *TCPPushOutputHandler) ensurePushAllowed() (bool, error) {
-	if !h.shouldQueryAvailabilityNow() {
-		return true, nil
+	shouldQuery, canSend := h.resolveAvailabilityGate()
+	if !shouldQuery {
+		return canSend, nil
 	}
 
 	availability, err := h.queryAvailability()
 	if err != nil {
 		return false, err
 	}
-	canSend := availability != nil && availability.Available && availability.ShouldSendFrame
+	canSend = availability != nil && availability.Available && availability.ShouldSendFrame
 	h.updateAvailabilityState(availability, canSend)
 	return canSend, nil
+}
+
+func (h *TCPPushOutputHandler) resolveAvailabilityGate() (bool, bool) {
+	h.availabilityMu.Lock()
+	defer h.availabilityMu.Unlock()
+
+	if !h.availabilityInitialized {
+		return true, false
+	}
+	if !h.availabilityBusyWait {
+		return false, true
+	}
+	if h.nextAvailabilityCheckAt.IsZero() {
+		return true, false
+	}
+	if time.Now().Before(h.nextAvailabilityCheckAt) {
+		return false, false
+	}
+	return true, false
 }
 
 func (h *TCPPushOutputHandler) queryAvailability() (*tcpPushAvailabilityResponse, error) {
@@ -341,30 +364,24 @@ func (h *TCPPushOutputHandler) queryAvailability() (*tcpPushAvailabilityResponse
 	return availability, nil
 }
 
-func (h *TCPPushOutputHandler) shouldQueryAvailabilityNow() bool {
-	h.availabilityMu.Lock()
-	defer h.availabilityMu.Unlock()
-	if !h.availabilityProbeMode {
-		return false
-	}
-	if h.nextAvailabilityProbeAt.IsZero() {
-		return true
-	}
-	return !time.Now().Before(h.nextAvailabilityProbeAt)
+func (h *TCPPushOutputHandler) availabilityCheckInterval() time.Duration {
+	return time.Duration(normalizeTCPPushBusyCheckMS(h.cfg.BusyCheckMS)) * time.Millisecond
 }
 
-func (h *TCPPushOutputHandler) enterAvailabilityProbeMode(response *tcpPushResponse) {
+func (h *TCPPushOutputHandler) enterBusyWaitMode(response *tcpPushResponse) {
 	h.availabilityMu.Lock()
-	h.availabilityProbeMode = true
-	h.nextAvailabilityProbeAt = time.Now()
+	h.availabilityBusyWait = true
+	h.nextAvailabilityCheckAt = time.Now().Add(h.availabilityCheckInterval())
 	h.availabilityMu.Unlock()
-	h.logAvailabilityProbeMode(response)
+	h.logBusyWaitMode(response)
 	h.publishTCPPushStats(true, nil, false)
 }
 
 func (h *TCPPushOutputHandler) updateAvailabilityState(availability *tcpPushAvailabilityResponse, canSend bool) {
 	h.availabilityMu.Lock()
 
+	wasInitialized := h.availabilityInitialized
+	wasBusyWait := h.availabilityBusyWait
 	reason := ""
 	lowerPriorityMode := ""
 	if availability != nil {
@@ -384,59 +401,66 @@ func (h *TCPPushOutputHandler) updateAvailabilityState(availability *tcpPushAvai
 	h.lastAvailabilityPriorityMode = lowerPriorityMode
 
 	if canSend {
-		h.availabilityProbeMode = false
-		h.nextAvailabilityProbeAt = time.Time{}
+		h.availabilityBusyWait = false
+		h.nextAvailabilityCheckAt = time.Time{}
 	} else {
-		h.availabilityProbeMode = true
-		h.nextAvailabilityProbeAt = time.Now().Add(tcpPushAvailabilityProbeInterval)
+		h.availabilityBusyWait = true
+		h.nextAvailabilityCheckAt = time.Now().Add(h.availabilityCheckInterval())
 	}
 
-	if stateChanged {
-		h.logAvailabilityStateLocked(availability, canSend)
+	shouldLogTransition := (!wasInitialized && !canSend) || (wasInitialized && (wasBusyWait != h.availabilityBusyWait))
+	if stateChanged && shouldLogTransition {
+		h.logAvailabilityTransitionLocked(availability, canSend, wasBusyWait)
 	}
 	h.availabilityMu.Unlock()
 	h.publishTCPPushStats(true, availability, canSend)
 }
 
 func writeTCPPushRequest(writer io.Writer, request *tcpPushRequest) error {
+	packet, err := encodeTCPPushRequest(request)
+	if err != nil {
+		return err
+	}
+	return writeAll(writer, packet)
+}
+
+func encodeTCPPushRequest(request *tcpPushRequest) ([]byte, error) {
 	if request == nil {
-		return fmt.Errorf("request is nil")
+		return nil, fmt.Errorf("request is nil")
 	}
 	if len(request.Token) > 0xffff {
-		return fmt.Errorf("token is too large: %d", len(request.Token))
+		return nil, fmt.Errorf("token is too large: %d", len(request.Token))
 	}
 	if len(request.FileName) > 0xffff {
-		return fmt.Errorf("file name is too large: %d", len(request.FileName))
+		return nil, fmt.Errorf("file name is too large: %d", len(request.FileName))
 	}
 	if len(request.Payload) > tcpPushMaxBytes {
-		return fmt.Errorf("payload exceeds limit: %d", len(request.Payload))
+		return nil, fmt.Errorf("payload exceeds limit: %d", len(request.Payload))
 	}
 
-	header := make([]byte, tcpPushRequestHeaderBytes)
-	copy(header[0:4], tcpPushRequestMagic)
-	header[4] = tcpPushProtocolVersion
-	header[5] = tcpPushRequestHeaderBytes
-	header[6] = request.Opcode
-	header[7] = request.Codec
-	binary.LittleEndian.PutUint16(header[8:10], 0)
-	binary.LittleEndian.PutUint32(header[10:14], request.Seq)
-	binary.LittleEndian.PutUint32(header[14:18], uint32(len(request.Payload)))
-	binary.LittleEndian.PutUint16(header[18:20], request.Width)
-	binary.LittleEndian.PutUint16(header[20:22], request.Height)
-	binary.LittleEndian.PutUint16(header[22:24], request.PaletteCount)
-	binary.LittleEndian.PutUint16(header[24:26], uint16(len(request.Token)))
-	binary.LittleEndian.PutUint16(header[26:28], uint16(len(request.FileName)))
+	packetLen := tcpPushRequestHeaderBytes + len(request.Token) + len(request.FileName) + len(request.Payload)
+	packet := make([]byte, packetLen)
+	copy(packet[0:4], tcpPushRequestMagic)
+	packet[4] = tcpPushProtocolVersion
+	packet[5] = tcpPushRequestHeaderBytes
+	packet[6] = request.Opcode
+	packet[7] = request.Codec
+	binary.LittleEndian.PutUint16(packet[8:10], 0)
+	binary.LittleEndian.PutUint32(packet[10:14], request.Seq)
+	binary.LittleEndian.PutUint32(packet[14:18], uint32(len(request.Payload)))
+	binary.LittleEndian.PutUint16(packet[18:20], request.Width)
+	binary.LittleEndian.PutUint16(packet[20:22], request.Height)
+	binary.LittleEndian.PutUint16(packet[22:24], request.PaletteCount)
+	binary.LittleEndian.PutUint16(packet[24:26], uint16(len(request.Token)))
+	binary.LittleEndian.PutUint16(packet[26:28], uint16(len(request.FileName)))
 
-	if err := writeAll(writer, header); err != nil {
-		return err
-	}
-	if err := writeAll(writer, request.Token); err != nil {
-		return err
-	}
-	if err := writeAll(writer, request.FileName); err != nil {
-		return err
-	}
-	return writeAll(writer, request.Payload)
+	offset := tcpPushRequestHeaderBytes
+	copy(packet[offset:], request.Token)
+	offset += len(request.Token)
+	copy(packet[offset:], request.FileName)
+	offset += len(request.FileName)
+	copy(packet[offset:], request.Payload)
+	return packet, nil
 }
 
 func readTCPPushResponse(reader *bufio.Reader, request *tcpPushRequest) (*tcpPushResponse, error) {
@@ -535,8 +559,18 @@ func (h *TCPPushOutputHandler) ensureConn() (net.Conn, *bufio.Reader, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		if err := tcpConn.SetReadBuffer(tcpPushSocketBufferBytes); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+		if err := tcpConn.SetWriteBuffer(tcpPushSocketBufferBytes); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	}
 	h.conn = conn
-	h.reader = bufio.NewReader(conn)
+	h.reader = bufio.NewReaderSize(conn, tcpPushSocketBufferBytes)
 	h.lastUsed = time.Now()
 	h.logConnected(address)
 	h.publishTCPPushStats(true, nil, false)
@@ -573,8 +607,8 @@ func (h *TCPPushOutputHandler) closeConnLocked(reason string) {
 	h.lastUsed = time.Time{}
 	h.availabilityMu.Lock()
 	h.availabilityInitialized = false
-	h.availabilityProbeMode = false
-	h.nextAvailabilityProbeAt = time.Time{}
+	h.availabilityBusyWait = false
+	h.nextAvailabilityCheckAt = time.Time{}
 	h.lastAvailabilityStateLogged = false
 	h.lastAvailabilityCanSend = false
 	h.lastAvailabilityReason = ""
@@ -608,13 +642,14 @@ func (h *TCPPushOutputHandler) logError(format string, args ...interface{}) {
 func (h *TCPPushOutputHandler) logConnected(address string) {
 	logInfoModule(
 		"tcppush",
-		"Connected addr=%s protocol=%s format=%s quality=%d timeout_ms=%d idle_timeout_sec=%d file_name=%q token=%s lower_priority_mode=discard",
+		"Connected addr=%s protocol=%s format=%s quality=%d timeout_ms=%d idle_timeout_sec=%d busy_check_ms=%d file_name=%q token=%s lower_priority_mode=discard",
 		address,
 		tcpPushProtocolName,
 		normalizeTCPPushFormat(h.cfg.Format),
 		normalizeHTTPPushQuality(h.cfg.Quality),
 		normalizeHTTPPushTimeoutMS(h.cfg.TimeoutMS),
 		normalizeTCPPushIdleTimeoutSec(h.cfg.IdleTimeoutSec),
+		normalizeTCPPushBusyCheckMS(h.cfg.BusyCheckMS),
 		tcpPushFileName(h.cfg, ""),
 		tcpPushTokenLogValue(h.cfg.UploadToken),
 	)
@@ -628,33 +663,20 @@ func (h *TCPPushOutputHandler) logAckSuccess(response *tcpPushResponse) {
 	if response == nil {
 		return
 	}
-
-	stage := strings.TrimSpace(response.Stage)
-
-	h.ackLogMu.Lock()
-	defer h.ackLogMu.Unlock()
-
-	shouldLog := !h.ackLogged || h.lastAckStatusCode != response.StatusCode || h.lastAckStage != stage
-	h.ackLogged = true
-	h.lastAckStatusCode = response.StatusCode
-	h.lastAckStage = stage
-	if !shouldLog {
+	if !h.isSlowResponse(response) {
 		return
 	}
-
-	logInfoModule(
+	logWarnModule(
 		"tcppush",
-		"ACK status=%d opcode=%d codec=%d seq=%d frame_payload_bytes=%d body_len=%d stage=%q validate_ms=%d render_ms=%d total_ms=%d message=%q hint=%q",
-		response.StatusCode,
+		"Slow ACK opcode=%d codec=%d seq=%d stage=%q total_ms=%d timeout_ms=%d validate_ms=%d render_ms=%d message=%q hint=%q",
 		response.Opcode,
 		response.Codec,
 		response.Seq,
-		response.FramePayloadBytes,
-		response.BodyLen,
-		stage,
+		strings.TrimSpace(response.Stage),
+		response.TotalMS,
+		normalizeHTTPPushTimeoutMS(h.cfg.TimeoutMS),
 		response.ValidateMS,
 		response.RenderMS,
-		response.TotalMS,
 		strings.TrimSpace(response.Message),
 		strings.TrimSpace(response.Hint),
 	)
@@ -670,13 +692,13 @@ func (h *TCPPushOutputHandler) updateLastAckState(response *tcpPushResponse) {
 	h.lastAckStage = strings.TrimSpace(response.Stage)
 }
 
-func (h *TCPPushOutputHandler) logAvailabilityProbeMode(response *tcpPushResponse) {
+func (h *TCPPushOutputHandler) logBusyWaitMode(response *tcpPushResponse) {
 	if response == nil {
 		return
 	}
 	logInfoModule(
 		"tcppush",
-		"Switching to availability probe mode status=%d stage=%q message=%q hint=%q",
+		"Switching to busy-wait mode status=%d stage=%q message=%q hint=%q",
 		response.StatusCode,
 		strings.TrimSpace(response.Stage),
 		strings.TrimSpace(response.Message),
@@ -684,17 +706,23 @@ func (h *TCPPushOutputHandler) logAvailabilityProbeMode(response *tcpPushRespons
 	)
 }
 
-func (h *TCPPushOutputHandler) logAvailabilityStateLocked(availability *tcpPushAvailabilityResponse, canSend bool) {
+func (h *TCPPushOutputHandler) logAvailabilityTransitionLocked(availability *tcpPushAvailabilityResponse, canSend, wasBusyWait bool) {
+	if canSend {
+		logInfoModule("tcppush", "Busy-wait cleared, frame sending resumed")
+		return
+	}
 	if availability == nil {
-		logInfoModule("tcppush", "Availability available=false should_send_frame=false reason=%q lower_priority_mode=%q", "", "")
+		logInfoModule("tcppush", "Entering busy-wait available=false should_send_frame=false")
+		return
+	}
+	if wasBusyWait {
 		return
 	}
 	logInfoModule(
 		"tcppush",
-		"Availability available=%t should_send_frame=%t can_send=%t user_priority=%d highest_priority=%d active_priority=%d active_session_id=%v active_user=%q lower_priority_mode=%q reason=%q",
+		"Entering busy-wait available=%t should_send_frame=%t user_priority=%d highest_priority=%d active_priority=%d active_session_id=%v active_user=%q lower_priority_mode=%q reason=%q",
 		availability.Available,
 		availability.ShouldSendFrame,
-		canSend,
 		availability.UserPriority,
 		availability.HighestPriority,
 		availability.ActivePriority,
@@ -707,7 +735,7 @@ func (h *TCPPushOutputHandler) logAvailabilityStateLocked(availability *tcpPushA
 
 func (h *TCPPushOutputHandler) publishTCPPushStats(connected bool, availability *tcpPushAvailabilityResponse, canSend bool) {
 	h.availabilityMu.Lock()
-	probeMode := h.availabilityProbeMode
+	busyWait := h.availabilityBusyWait
 	reason := h.lastAvailabilityReason
 	lowerPriorityMode := h.lastAvailabilityPriorityMode
 	h.availabilityMu.Unlock()
@@ -720,7 +748,8 @@ func (h *TCPPushOutputHandler) publishTCPPushStats(connected bool, availability 
 	stats := TCPPushAvailabilityStats{
 		Type:              h.typeName,
 		Connected:         connected,
-		ProbeMode:         probeMode,
+		BusyWait:          busyWait,
+		ProbeMode:         busyWait,
 		CanSend:           connected && canSend,
 		LowerPriorityMode: lowerPriorityMode,
 		Reason:            reason,
@@ -757,6 +786,42 @@ func parseTCPPushAddress(rawURL string) (string, error) {
 		return "", fmt.Errorf("tcp host is empty")
 	}
 	return parsed.Host, nil
+}
+
+func (h *TCPPushOutputHandler) isSlowResponse(response *tcpPushResponse) bool {
+	if response == nil {
+		return false
+	}
+	if response.Opcode != tcpPushOpcodePushFrame {
+		return false
+	}
+	totalMS := int(response.TotalMS)
+	if totalMS <= 0 {
+		return false
+	}
+	timeoutMS := normalizeHTTPPushTimeoutMS(h.cfg.TimeoutMS)
+	threshold := timeoutMS - maxInt(timeoutMS/5, 200)
+	if threshold < 300 {
+		threshold = 300
+	}
+	return totalMS >= threshold
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func tcpPushFileName(cfg OutputConfig, fallback string) string {
@@ -798,7 +863,7 @@ func buildTCPPushStatusError(response *tcpPushResponse) error {
 	return fmt.Errorf("status %d: %s (%s)", response.StatusCode, message, strings.Join(details, ", "))
 }
 
-func requiresAvailabilityProbe(response *tcpPushResponse) bool {
+func requiresBusyWait(response *tcpPushResponse) bool {
 	if response == nil {
 		return false
 	}

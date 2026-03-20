@@ -5,7 +5,7 @@ import DeferredInputNumber from "./deferred_input_number.vue";
 import StyleManagerForm from "./style_manager_form.vue";
 import { patchObjectKey } from "../composables/object_patch";
 import { normalizeFullTableRows, normalizePositiveInt } from "../config_normalizer";
-import { buildItemTypeOptions, getItemTypeLabel, isMonitorRequiredType } from "../item_types";
+import { buildItemTypeOptions, getItemTypeLabel, isMonitorRequiredType, isRangeType } from "../item_types";
 
 const props = defineProps({
   config: { type: Object, required: true },
@@ -80,6 +80,7 @@ const selectedType = computed(() => String(selectedItem.value?.type || ""));
 const selectedIsFullTable = computed(() => selectedType.value === "full_table");
 const selectedIsLabelText = computed(() => selectedType.value === "label_text");
 const selectedIsSimpleLabel = computed(() => selectedType.value === "simple_label");
+const selectedIsRange = computed(() => isRangeType(selectedType.value));
 const selectedHasTitle = computed(
   () =>
     selectedType.value === "full_chart" ||
@@ -745,7 +746,7 @@ watch(
                 @update:value="(v) => updateRenderAttr('format', String(v || ''))"
               />
             </n-form-item-gi>
-            <n-form-item-gi v-if="!selectedIsFullTable" label="最小值">
+            <n-form-item-gi v-if="selectedIsRange" label="最小值">
               <DeferredInputNumber
                 clearable
                 :show-button="false"
@@ -753,7 +754,7 @@ watch(
                 @update:value="(v) => emit('change-item-field', { field: 'min_value', value: toOptionalNumber(v) })"
               />
             </n-form-item-gi>
-            <n-form-item-gi v-if="!selectedIsFullTable" label="最大值">
+            <n-form-item-gi v-if="selectedIsRange" label="最大值">
               <DeferredInputNumber
                 clearable
                 :show-button="false"

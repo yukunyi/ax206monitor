@@ -72,7 +72,10 @@ func (c *GoNativeDiskCollector) requiredMaxIndex() int {
 }
 
 func (c *GoNativeDiskCollector) ensureSlots() {
-	detected := detectNamedDiskCount()
+	c.ensureSlotsForCount(detectNamedDiskCount())
+}
+
+func (c *GoNativeDiskCollector) ensureSlotsForCount(detected int) {
 	requiredMax := c.requiredMaxIndex()
 	slotCount := max(detected, requiredMax)
 	if slotCount > 16 {
@@ -141,8 +144,8 @@ func updateDiskRateItems(slot *goNativeDiskSlot, disk *DiskInfo) {
 }
 
 func (c *GoNativeDiskCollector) GetAllItems() map[string]*CollectItem {
-	c.ensureSlots()
 	disks := c.snapshotDisks()
+	c.ensureSlotsForCount(len(disks))
 	for index, slot := range c.slots {
 		var disk *DiskInfo
 		if index > 0 && index <= len(disks) {
@@ -158,7 +161,6 @@ func (c *GoNativeDiskCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	c.ensureSlots()
 	disks := c.snapshotDisks()
 	for index, slot := range c.slots {
 		if slot == nil {

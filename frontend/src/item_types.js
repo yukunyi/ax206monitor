@@ -41,6 +41,15 @@ const MONITOR_REQUIRED_TYPE_SET = new Set([
   "full_gauge",
 ]);
 
+const RANGE_TYPE_SET = new Set([
+  "simple_progress",
+  "simple_line_chart",
+  "full_chart",
+  "full_progress_h",
+  "full_progress_v",
+  "full_gauge",
+]);
+
 export function getItemTypeLabel(type) {
   const key = String(type || "").trim();
   if (!key) return "";
@@ -49,6 +58,10 @@ export function getItemTypeLabel(type) {
 
 export function isMonitorRequiredType(type) {
   return MONITOR_REQUIRED_TYPE_SET.has(String(type || "").trim());
+}
+
+export function isRangeType(type) {
+  return RANGE_TYPE_SET.has(String(type || "").trim());
 }
 
 export function normalizeItemTypes(metaTypes) {

@@ -26,6 +26,10 @@ type CollectorConfigApplier interface {
 	ApplyConfig(cfg *MonitorConfig)
 }
 
+type CollectorItemSnapshotProvider interface {
+	ItemsSnapshot() map[string]*CollectItem
+}
+
 type BaseCollector struct {
 	name    string
 	enabled bool

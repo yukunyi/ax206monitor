@@ -25,7 +25,6 @@ func NewRTSSCollector(cfg *MonitorConfig) *RTSSCollector {
 		client:        rtsssource.GetRTSSClient(),
 		sources:       make(map[string]string),
 	}
-	collector.ApplyConfig(cfg)
 	return collector
 }
 
@@ -55,7 +54,10 @@ func (c *RTSSCollector) GetAllItems() map[string]*CollectItem {
 		if name == "" {
 			continue
 		}
-		if c.getItem(name) != nil {
+		if item := c.getItem(name); item != nil {
+			if unit := strings.TrimSpace(option.Unit); unit != "" {
+				item.SetUnit(unit)
+			}
 			continue
 		}
 		item := NewCollectItem(name, option.Label, option.Unit, 0, 0, 1)
@@ -87,9 +89,7 @@ func (c *RTSSCollector) UpdateItems() error {
 			item.SetAvailable(false)
 			continue
 		}
-		if strings.TrimSpace(unit) != "" {
-			item.SetUnit(unit)
-		}
+		_ = unit
 		item.SetValue(value)
 		item.SetAvailable(true)
 	}

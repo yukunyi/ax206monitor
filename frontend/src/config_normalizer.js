@@ -1,5 +1,5 @@
 import { normalizeStyleKeys } from "./style_keys";
-import { normalizeItemTypes } from "./item_types";
+import { isRangeType, normalizeItemTypes } from "./item_types";
 import { normalizeOutputs } from "./output_configs";
 
 function defaultCreateItemId() {
@@ -58,6 +58,29 @@ export function normalizePositiveInt(raw, fallback = 1) {
 function normalizeFiniteNumber(raw) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
+}
+
+function normalizeItemRangeFields(item) {
+  if (!item || typeof item !== "object") return item;
+  if (!isRangeType(item.type)) {
+    delete item.min_value;
+    delete item.max_value;
+    return item;
+  }
+
+  const minValue = normalizeFiniteNumber(item.min_value);
+  const maxValue = normalizeFiniteNumber(item.max_value);
+  if (minValue !== null) {
+    item.min_value = minValue;
+  } else {
+    delete item.min_value;
+  }
+  if (maxValue !== null) {
+    item.max_value = maxValue;
+  } else {
+    delete item.max_value;
+  }
+  return item;
 }
 
 export function normalizeThresholdRanges(raw) {
@@ -203,6 +226,7 @@ export function normalizeConfigModel(
     next.custom_style = config.allow_custom_style ? next.custom_style === true : false;
     next.style = normalizeStyleMap(next.style, styleKeySet);
     next.render_attrs_map = normalizeItemRenderAttrs(next.type, next.render_attrs_map, styleKeySet);
+    normalizeItemRangeFields(next);
     return next;
   });
   config.custom_monitors = Array.isArray(config.custom_monitors) ? config.custom_monitors : [];

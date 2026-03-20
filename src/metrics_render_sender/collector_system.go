@@ -15,25 +15,44 @@ func NewGoNativeSystemCollector() *GoNativeSystemCollector {
 	return &GoNativeSystemCollector{BaseCollector: NewBaseCollector("go_native.system")}
 }
 
-func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
-	if c.getItem("go_native.system.load_avg") == nil {
-		c.setItem("go_native.system.load_avg", NewCollectItem("go_native.system.load_avg", "System load average", "", 0, 0, 1))
-		c.setItem("go_native.system.current_time", NewCollectItem("go_native.system.current_time", "Current time", "", 0, 0, 0))
-		c.setItem("go_native.system.hostname", NewCollectItem("go_native.system.hostname", "Host name", "", 0, 0, 0))
-		c.setItem("go_native.system.resolution", NewCollectItem("go_native.system.resolution", "Display resolution", "", 0, 0, 0))
-		c.setItem("go_native.system.refresh_rate", NewCollectItem("go_native.system.refresh_rate", "Display refresh rate", "", 0, 0, 0))
-		c.setItem("go_native.system.display", NewCollectItem("go_native.system.display", "Display mode", "", 0, 0, 0))
-		c.setItem("go_native.system.collect.max_ms", NewCollectItem("go_native.system.collect.max_ms", "Collect max duration", "ms", 0, 0, 0))
-		c.setItem("go_native.system.collect.avg_ms", NewCollectItem("go_native.system.collect.avg_ms", "Collect avg duration", "ms", 0, 0, 0))
-		c.setItem("go_native.system.render.max_ms", NewCollectItem("go_native.system.render.max_ms", "Render max duration", "ms", 0, 0, 0))
-		c.setItem("go_native.system.render.avg_ms", NewCollectItem("go_native.system.render.avg_ms", "Render avg duration", "ms", 0, 0, 0))
-		c.setItem("go_native.system.output.max_ms", NewCollectItem("go_native.system.output.max_ms", "Output max duration", "ms", 0, 0, 0))
-		c.setItem("go_native.system.output.avg_ms", NewCollectItem("go_native.system.output.avg_ms", "Output avg duration", "ms", 0, 0, 0))
-		ensureOutputMetricItems(c, outputTypeMemImg, "Output memimg")
-		ensureOutputMetricItems(c, outputTypeAX206USB, "AX206 refresh")
-		ensureOutputMetricItems(c, outputTypeHTTPPush, "HTTP push")
-		ensureOutputMetricItems(c, outputTypeTCPPush, "TCP push")
+func (c *GoNativeSystemCollector) ensureStaticItems() {
+	if c.getItem("go_native.system.load_avg") != nil {
+		return
 	}
+	c.setItem("go_native.system.load_avg", NewCollectItem("go_native.system.load_avg", "System load average", "", 0, 0, 1))
+	c.setItem("go_native.system.current_time", NewCollectItem("go_native.system.current_time", "Current time", "", 0, 0, 0))
+	c.setItem("go_native.system.hostname", NewCollectItem("go_native.system.hostname", "Host name", "", 0, 0, 0))
+	c.setItem("go_native.system.resolution", NewCollectItem("go_native.system.resolution", "Display resolution", "", 0, 0, 0))
+	c.setItem("go_native.system.refresh_rate", NewCollectItem("go_native.system.refresh_rate", "Display refresh rate", "", 0, 0, 0))
+	c.setItem("go_native.system.display", NewCollectItem("go_native.system.display", "Display mode", "", 0, 0, 0))
+	c.setItem("go_native.system.collect.max_ms", NewCollectItem("go_native.system.collect.max_ms", "Collect max duration", "ms", 0, 0, 0))
+	c.setItem("go_native.system.collect.avg_ms", NewCollectItem("go_native.system.collect.avg_ms", "Collect avg duration", "ms", 0, 0, 0))
+	c.setItem("go_native.system.render.max_ms", NewCollectItem("go_native.system.render.max_ms", "Render max duration", "ms", 0, 0, 0))
+	c.setItem("go_native.system.render.avg_ms", NewCollectItem("go_native.system.render.avg_ms", "Render avg duration", "ms", 0, 0, 0))
+	c.setItem("go_native.system.output.max_ms", NewCollectItem("go_native.system.output.max_ms", "Output max duration", "ms", 0, 0, 0))
+	c.setItem("go_native.system.output.avg_ms", NewCollectItem("go_native.system.output.avg_ms", "Output avg duration", "ms", 0, 0, 0))
+	ensureOutputMetricItems(c, outputTypeMemImg, "Output memimg")
+	ensureOutputMetricItems(c, outputTypeAX206USB, "AX206 refresh")
+	ensureOutputMetricItems(c, outputTypeHTTPPush, "HTTP push")
+	ensureOutputMetricItems(c, outputTypeTCPPush, "TCP push")
+}
+
+func (c *GoNativeSystemCollector) ApplyConfig(cfg *MonitorConfig) {
+	c.ensureStaticItems()
+	if cfg == nil {
+		return
+	}
+	for _, outputCfg := range cfg.Outputs {
+		typeName := strings.ToLower(strings.TrimSpace(outputCfg.Type))
+		if typeName == "" {
+			continue
+		}
+		ensureOutputMetricItems(c, typeName, "Output "+typeName)
+	}
+}
+
+func (c *GoNativeSystemCollector) GetAllItems() map[string]*CollectItem {
+	c.ensureStaticItems()
 	if item := c.getItem("go_native.system.current_time"); item != nil {
 		item.SetValue(time.Now().Format("2006-01-02 15:04:05"))
 		item.SetAvailable(true)
@@ -54,7 +73,6 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	_ = c.GetAllItems()
 
 	var err error
 	if item := c.getItem("go_native.system.load_avg"); item != nil {
@@ -71,46 +89,27 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 		item.SetValue(time.Now().Format("2006-01-02 15:04:05"))
 		item.SetAvailable(true)
 	}
-	if item := c.getItem("go_native.system.hostname"); item != nil {
-		if hostName, err := os.Hostname(); err == nil && strings.TrimSpace(hostName) != "" {
-			item.SetValue(hostName)
-			item.SetAvailable(true)
-		} else {
-			item.SetAvailable(false)
-		}
-	}
 	updateSystemDisplayItems(c)
 
-	stats := GetCollectorManager().Stats()
-	setSystemMetricItem(c.getItem("go_native.system.collect.max_ms"), stats.CollectMaxMS)
-	setSystemMetricItem(c.getItem("go_native.system.collect.avg_ms"), stats.CollectAvgMS)
-	setSystemMetricItem(c.getItem("go_native.system.render.max_ms"), stats.RenderMaxMS)
-	setSystemMetricItem(c.getItem("go_native.system.render.avg_ms"), stats.RenderAvgMS)
-	setSystemMetricItem(c.getItem("go_native.system.output.max_ms"), stats.OutputMaxMS)
-	setSystemMetricItem(c.getItem("go_native.system.output.avg_ms"), stats.OutputAvgMS)
+	if manager := CurrentCollectorManager(); manager != nil {
+		stats := manager.Stats()
+		setSystemMetricItem(c.getItem("go_native.system.collect.max_ms"), stats.CollectMaxMS)
+		setSystemMetricItem(c.getItem("go_native.system.collect.avg_ms"), stats.CollectAvgMS)
+		setSystemMetricItem(c.getItem("go_native.system.render.max_ms"), stats.RenderMaxMS)
+		setSystemMetricItem(c.getItem("go_native.system.render.avg_ms"), stats.RenderAvgMS)
+		setSystemMetricItem(c.getItem("go_native.system.output.max_ms"), stats.OutputMaxMS)
+		setSystemMetricItem(c.getItem("go_native.system.output.avg_ms"), stats.OutputAvgMS)
 
-	cfg := GetGlobalCollectorConfig()
-	if cfg != nil {
-		for _, outputCfg := range cfg.Outputs {
-			typeName := strings.ToLower(strings.TrimSpace(outputCfg.Type))
-			if typeName == "" {
-				continue
-			}
-			ensureOutputMetricItems(c, typeName, "Output "+typeName)
+		for typeName := range stats.OutputStats {
+			setOutputTypeMetric(c, typeName, stats.OutputStats)
 		}
-	}
-	for typeName := range stats.OutputStats {
-		ensureOutputMetricItems(c, typeName, "Output "+typeName)
-		setOutputTypeMetric(c, typeName, stats.OutputStats)
-	}
-	setAX206DeviceOutputMetrics(c, outputTypeAX206USB, GetAX206DeviceFrameRuntimeStats())
-	for typeName, pushStats := range GetHTTPPushRuntimeStats() {
-		ensureOutputMetricItems(c, typeName, "HTTP push "+typeName)
-		setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
-	}
-	for typeName, pushStats := range GetTCPPushRuntimeStats() {
-		ensureOutputMetricItems(c, typeName, "TCP push "+typeName)
-		setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
+		setAX206DeviceOutputMetrics(c, outputTypeAX206USB, GetAX206DeviceFrameRuntimeStats())
+		for typeName, pushStats := range GetHTTPPushRuntimeStats() {
+			setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
+		}
+		for typeName, pushStats := range GetTCPPushRuntimeStats() {
+			setOutputMetricValues(c, typeName, pushStats.Calls, pushStats.LastMS, pushStats.MaxMS, pushStats.AvgMS)
+		}
 	}
 	return err
 }

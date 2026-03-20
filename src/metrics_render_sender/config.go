@@ -101,6 +101,8 @@ type ItemConfig struct {
 	CustomStyle    bool                   `json:"custom_style,omitempty"`
 	Monitor        string                 `json:"monitor,omitempty"`
 	Unit           string                 `json:"unit,omitempty"`
+	MinValue       *float64               `json:"min_value,omitempty"`
+	MaxValue       *float64               `json:"max_value,omitempty"`
 	X              int                    `json:"x"`
 	Y              int                    `json:"y"`
 	Width          int                    `json:"width"`

@@ -90,6 +90,12 @@ export function normalizeTCPIdleTimeoutSec(value) {
   return Math.max(5, Math.min(3600, Math.round(idleTimeoutSec)));
 }
 
+export function normalizeTCPBusyCheckMS(value) {
+  const busyCheckMS = Number(value || 1000);
+  if (!Number.isFinite(busyCheckMS)) return 1000;
+  return Math.max(100, Math.min(600000, Math.round(busyCheckMS)));
+}
+
 export function normalizeHTTPKeyValueList(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -161,6 +167,7 @@ export function normalizeOutputEntry(raw) {
     entry.upload_token = String(item.upload_token || "").trim();
     entry.timeout_ms = normalizeHTTPTimeoutMS(item.timeout_ms);
     entry.idle_timeout_sec = normalizeTCPIdleTimeoutSec(item.idle_timeout_sec);
+    entry.busy_check_ms = normalizeTCPBusyCheckMS(item.busy_check_ms);
     entry.file_name = String(item.file_name || "").trim();
     entry.success_codes = normalizeHTTPSuccessCodes(item.success_codes);
   }
@@ -239,6 +246,7 @@ export function createDefaultOutputEntry(type = OUTPUT_TYPE_AX206USB) {
       upload_token: "",
       timeout_ms: 5000,
       idle_timeout_sec: 120,
+      busy_check_ms: 1000,
       file_name: "",
       success_codes: [],
     };

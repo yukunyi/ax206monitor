@@ -128,6 +128,8 @@ func defaultRenderHistoryPoints(itemType string) int {
 		return 60
 	case itemTypeFullChart:
 		return 90
+	case itemTypeSimpleProgress, itemTypeFullProgressH, itemTypeFullProgressV, itemTypeFullGauge:
+		return 60
 	default:
 		return 0
 	}
@@ -192,6 +194,13 @@ func appendRenderHistory(store *renderHistoryStore, item *ItemConfig, value floa
 		return []float64{value}
 	}
 	return store.append(item.runtime.historyKey, value, item.runtime.historyPoints)
+}
+
+func appendFrameRenderHistory(frame *RenderFrame, item *ItemConfig, value float64) []float64 {
+	if frame == nil {
+		return []float64{value}
+	}
+	return appendRenderHistory(frame.history, item, value)
 }
 
 func resolveItemTitleText(item *ItemConfig, config *MonitorConfig) string {

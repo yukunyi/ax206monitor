@@ -38,7 +38,6 @@ func (c *GoNativeMemoryCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	_ = c.GetAllItems()
 
 	err := fetchMemorySnapshot(250 * time.Millisecond)
 	virtualInfo, virtualOK := getVirtualMemorySnapshot()
@@ -90,13 +89,5 @@ func (c *GoNativeMemoryCollector) UpdateItems() error {
 			item.SetAvailable(false)
 		}
 	}
-
-	if item := c.getItem("go_native.memory.total"); item != nil {
-		if virtualOK && virtualInfo != nil {
-			item.SetValue(float64(virtualInfo.Total) / (1024 * 1024 * 1024))
-			item.SetAvailable(true)
-		}
-	}
-
 	return err
 }

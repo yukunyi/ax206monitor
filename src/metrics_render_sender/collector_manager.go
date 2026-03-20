@@ -526,6 +526,12 @@ type namedCollector struct {
 	collector Collector
 }
 
+type collectorDiscoveryResult struct {
+	discovered int
+	newItems   int
+	totalItems int
+}
+
 func (m *CollectorManager) snapshotCollectors() []namedCollector {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
@@ -540,14 +546,18 @@ func (m *CollectorManager) snapshotCollectors() []namedCollector {
 	return result
 }
 
-func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector) {
+func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector, trigger string) collectorDiscoveryResult {
 	if len(collectors) == 0 {
-		return
+		return collectorDiscoveryResult{}
 	}
 	discoveredItems := make(map[string]*CollectItem)
 	discoveredOwners := make(map[string]string)
 	for _, entry := range collectors {
-		for key, item := range entry.collector.GetAllItems() {
+		startedAt, warnThreshold, slowTimer := m.startDiscoverSlowWatch(entry.name, trigger)
+		items := entry.collector.GetAllItems()
+		duration := time.Since(startedAt)
+		m.finishDiscoverSlowWatch(entry.name, trigger, duration, warnThreshold, slowTimer)
+		for key, item := range items {
 			trimmed := strings.TrimSpace(key)
 			if trimmed == "" || item == nil {
 				continue
@@ -557,16 +567,74 @@ func (m *CollectorManager) discoverFromCollectors(collectors []namedCollector) {
 		}
 	}
 	if len(discoveredItems) == 0 {
-		return
+		m.mutex.RLock()
+		totalItems := len(m.items)
+		m.mutex.RUnlock()
+		return collectorDiscoveryResult{totalItems: totalItems}
 	}
 	m.mutex.Lock()
+	newItems := 0
 	for key, item := range discoveredItems {
+		if _, exists := m.items[key]; !exists {
+			newItems++
+		}
 		m.items[key] = item
 		m.itemToCollector[key] = discoveredOwners[key]
 	}
 	m.invalidateItemSnapshotsLocked()
 	m.rebuildRequiredResolvedLocked()
+	totalItems := len(m.items)
 	m.mutex.Unlock()
+	return collectorDiscoveryResult{
+		discovered: len(discoveredItems),
+		newItems:   newItems,
+		totalItems: totalItems,
+	}
+}
+
+func (m *CollectorManager) startDiscoverSlowWatch(name, trigger string) (time.Time, time.Duration, *time.Timer) {
+	m.mutex.RLock()
+	warnThreshold := m.collectWarn
+	m.mutex.RUnlock()
+	startedAt := time.Now()
+	if warnThreshold <= 0 {
+		return startedAt, 0, nil
+	}
+	slowTimer := time.AfterFunc(warnThreshold, func() {
+		duration := time.Since(startedAt)
+		if duration < warnThreshold {
+			duration = warnThreshold
+		}
+		logWarnModule(
+			"collect",
+			"action=discover,result=slow,collector=%s,trigger=%s,duration_ms=%d,threshold_ms=%d",
+			name,
+			strings.TrimSpace(trigger),
+			duration.Milliseconds(),
+			warnThreshold.Milliseconds(),
+		)
+	})
+	return startedAt, warnThreshold, slowTimer
+}
+
+func (m *CollectorManager) finishDiscoverSlowWatch(name, trigger string, duration, warnThreshold time.Duration, slowTimer *time.Timer) {
+	if warnThreshold <= 0 || duration <= warnThreshold {
+		if slowTimer != nil {
+			slowTimer.Stop()
+		}
+		return
+	}
+	if slowTimer != nil && !slowTimer.Stop() {
+		return
+	}
+	logWarnModule(
+		"collect",
+		"action=discover,result=slow,collector=%s,trigger=%s,duration_ms=%d,threshold_ms=%d",
+		name,
+		strings.TrimSpace(trigger),
+		duration.Milliseconds(),
+		warnThreshold.Milliseconds(),
+	)
 }
 
 func (m *CollectorManager) invalidateItemSnapshotsLocked() {
@@ -594,8 +662,78 @@ func (m *CollectorManager) rebuildItemSnapshotsLocked() {
 	m.snapshotDirty = false
 }
 
-func (m *CollectorManager) discoverAll() {
-	m.discoverFromCollectors(m.snapshotCollectors())
+func (m *CollectorManager) discoverAll(trigger string) {
+	collectors := m.snapshotCollectors()
+	result := m.discoverFromCollectors(collectors, trigger)
+	logInfoModule(
+		"collect",
+		"action=discover,trigger=%s,collectors=%d,discovered=%d,new=%d,total=%d",
+		strings.TrimSpace(trigger),
+		len(collectors),
+		result.discovered,
+		result.newItems,
+		result.totalItems,
+	)
+}
+
+func normalizeCollectorSnapshotItems(items map[string]*CollectItem) map[string]*CollectItem {
+	if len(items) == 0 {
+		return map[string]*CollectItem{}
+	}
+	normalized := make(map[string]*CollectItem, len(items))
+	for key, item := range items {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" || item == nil {
+			continue
+		}
+		normalized[trimmed] = item
+	}
+	return normalized
+}
+
+func (m *CollectorManager) syncCollectorItemsFromSnapshots(collectors []namedCollector) {
+	if len(collectors) == 0 {
+		return
+	}
+	snapshots := make(map[string]map[string]*CollectItem, len(collectors))
+	for _, entry := range collectors {
+		snapshotter, ok := entry.collector.(CollectorItemSnapshotProvider)
+		if !ok {
+			continue
+		}
+		snapshots[entry.name] = normalizeCollectorSnapshotItems(snapshotter.ItemsSnapshot())
+	}
+	if len(snapshots) == 0 {
+		return
+	}
+
+	m.mutex.Lock()
+	changed := false
+	for collectorName, items := range snapshots {
+		for key, owner := range m.itemToCollector {
+			if owner != collectorName {
+				continue
+			}
+			if _, exists := items[key]; exists {
+				continue
+			}
+			delete(m.itemToCollector, key)
+			delete(m.items, key)
+			changed = true
+		}
+		for key, item := range items {
+			if m.items[key] != item || m.itemToCollector[key] != collectorName {
+				changed = true
+			}
+			m.items[key] = item
+			m.itemToCollector[key] = collectorName
+		}
+	}
+	if changed {
+		m.invalidateItemSnapshotsLocked()
+		m.rebuildRequiredResolvedLocked()
+	}
+	m.mutex.Unlock()
 }
 
 func signatureOfNames(names []string) string {
@@ -659,6 +797,16 @@ func (m *CollectorManager) rebuildRequiredResolvedLocked() {
 		}
 		m.requiredResolved[trimmed] = struct{}{}
 	}
+}
+
+func (m *CollectorManager) missingRequiredCountLocked() int {
+	missing := 0
+	for name := range m.requiredSet {
+		if !m.isRequiredItemSatisfiedLocked(name) {
+			missing++
+		}
+	}
+	return missing
 }
 
 func (m *CollectorManager) isRequiredItemSatisfiedLocked(name string) bool {
@@ -726,6 +874,8 @@ func (m *CollectorManager) maybeRetryDiscover(now time.Time) {
 		m.mutex.Unlock()
 		return
 	}
+	attempt := m.missingRetryAttempts + 1
+	missingBefore := m.missingRequiredCountLocked()
 	collectors := make([]namedCollector, 0, len(m.collectorOrder))
 	for _, name := range m.collectorOrder {
 		if collector := m.collectors[name]; collector != nil {
@@ -734,17 +884,23 @@ func (m *CollectorManager) maybeRetryDiscover(now time.Time) {
 	}
 	m.mutex.Unlock()
 
-	m.discoverFromCollectors(collectors)
+	result := m.discoverFromCollectors(collectors, "auto")
 
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	resolved := true
-	for key := range m.requiredSet {
-		if !m.isRequiredItemSatisfiedLocked(key) {
-			resolved = false
-			break
-		}
-	}
+	missingAfter := m.missingRequiredCountLocked()
+	resolved := missingAfter == 0
+	logInfoModule(
+		"collect",
+		"action=discover,trigger=auto,reason=missing_required,attempt=%d,collectors=%d,discovered=%d,new=%d,total=%d,missing_before=%d,missing_after=%d",
+		attempt,
+		len(collectors),
+		result.discovered,
+		result.newItems,
+		result.totalItems,
+		missingBefore,
+		missingAfter,
+	)
 	if resolved {
 		m.missingRetryAttempts = 0
 		m.missingRetryNextAt = time.Time{}
@@ -841,11 +997,11 @@ func (m *CollectorManager) runCollectorEpoch(name string, collector Collector, e
 		atomic.AddInt64(&m.timeoutTotal, 1)
 		logWarnModule(
 			"collect",
-			"%s update slow: %v (threshold=%v, epoch=%d)",
+			"action=update,result=slow,collector=%s,epoch=%d,duration_ms=%d,threshold_ms=%d",
 			name,
-			duration,
-			warnThreshold,
 			epochID,
+			duration.Milliseconds(),
+			warnThreshold.Milliseconds(),
 		)
 	}
 
@@ -877,7 +1033,7 @@ func (m *CollectorManager) runCollectorEpoch(name string, collector Collector, e
 	if err != nil {
 		state.dropped++
 		m.totalDropped++
-		logDebugModule("collect", "%s update failed in epoch %d: %v", name, epochID, err)
+		logDebugModule("collect", "action=update,result=failed,collector=%s,epoch=%d,error=%q", name, epochID, err)
 	} else {
 		state.success++
 		m.totalCompleted++
@@ -1239,10 +1395,10 @@ func (m *CollectorManager) SetPaused(paused bool) {
 		return
 	}
 	if paused {
-		logInfoModule("collect", "collector manager paused")
+		logInfoModule("collect", "action=manager,state=paused")
 		return
 	}
-	logInfoModule("collect", "collector manager resumed")
+	logInfoModule("collect", "action=manager,state=resumed")
 }
 
 func (m *CollectorManager) IsPaused() bool {
@@ -1448,7 +1604,6 @@ func initializeCollectors(manager *CollectorManager, cfg *MonitorConfig) {
 		registerCollectorWithConfig(manager, cfg, rtss, true)
 	}
 	registerCollectorWithConfig(manager, cfg, NewCustomCollector(cfg, manager.Get), true)
-	manager.discoverAll()
 }
 
 func registerCollectorWithConfig(manager *CollectorManager, cfg *MonitorConfig, collector Collector, defaultEnabled bool) {
@@ -1459,9 +1614,6 @@ func registerCollectorWithConfig(manager *CollectorManager, cfg *MonitorConfig, 
 	manager.mutex.Lock()
 	manager.collectorEnabled[collector.Name()] = defaultEnabled
 	manager.mutex.Unlock()
-	if applier, ok := collector.(CollectorConfigApplier); ok {
-		applier.ApplyConfig(cfg)
-	}
 }
 
 func defaultCollectorEnabled(name string) bool {
@@ -1474,6 +1626,10 @@ func defaultCollectorEnabled(name string) bool {
 }
 
 func (m *CollectorManager) ApplyConfig(cfg *MonitorConfig, requiredItems []string) {
+	m.applyConfig(cfg, requiredItems, false, "")
+}
+
+func (m *CollectorManager) applyConfig(cfg *MonitorConfig, requiredItems []string, discover bool, trigger string) {
 	if m == nil {
 		return
 	}
@@ -1496,14 +1652,17 @@ func (m *CollectorManager) ApplyConfig(cfg *MonitorConfig, requiredItems []strin
 			applier.ApplyConfig(cfg)
 		}
 	}
-	m.discoverAll()
+	m.syncCollectorItemsFromSnapshots(collectors)
+	if discover {
+		m.discoverAll(trigger)
+	}
 }
 
 func newCollectorManagerFromConfig(cfg *MonitorConfig, requiredItems []string) *CollectorManager {
 	manager := NewCollectorManager()
 	manager.modeFull = true
 	initializeCollectors(manager, cfg)
-	manager.ApplyConfig(cfg, requiredItems)
+	manager.applyConfig(cfg, requiredItems, true, "init")
 	manager.startAsyncIfNeeded()
 	return manager
 }
@@ -1511,7 +1670,7 @@ func newCollectorManagerFromConfig(cfg *MonitorConfig, requiredItems []string) *
 var (
 	globalCollectorManager *CollectorManager
 	globalCollectorConfig  *MonitorConfig
-	globalCollectorMu      sync.Mutex
+	globalCollectorMu      sync.RWMutex
 )
 
 func GetCollectorManager() *CollectorManager {
@@ -1519,9 +1678,7 @@ func GetCollectorManager() *CollectorManager {
 	defer globalCollectorMu.Unlock()
 	if globalCollectorManager == nil {
 		globalCollectorManager = newCollectorManagerFromConfig(globalCollectorConfig, nil)
-		return globalCollectorManager
 	}
-	globalCollectorManager.ApplyConfig(globalCollectorConfig, globalCollectorManager.requiredItemsSnapshot())
 	return globalCollectorManager
 }
 
@@ -1537,6 +1694,12 @@ func GetCollectorManagerWithConfig(requiredItems []string, networkInterface stri
 	return globalCollectorManager
 }
 
+func CurrentCollectorManager() *CollectorManager {
+	globalCollectorMu.RLock()
+	defer globalCollectorMu.RUnlock()
+	return globalCollectorManager
+}
+
 func SetGlobalCollectorConfig(config *MonitorConfig) {
 	globalCollectorMu.Lock()
 	defer globalCollectorMu.Unlock()
@@ -1547,8 +1710,8 @@ func SetGlobalCollectorConfig(config *MonitorConfig) {
 }
 
 func GetGlobalCollectorConfig() *MonitorConfig {
-	globalCollectorMu.Lock()
-	defer globalCollectorMu.Unlock()
+	globalCollectorMu.RLock()
+	defer globalCollectorMu.RUnlock()
 	return globalCollectorConfig
 }
 

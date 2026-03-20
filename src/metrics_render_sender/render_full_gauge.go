@@ -44,7 +44,7 @@ func (r *FullGaugeRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 		body.h = 1
 	}
 
-	r.drawBody(dc, item, monitor, fontCache, value, numberValue, body, config)
+	r.drawBody(dc, item, frame, monitor, fontCache, value, numberValue, body, config)
 	drawBaseItemBorder(dc, item, config, cardRadius)
 	return nil
 }
@@ -52,6 +52,7 @@ func (r *FullGaugeRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 func (r *FullGaugeRenderer) drawBody(
 	dc *gg.Context,
 	item *ItemConfig,
+	frame *RenderFrame,
 	monitor *RenderMonitorSnapshot,
 	fontCache *FontCache,
 	value *CollectValue,
@@ -59,7 +60,8 @@ func (r *FullGaugeRenderer) drawBody(
 	body fullRect,
 	config *MonitorConfig,
 ) {
-	minValue, maxValue := resolveEffectiveMinMax(item, value, 0, 100)
+	history := appendFrameRenderHistory(frame, item, numberValue)
+	minValue, maxValue := resolveEffectiveMinMax(item, value, history, numberValue)
 	progress := normalizeRatio(numberValue, minValue, maxValue)
 	lineColor := resolveMonitorColor(item, monitor, config)
 	textColor := resolveItemStaticColor(item, config)

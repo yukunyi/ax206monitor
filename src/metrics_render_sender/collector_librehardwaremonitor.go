@@ -59,7 +59,6 @@ func NewLibreHardwareMonitorCollector(cfg *MonitorConfig) *LibreHardwareMonitorC
 		BaseCollector: NewBaseCollector(collectorLibreHardwareMonitor),
 		sources:       make(map[string]string),
 	}
-	collector.ApplyConfig(cfg)
 	return collector
 }
 
@@ -112,10 +111,13 @@ func (c *LibreHardwareMonitorCollector) GetAllItems() map[string]*CollectItem {
 		if name == "" {
 			continue
 		}
-		if c.getItem(name) != nil {
+		unit := strings.TrimSpace(option.Unit)
+		if item := c.getItem(name); item != nil {
+			if unit != "" {
+				item.SetUnit(unit)
+			}
 			continue
 		}
-		unit := strings.TrimSpace(option.Unit)
 		precision := 2
 		maxValue := 0.0
 		switch strings.ToUpper(unit) {
@@ -154,13 +156,10 @@ func (c *LibreHardwareMonitorCollector) UpdateItems() error {
 		if item == nil || !item.IsEnabled() {
 			continue
 		}
-		value, unit, ok, err := client.GetMonitorValueByNameCached(sourceName)
+		value, _, ok, err := client.GetMonitorValueByNameCached(sourceName)
 		if err != nil || !ok {
 			item.SetAvailable(false)
 			continue
-		}
-		if strings.TrimSpace(unit) != "" {
-			item.SetUnit(unit)
 		}
 		item.SetValue(value)
 		item.SetAvailable(true)

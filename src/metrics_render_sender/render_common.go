@@ -447,17 +447,3 @@ func resolveItemHistoryPoints(item *ItemConfig, config *MonitorConfig, fallback 
 	}
 	return fallback
 }
-
-func resolveEffectiveMinMax(item *ItemConfig, monitorValue *CollectValue, fallbackMin float64, fallbackMax float64) (float64, float64) {
-	minValue := fallbackMin
-	maxValue := fallbackMax
-	if monitorValue != nil {
-		minValue = monitorValue.Min
-		maxValue = monitorValue.Max
-	}
-	if maxValue <= minValue {
-		maxValue = minValue + 1
-	}
-	_ = item
-	return minValue, maxValue
-}

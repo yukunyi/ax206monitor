@@ -67,8 +67,25 @@ func TestTCPPushReusesConnectionAcrossFrames(t *testing.T) {
 		mu.Unlock()
 
 		reader := bufio.NewReader(serverConn)
+		request, readErr := readTCPPushTestRequest(reader)
+		if readErr != nil {
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
+		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:       true,
+			ShouldSendFrame: true,
+		})
+		if writeErr := writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityReady),
+		}); writeErr != nil {
+			return
+		}
+
 		for idx := 0; idx < 2; idx++ {
-			request, readErr := readTCPPushTestRequest(reader)
+			request, readErr = readTCPPushTestRequest(reader)
 			if readErr != nil {
 				return
 			}
@@ -102,25 +119,25 @@ func TestTCPPushReusesConnectionAcrossFrames(t *testing.T) {
 	if connCount != 1 {
 		t.Fatalf("expected 1 tcp connection, got %d", connCount)
 	}
-	if len(requests) != 2 {
-		t.Fatalf("expected 2 requests, got %#v", requests)
+	if len(requests) != 3 {
+		t.Fatalf("expected 3 requests, got %#v", requests)
 	}
-	if requests[0].Opcode != tcpPushOpcodePushFrame || requests[1].Opcode != tcpPushOpcodePushFrame {
+	if requests[0].Opcode != tcpPushOpcodeQueryAvailability || requests[1].Opcode != tcpPushOpcodePushFrame || requests[2].Opcode != tcpPushOpcodePushFrame {
 		t.Fatalf("unexpected opcodes: %#v", requests)
 	}
-	if requests[0].Codec != tcpPushCodecJPEG || requests[1].Codec != tcpPushCodecJPEG {
+	if requests[1].Codec != tcpPushCodecJPEG || requests[2].Codec != tcpPushCodecJPEG {
 		t.Fatalf("unexpected codecs: %#v", requests)
 	}
-	if requests[0].Token != "secret-token" || requests[1].Token != "secret-token" {
+	if requests[0].Token != "secret-token" || requests[1].Token != "secret-token" || requests[2].Token != "secret-token" {
 		t.Fatalf("unexpected token values: %#v", requests)
 	}
-	if requests[0].FileName != "frame-test.jpg" || requests[1].FileName != "frame-test.jpg" {
+	if requests[1].FileName != "frame-test.jpg" || requests[2].FileName != "frame-test.jpg" {
 		t.Fatalf("unexpected file names: %#v", requests)
 	}
-	if requests[0].PayloadSize == 0 || requests[1].PayloadSize == 0 {
+	if requests[1].PayloadSize == 0 || requests[2].PayloadSize == 0 {
 		t.Fatalf("unexpected payload sizes: %#v", requests)
 	}
-	if requests[0].Seq == 0 || requests[1].Seq != requests[0].Seq+1 {
+	if requests[0].Seq == 0 || requests[1].Seq != requests[0].Seq+1 || requests[2].Seq != requests[1].Seq+1 {
 		t.Fatalf("unexpected seq values: %#v", requests)
 	}
 }
@@ -264,6 +281,20 @@ func TestTCPPushLogsConnectAndDisconnect(t *testing.T) {
 		if readErr != nil {
 			return
 		}
+		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:       true,
+			ShouldSendFrame: true,
+		})
+		if writeErr := writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityReady),
+		}); writeErr != nil {
+			return
+		}
+
+		request, readErr = readTCPPushTestRequest(reader)
+		if readErr != nil {
+			return
+		}
 		_ = writeTCPPushTestResponse(serverConn, request, 200, "ok", "", "render")
 	}()
 
@@ -284,12 +315,6 @@ func TestTCPPushLogsConnectAndDisconnect(t *testing.T) {
 	if !strings.Contains(joined, "tcppush: Connected addr=") {
 		t.Fatalf("expected connect log, got %q", joined)
 	}
-	if !strings.Contains(joined, "tcppush: ACK status=200") {
-		t.Fatalf("expected ack log, got %q", joined)
-	}
-	if !strings.Contains(joined, "stage=\"render\"") {
-		t.Fatalf("expected ack stage log, got %q", joined)
-	}
 	if !strings.Contains(joined, "protocol=ESP32MON/3-JSONACK") {
 		t.Fatalf("expected protocol log, got %q", joined)
 	}
@@ -302,11 +327,92 @@ func TestTCPPushLogsConnectAndDisconnect(t *testing.T) {
 	if !strings.Contains(joined, "tcppush: Disconnected reason=handler closed") {
 		t.Fatalf("expected disconnect log, got %q", joined)
 	}
+	if strings.Contains(joined, "ACK status=") {
+		t.Fatalf("expected no per-frame ack info log, got %q", joined)
+	}
+}
+
+func TestTCPPushLogsSlowAckAsWarn(t *testing.T) {
+	var warns []string
+	var logMu sync.Mutex
+	SetLoggerHooks(LoggerHooks{
+		WarnModule: func(module, format string, args ...interface{}) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			warns = append(warns, module+": "+fmt.Sprintf(format, args...))
+		},
+	})
+	defer SetLoggerHooks(LoggerHooks{})
+
+	handler, serverConn := newTCPPushPipeHandler(OutputConfig{
+		Type:           TypeTCPPush,
+		URL:            "tcp://127.0.0.1:9100",
+		Format:         "jpeg",
+		Quality:        75,
+		UploadToken:    "slow-token",
+		TimeoutMS:      3000,
+		IdleTimeoutSec: 120,
+		FileName:       "frame-test.jpg",
+	}, TypeTCPPush)
+	defer serverConn.Close()
+	defer handler.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+
+		request, readErr := readTCPPushTestRequest(reader)
+		if readErr != nil {
+			return
+		}
+		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:       true,
+			ShouldSendFrame: true,
+		})
+		if writeErr := writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityReady),
+		}); writeErr != nil {
+			return
+		}
+
+		request, readErr = readTCPPushTestRequest(reader)
+		if readErr != nil {
+			return
+		}
+		_ = writeTCPPushTestResponseWithOptions(serverConn, request, 200, "ok", "", "render", tcpPushTestResponseOptions{
+			TotalMS:    2600,
+			ValidateMS: 400,
+			RenderMS:   2200,
+		})
+	}()
+
+	if err := handler.doRequestFromFrame(NewOutputFrame(image.NewRGBA(image.Rect(0, 0, 4, 4)))); err != nil {
+		t.Fatalf("push failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tcp slow-ack test server did not finish")
+	}
+
+	logMu.Lock()
+	defer logMu.Unlock()
+	joined := strings.Join(warns, "\n")
+	if !strings.Contains(joined, "tcppush: Slow ACK") {
+		t.Fatalf("expected slow ack warn, got %q", joined)
+	}
+	if !strings.Contains(joined, "total_ms=2600") {
+		t.Fatalf("expected slow ack total_ms, got %q", joined)
+	}
 }
 
 func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 	var requests []tcpPushTestRequest
 	var mu sync.Mutex
+	busyCheck := 120 * time.Millisecond
 
 	handler, serverConn := newTCPPushPipeHandler(OutputConfig{
 		Type:           TypeTCPPush,
@@ -316,6 +422,7 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 		UploadToken:    "secret-token",
 		TimeoutMS:      3000,
 		IdleTimeoutSec: 120,
+		BusyCheckMS:    int(busyCheck / time.Millisecond),
 		FileName:       "frame-test.jpg",
 	}, TypeTCPPush)
 	defer serverConn.Close()
@@ -334,6 +441,21 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 		mu.Lock()
 		requests = append(requests, request)
 		mu.Unlock()
+		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:       true,
+			ShouldSendFrame: true,
+		})
+		_ = writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityReady),
+		})
+
+		request, err = readTCPPushTestRequest(reader)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
 		_ = writeTCPPushTestResponse(serverConn, request, 503, "discarded", "low priority session", "busy")
 
 		request, err = readTCPPushTestRequest(reader)
@@ -343,31 +465,7 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 		mu.Lock()
 		requests = append(requests, request)
 		mu.Unlock()
-		availabilityBlocked, _ := json.Marshal(tcpPushAvailabilityTestResponse{
-			Available:         false,
-			ShouldSendFrame:   false,
-			UserPriority:      1,
-			HighestPriority:   9,
-			ActivePriority:    9,
-			ActiveSessionID:   "session-a",
-			ActiveUser:        "user-high",
-			LowerPriorityMode: "discard",
-			Reason:            "higher priority session active",
-		})
-		_ = writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
-			BodyOverride: string(availabilityBlocked),
-		})
-
-		time.Sleep(tcpPushAvailabilityProbeInterval + 200*time.Millisecond)
-
-		request, err = readTCPPushTestRequest(reader)
-		if err != nil {
-			return
-		}
-		mu.Lock()
-		requests = append(requests, request)
-		mu.Unlock()
-		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+		availabilityReady, _ = json.Marshal(tcpPushAvailabilityTestResponse{
 			Available:         true,
 			ShouldSendFrame:   true,
 			UserPriority:      1,
@@ -396,15 +494,15 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 		t.Fatalf("first push failed: %v", err)
 	}
 	if err := handler.doRequestFromFrame(NewOutputFrame(image.NewRGBA(image.Rect(0, 0, 8, 8)))); err != nil {
-		t.Fatalf("probe push failed: %v", err)
+		t.Fatalf("busy-wait push failed: %v", err)
 	}
-	time.Sleep(tcpPushAvailabilityProbeInterval + 250*time.Millisecond)
+	time.Sleep(busyCheck + 80*time.Millisecond)
 	if err := handler.doRequestFromFrame(NewOutputFrame(image.NewRGBA(image.Rect(0, 0, 8, 8)))); err != nil {
 		t.Fatalf("resume push failed: %v", err)
 	}
 
 	stats := GetTCPPushAvailabilityStats()[TypeTCPPush]
-	if !stats.Connected || !stats.CanSend || stats.ProbeMode {
+	if !stats.Connected || !stats.CanSend || stats.BusyWait {
 		t.Fatalf("unexpected tcp push stats: %#v", stats)
 	}
 
@@ -419,11 +517,11 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 	if len(requests) != 4 {
 		t.Fatalf("expected 4 requests, got %#v", requests)
 	}
-	if requests[0].Opcode != tcpPushOpcodePushFrame {
-		t.Fatalf("expected first request push_frame, got %#v", requests)
+	if requests[0].Opcode != tcpPushOpcodeQueryAvailability {
+		t.Fatalf("expected first request query_availability, got %#v", requests)
 	}
-	if requests[1].Opcode != tcpPushOpcodeQueryAvailability {
-		t.Fatalf("expected second request query_availability, got %#v", requests)
+	if requests[1].Opcode != tcpPushOpcodePushFrame {
+		t.Fatalf("expected second request push_frame, got %#v", requests)
 	}
 	if requests[2].Opcode != tcpPushOpcodeQueryAvailability {
 		t.Fatalf("expected third request query_availability, got %#v", requests)
@@ -433,16 +531,170 @@ func TestTCPPushSwitchesToAvailabilityProbeOnDiscarded(t *testing.T) {
 	}
 }
 
+func TestTCPPushWaitsWhenAvailabilityQueryReportsBusy(t *testing.T) {
+	var requests []tcpPushTestRequest
+	var mu sync.Mutex
+	busyCheck := 120 * time.Millisecond
+
+	handler, serverConn := newTCPPushPipeHandler(OutputConfig{
+		Type:           TypeTCPPush,
+		URL:            "tcp://127.0.0.1:9100",
+		Format:         "jpeg",
+		Quality:        75,
+		UploadToken:    "secret-token",
+		TimeoutMS:      3000,
+		IdleTimeoutSec: 120,
+		BusyCheckMS:    int(busyCheck / time.Millisecond),
+		FileName:       "frame-test.jpg",
+	}, TypeTCPPush)
+	defer serverConn.Close()
+	defer handler.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+
+		request, err := readTCPPushTestRequest(reader)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
+		availabilityBlocked, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:         false,
+			ShouldSendFrame:   false,
+			UserPriority:      1,
+			HighestPriority:   9,
+			ActivePriority:    9,
+			ActiveSessionID:   "session-a",
+			ActiveUser:        "user-high",
+			LowerPriorityMode: "discard",
+			Reason:            "higher priority session active",
+		})
+		_ = writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityBlocked),
+		})
+
+		request, err = readTCPPushTestRequest(reader)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
+		availabilityReady, _ := json.Marshal(tcpPushAvailabilityTestResponse{
+			Available:         true,
+			ShouldSendFrame:   true,
+			UserPriority:      1,
+			HighestPriority:   1,
+			ActivePriority:    1,
+			ActiveSessionID:   "session-a",
+			ActiveUser:        "user-low",
+			LowerPriorityMode: "discard",
+		})
+		_ = writeTCPPushTestResponseWithOptions(serverConn, request, 200, "", "", "", tcpPushTestResponseOptions{
+			BodyOverride: string(availabilityReady),
+		})
+
+		request, err = readTCPPushTestRequest(reader)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
+		_ = writeTCPPushTestResponse(serverConn, request, 200, "ok", "", "render")
+	}()
+
+	frame := NewOutputFrame(image.NewRGBA(image.Rect(0, 0, 8, 8)))
+	if err := handler.doRequestFromFrame(frame); err != nil {
+		t.Fatalf("initial availability query failed: %v", err)
+	}
+	if err := handler.doRequestFromFrame(frame); err != nil {
+		t.Fatalf("busy-wait frame failed: %v", err)
+	}
+	time.Sleep(busyCheck + 80*time.Millisecond)
+	if err := handler.doRequestFromFrame(frame); err != nil {
+		t.Fatalf("resume frame failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("tcp availability-busy test server did not finish")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 3 {
+		t.Fatalf("expected 3 requests, got %#v", requests)
+	}
+	if requests[0].Opcode != tcpPushOpcodeQueryAvailability {
+		t.Fatalf("expected first request query_availability, got %#v", requests)
+	}
+	if requests[1].Opcode != tcpPushOpcodeQueryAvailability {
+		t.Fatalf("expected second request query_availability, got %#v", requests)
+	}
+	if requests[2].Opcode != tcpPushOpcodePushFrame {
+		t.Fatalf("expected third request push_frame, got %#v", requests)
+	}
+}
+
+func TestWriteTCPPushRequestUsesSingleWriteForCompletePacket(t *testing.T) {
+	request := &tcpPushRequest{
+		Opcode:       tcpPushOpcodePushFrame,
+		Codec:        tcpPushCodecJPEG,
+		Seq:          7,
+		Width:        64,
+		Height:       32,
+		PaletteCount: 0,
+		Token:        []byte("token"),
+		FileName:     []byte("frame.jpg"),
+		Payload:      []byte{1, 2, 3, 4, 5, 6},
+	}
+	writer := &tcpPushCountingWriter{}
+	if err := writeTCPPushRequest(writer, request); err != nil {
+		t.Fatalf("write request failed: %v", err)
+	}
+	if writer.writes != 1 {
+		t.Fatalf("expected single write, got %d", writer.writes)
+	}
+	decoded, err := readTCPPushTestRequest(bufio.NewReader(strings.NewReader(string(writer.data))))
+	if err != nil {
+		t.Fatalf("decode request failed: %v", err)
+	}
+	if decoded.Opcode != request.Opcode || decoded.Codec != request.Codec || decoded.Seq != request.Seq {
+		t.Fatalf("unexpected decoded header: %#v", decoded)
+	}
+	if decoded.Token != string(request.Token) || decoded.FileName != string(request.FileName) || decoded.PayloadSize != len(request.Payload) {
+		t.Fatalf("unexpected decoded payload fields: %#v", decoded)
+	}
+}
+
 func newTCPPushPipeHandler(cfg OutputConfig, typeName string) (*TCPPushOutputHandler, net.Conn) {
 	clientConn, serverConn := net.Pipe()
 	handler := NewTCPPushOutputHandler(cfg, typeName)
 	handler.connMu.Lock()
 	handler.conn = clientConn
-	handler.reader = bufio.NewReader(clientConn)
+	handler.reader = bufio.NewReaderSize(clientConn, tcpPushSocketBufferBytes)
 	handler.lastUsed = time.Now()
 	handler.connMu.Unlock()
 	handler.logConnected("pipe")
 	return handler, serverConn
+}
+
+type tcpPushCountingWriter struct {
+	writes int
+	data   []byte
+}
+
+func (w *tcpPushCountingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	w.data = append(w.data, p...)
+	return len(p), nil
 }
 
 func readTCPPushTestRequest(reader *bufio.Reader) (tcpPushTestRequest, error) {

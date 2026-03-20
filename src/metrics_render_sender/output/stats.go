@@ -35,7 +35,8 @@ type AX206DeviceFrameRuntimeStats struct {
 type TCPPushAvailabilityStats struct {
 	Type              string `json:"type"`
 	Connected         bool   `json:"connected"`
-	ProbeMode         bool   `json:"probe_mode"`
+	BusyWait          bool   `json:"busy_wait"`
+	ProbeMode         bool   `json:"probe_mode,omitempty"`
 	Available         bool   `json:"available"`
 	ShouldSendFrame   bool   `json:"should_send_frame"`
 	CanSend           bool   `json:"can_send"`

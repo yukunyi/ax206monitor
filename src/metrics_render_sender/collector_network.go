@@ -11,10 +11,12 @@ import (
 )
 
 type goNativeNetworkSlot struct {
-	uploadItem   *CollectItem
-	downloadItem *CollectItem
-	ipItem       *CollectItem
-	nameItem     *CollectItem
+	uploadItem    *CollectItem
+	downloadItem  *CollectItem
+	ipItem        *CollectItem
+	nameItem      *CollectItem
+	interfaceName string
+	ipv4          string
 }
 
 type GoNativeNetworkCollector struct {
@@ -62,7 +64,11 @@ func (c *GoNativeNetworkCollector) requiredMaxIndex() int {
 }
 
 func (c *GoNativeNetworkCollector) ensureSlots() {
-	detected := len(getActiveNetworkInterfaces())
+	names, _ := getActiveNetworkInterfacesAndIPv4()
+	c.ensureSlotsForCount(len(names))
+}
+
+func (c *GoNativeNetworkCollector) ensureSlotsForCount(detected int) {
 	requiredMax := c.requiredMaxIndex()
 	slotCount := max(detected, requiredMax)
 	if slotCount > 16 {
@@ -87,10 +93,12 @@ func (c *GoNativeNetworkCollector) ensureSlots() {
 }
 
 func (c *GoNativeNetworkCollector) GetAllItems() map[string]*CollectItem {
-	c.ensureSlots()
 	interfaces, ipv4ByName := getActiveNetworkInterfacesAndIPv4()
+	c.ensureSlotsForCount(len(interfaces))
 	for index, slot := range c.slots {
 		iface := resolveInterfaceByIndex(interfaces, index)
+		slot.interfaceName = iface
+		slot.ipv4 = strings.TrimSpace(ipv4ByName[iface])
 		if strings.TrimSpace(iface) == "" {
 			slot.nameItem.SetValue("-")
 			slot.nameItem.SetAvailable(false)
@@ -100,7 +108,7 @@ func (c *GoNativeNetworkCollector) GetAllItems() map[string]*CollectItem {
 		}
 		slot.nameItem.SetValue(iface)
 		slot.nameItem.SetAvailable(true)
-		ip := strings.TrimSpace(ipv4ByName[iface])
+		ip := slot.ipv4
 		if ip == "" {
 			slot.ipItem.SetValue("-")
 			slot.ipItem.SetAvailable(false)
@@ -116,33 +124,22 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
-	c.ensureSlots()
-	interfaces, ipv4ByName := getActiveNetworkInterfacesAndIPv4()
-	speedByName := getNetworkSpeedSnapshots(interfaces)
-
-	for index, slot := range c.slots {
-		iface := resolveInterfaceByIndex(interfaces, index)
-		if slot.nameItem.IsEnabled() {
-			if strings.TrimSpace(iface) == "" {
-				slot.nameItem.SetValue("-")
-				slot.nameItem.SetAvailable(false)
-			} else {
-				slot.nameItem.SetValue(iface)
-				slot.nameItem.SetAvailable(true)
-			}
+	interfaceNames := make([]string, 0, len(c.slots))
+	for _, slot := range c.slots {
+		if slot == nil {
+			continue
 		}
-		if slot.ipItem.IsEnabled() {
-			ip := strings.TrimSpace(ipv4ByName[iface])
-			if ip == "" {
-				slot.ipItem.SetValue("-")
-				slot.ipItem.SetAvailable(false)
-			} else {
-				slot.ipItem.SetValue(ip)
-				slot.ipItem.SetAvailable(true)
-			}
+		if name := strings.TrimSpace(slot.interfaceName); name != "" {
+			interfaceNames = append(interfaceNames, name)
 		}
+	}
+	speedByName := getNetworkSpeedSnapshots(interfaceNames)
 
-		if strings.TrimSpace(iface) == "" {
+	for _, slot := range c.slots {
+		if slot == nil {
+			continue
+		}
+		if strings.TrimSpace(slot.interfaceName) == "" {
 			if slot.uploadItem.IsEnabled() {
 				slot.uploadItem.SetAvailable(false)
 			}
@@ -153,7 +150,7 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 		}
 
 		if slot.uploadItem.IsEnabled() {
-			if speed, ok := speedByName[iface]; ok && speed.OK {
+			if speed, ok := speedByName[slot.interfaceName]; ok && speed.OK {
 				slot.uploadItem.SetValue(speed.Upload)
 				slot.uploadItem.SetAvailable(true)
 			} else {
@@ -161,7 +158,7 @@ func (c *GoNativeNetworkCollector) UpdateItems() error {
 			}
 		}
 		if slot.downloadItem.IsEnabled() {
-			if speed, ok := speedByName[iface]; ok && speed.OK {
+			if speed, ok := speedByName[slot.interfaceName]; ok && speed.OK {
 				slot.downloadItem.SetValue(speed.Download)
 				slot.downloadItem.SetAvailable(true)
 			} else {

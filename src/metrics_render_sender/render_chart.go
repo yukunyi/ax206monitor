@@ -6,14 +6,10 @@ import (
 	"github.com/fogleman/gg"
 )
 
-type LineChartRenderer struct {
-	history *renderHistoryStore
-}
+type LineChartRenderer struct{}
 
 func NewLineChartRenderer() *LineChartRenderer {
-	return &LineChartRenderer{
-		history: newRenderHistoryStore(),
-	}
+	return &LineChartRenderer{}
 }
 
 func (c *LineChartRenderer) GetType() string {
@@ -30,18 +26,12 @@ func (c *LineChartRenderer) Render(dc *gg.Context, item *ItemConfig, frame *Rend
 		return nil
 	}
 
-	history := appendRenderHistory(c.history, item, val)
+	history := appendFrameRenderHistory(frame, item, val)
 
 	radius := resolveItemRadius(item, config, 0)
 	drawRoundedBackground(dc, item.X, item.Y, item.Width, item.Height, resolveItemBackground(item, config), radius)
 
-	minVal := historyMin(history)
-	maxVal := historyMax(history)
-	if maxVal <= minVal {
-		drawBaseItemBorder(dc, item, config, radius)
-		return nil
-	}
-	minVal, maxVal = resolveEffectiveMinMax(item, value, minVal, maxVal)
+	minVal, maxVal := resolveEffectiveMinMax(item, value, history, val)
 
 	lineColor := resolveMonitorColor(item, monitor, config)
 	lineWidth := item.runtime.simpleChart.lineWidth

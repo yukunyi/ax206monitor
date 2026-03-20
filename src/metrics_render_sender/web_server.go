@@ -1092,13 +1092,21 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 		}
 		if item.Type == itemTypeFullTable {
 			item.Unit = ""
+			item.MinValue = nil
+			item.MaxValue = nil
 			normalizeFullTableItemAttrs(item)
 		} else if isCollectorItemType(item.Type) {
 			if strings.TrimSpace(item.Unit) == "" {
 				item.Unit = "auto"
 			}
+			if !isRangeItemType(item.Type) {
+				item.MinValue = nil
+				item.MaxValue = nil
+			}
 		} else {
 			item.Unit = ""
+			item.MinValue = nil
+			item.MaxValue = nil
 			if item.RenderAttrsMap != nil {
 				delete(item.RenderAttrsMap, "rows")
 				delete(item.RenderAttrsMap, "columns")
