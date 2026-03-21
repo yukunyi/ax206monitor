@@ -4,6 +4,7 @@ package rtss
 
 import (
 	"math"
+	"sort"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -92,6 +93,8 @@ type appEntry struct {
 var (
 	minAppEntrySize = uint32(unsafe.Offsetof(appEntry{}.FrameTime) + unsafe.Sizeof(appEntry{}.FrameTime))
 	rawFPSFieldEnd  = uint32(unsafe.Offsetof(appEntry{}.StatFrameTimeBufFramerate) + unsafe.Sizeof(appEntry{}.StatFrameTimeBufFramerate))
+
+	statFrameTimeBufEnd = uint32(unsafe.Offsetof(appEntry{}.StatFrameTimeBuf) + unsafe.Sizeof(appEntry{}.StatFrameTimeBuf))
 )
 
 func ReadMetrics() (Metrics, bool) {
@@ -131,6 +134,14 @@ func ReadMetrics() (Metrics, bool) {
 	appBase := uintptr(view) + uintptr(header.AppArrOffset)
 	entrySize := uintptr(header.AppEntrySize)
 
+	var (
+		bestEntry *appEntry
+		bestFPS   float64
+
+		foregroundEntry *appEntry
+		foregroundFPS   float64
+	)
+
 	for i := uint32(0); i < header.AppArrSize; i++ {
 		entry := appBase + uintptr(i)*entrySize
 		current := (*appEntry)(unsafe.Pointer(entry))
@@ -145,15 +156,116 @@ func ReadMetrics() (Metrics, bool) {
 		if metrics.MaxFPS < fps {
 			metrics.MaxFPS = fps
 		}
+		if fps > bestFPS {
+			bestFPS = fps
+			bestEntry = current
+		}
 		if foregroundPID != 0 && current.ProcessID == foregroundPID {
-			metrics.ForegroundFPS = fps
+			foregroundEntry = current
+			foregroundFPS = fps
 		}
 	}
 
-	if metrics.ForegroundFPS <= 0 {
-		metrics.ForegroundFPS = metrics.MaxFPS
+	selected := foregroundEntry
+	selectedFPS := foregroundFPS
+	if selected == nil {
+		selected = bestEntry
+		selectedFPS = bestFPS
 	}
+	metrics.ForegroundFPS = selectedFPS
+	if selected != nil {
+		metrics.ForegroundFrameTimeInstantMS = readFrameTimeMS(selected)
+		readFrameTimeStatsFromBuffer(&metrics, selected, header.Version, header.AppEntrySize)
+	}
+	metrics.Connected = true
 	return metrics, true
+}
+
+func readFrameTimeMS(entry *appEntry) float64 {
+	if entry == nil || entry.FrameTime == 0 {
+		return 0
+	}
+	// dwFrameTime is in microseconds per frame.
+	return float64(entry.FrameTime) / 1000.0
+}
+
+func readFrameTimeStatsFromBuffer(out *Metrics, entry *appEntry, version uint32, appEntrySize uint32) {
+	if out == nil || entry == nil {
+		return
+	}
+	// RTSS v2.5 introduced frame time statistics and the 1024-entry frame time buffer.
+	if version < versionFPSRaw || appEntrySize < statFrameTimeBufEnd {
+		return
+	}
+
+	samples := make([]float64, 0, 1024)
+	for _, us := range entry.StatFrameTimeBuf {
+		if us == 0 {
+			continue
+		}
+		ms := float64(us) / 1000.0
+		if ms <= 0 || math.IsNaN(ms) || math.IsInf(ms, 0) {
+			continue
+		}
+		samples = append(samples, ms)
+	}
+	if len(samples) == 0 {
+		return
+	}
+
+	sumMS := 0.0
+	sumFPS := 0.0
+	minMS := samples[0]
+	maxMS := samples[0]
+	for _, ms := range samples {
+		sumMS += ms
+		if ms < minMS {
+			minMS = ms
+		}
+		if ms > maxMS {
+			maxMS = ms
+		}
+		fps := sanitizeFPSFloat(1000.0 / ms)
+		sumFPS += fps
+	}
+	out.ForegroundFTMinMS = minMS
+	out.ForegroundFTAvgMS = sumMS / float64(len(samples))
+	out.ForegroundFTMaxMS = maxMS
+	out.ForegroundFPSAvg = sanitizeFPSFloat(sumFPS / float64(len(samples)))
+
+	sort.Float64s(samples)
+	n := len(samples)
+	p99Idx := percentileIndex(n, 0.99)
+	p999Idx := percentileIndex(n, 0.999)
+	out.ForegroundFTP99MS = samples[p99Idx]
+	out.ForegroundFTP999MS = samples[p999Idx]
+	if out.ForegroundFTP99MS > 0 {
+		out.ForegroundFPS1PLow = sanitizeFPSFloat(1000.0 / out.ForegroundFTP99MS)
+	}
+	if out.ForegroundFTP999MS > 0 {
+		out.ForegroundFPS01PLow = sanitizeFPSFloat(1000.0 / out.ForegroundFTP999MS)
+	}
+}
+
+func percentileIndex(n int, p float64) int {
+	if n <= 1 {
+		return 0
+	}
+	if p <= 0 {
+		return 0
+	}
+	if p >= 1 {
+		return n - 1
+	}
+	// Ceil(p*n) - 1 matches percentile definition over [0..n-1].
+	idx := int(math.Ceil(p*float64(n))) - 1
+	if idx < 0 {
+		return 0
+	}
+	if idx >= n {
+		return n - 1
+	}
+	return idx
 }
 
 func readEntryFPS(entry *appEntry, version uint32, appEntrySize uint32, nowTick uint32) (float64, bool) {

@@ -36,7 +36,12 @@ func (c *RTSSCollector) ApplyConfig(cfg *MonitorConfig) {
 		c.sources = map[string]string{}
 		c.clearItems()
 		c.mu.Unlock()
+		return
 	}
+
+	// RTSS monitor items are static. When enabled, pre-create them so the UI and
+	// renderer can rely on the items existing even when no game/app is producing FPS.
+	_ = c.GetAllItems()
 }
 
 func (c *RTSSCollector) GetAllItems() map[string]*CollectItem {
@@ -85,11 +90,14 @@ func (c *RTSSCollector) UpdateItems() error {
 			continue
 		}
 		value, unit, ok, err := client.GetMonitorValueByNameCached(sourceName)
+		_ = unit
 		if err != nil || !ok {
-			item.SetAvailable(false)
+			// Keep RTSS items stable: when RTSS is enabled but no active 3D app is running
+			// (or RTSS is temporarily unavailable), return 0 instead of hiding the item.
+			item.SetValue(0.0)
+			item.SetAvailable(true)
 			continue
 		}
-		_ = unit
 		item.SetValue(value)
 		item.SetAvailable(true)
 	}

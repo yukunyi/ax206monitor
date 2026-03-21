@@ -21,48 +21,89 @@ type rtssMonitorEntry struct {
 
 var rtssMonitorEntries = []rtssMonitorEntry{
 	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_connected", Label: "[RTSS] Connected", Unit: ""},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			if metrics.Connected {
+				return 1, true
+			}
+			return 0, true
+		},
+	},
+	{
 		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_fps", Label: "[RTSS] FPS", Unit: "FPS"},
 		read: func(metrics rtss.Metrics) (float64, bool) {
-			if metrics.ForegroundFPS <= 0 {
-				return 0, false
-			}
 			return metrics.ForegroundFPS, true
 		},
 	},
 	{
 		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_ms", Label: "[RTSS] Frame Time", Unit: "ms"},
 		read: func(metrics rtss.Metrics) (float64, bool) {
-			value := metrics.ForegroundFrameTimeMS()
-			if value <= 0 {
-				return 0, false
-			}
-			return value, true
+			return metrics.ForegroundFrameTimeMS(), true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_fps_avg", Label: "[RTSS] FPS Avg", Unit: "FPS"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFPSAvg, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_fps_1p_low", Label: "[RTSS] FPS 1% Low", Unit: "FPS"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFPS1PLow, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_fps_01p_low", Label: "[RTSS] FPS 0.1% Low", Unit: "FPS"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFPS01PLow, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_min_ms", Label: "[RTSS] Frame Time Min", Unit: "ms"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFTMinMS, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_avg_ms", Label: "[RTSS] Frame Time Avg", Unit: "ms"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFTAvgMS, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_max_ms", Label: "[RTSS] Frame Time Max", Unit: "ms"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFTMaxMS, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_p99_ms", Label: "[RTSS] Frame Time p99", Unit: "ms"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFTP99MS, true
+		},
+	},
+	{
+		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_frametime_p999_ms", Label: "[RTSS] Frame Time p99.9", Unit: "ms"},
+		read: func(metrics rtss.Metrics) (float64, bool) {
+			return metrics.ForegroundFTP999MS, true
 		},
 	},
 	{
 		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_max_fps", Label: "[RTSS] Max FPS", Unit: "FPS"},
 		read: func(metrics rtss.Metrics) (float64, bool) {
-			if metrics.MaxFPS <= 0 {
-				return 0, false
-			}
 			return metrics.MaxFPS, true
 		},
 	},
 	{
 		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_active_apps", Label: "[RTSS] Active Apps", Unit: ""},
 		read: func(metrics rtss.Metrics) (float64, bool) {
-			if metrics.ActiveApps < 0 {
-				return 0, false
-			}
 			return float64(metrics.ActiveApps), true
 		},
 	},
 	{
 		RTSSMonitorOption: RTSSMonitorOption{Name: "rtss_foreground_pid", Label: "[RTSS] Foreground PID", Unit: ""},
 		read: func(metrics rtss.Metrics) (float64, bool) {
-			if metrics.ForegroundPID == 0 {
-				return 0, false
-			}
 			return float64(metrics.ForegroundPID), true
 		},
 	},
@@ -108,7 +149,8 @@ func (c *RTSSClient) GetMonitorValueByName(name string) (float64, string, bool, 
 
 	metrics, connected := c.getFreshMetrics(250 * time.Millisecond)
 	if !connected {
-		return 0, entry.Unit, false, nil
+		// Keep monitor values stable even when RTSS is unavailable.
+		return 0, entry.Unit, true, nil
 	}
 	value, available := entry.read(metrics)
 	return value, entry.Unit, available, nil
@@ -130,7 +172,8 @@ func (c *RTSSClient) GetMonitorValueByNameCached(name string) (float64, string, 
 	connected := c.connected
 	c.mu.RUnlock()
 	if !connected {
-		return 0, entry.Unit, false, nil
+		// Keep monitor values stable even when RTSS is unavailable.
+		return 0, entry.Unit, true, nil
 	}
 	value, available := entry.read(metrics)
 	return value, entry.Unit, available, nil
