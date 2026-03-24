@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	githubAPIVersionHeader = "2022-11-28"
-	updateCheckInterval    = 6 * time.Hour
-	updateCheckStartupWait = 8 * time.Second
-	updateHTTPTimeout      = 20 * time.Second
+	githubAPIVersionHeader  = "2022-11-28"
+	updateCheckInterval     = 6 * time.Hour
+	updateCheckStartupWait  = 8 * time.Second
+	updateAPIRequestTimeout = 10 * time.Minute
+	updateAssetTimeout      = 10 * time.Minute
 )
 
 type githubRelease struct {
@@ -56,6 +57,7 @@ type appUpdateState struct {
 type AppUpdater struct {
 	mu             sync.RWMutex
 	client         *http.Client
+	apiBaseURL     string
 	repoOwner      string
 	repoName       string
 	currentVersion string
@@ -66,20 +68,21 @@ type AppUpdater struct {
 	lastError      string
 	latest         *githubRelease
 	onChange       func()
+	executablePath func() (string, error)
 }
 
 func NewAppUpdater(repoURL, currentVersion string) *AppUpdater {
 	owner, repo, ok := parseGitHubRepository(repoURL)
 	normalizedVersion := normalizeVersionString(currentVersion)
-	supported := ok && normalizedVersion != "" && normalizedVersion != "unknown" && runtime.GOOS != "" && runtime.GOARCH != ""
+	supported := ok && runtime.GOOS != "" && runtime.GOARCH != ""
 	return &AppUpdater{
-		client: &http.Client{
-			Timeout: updateHTTPTimeout,
-		},
+		client:         &http.Client{},
+		apiBaseURL:     "https://api.github.com",
 		repoOwner:      owner,
 		repoName:       repo,
 		currentVersion: normalizedVersion,
 		supported:      supported,
+		executablePath: os.Executable,
 	}
 }
 
@@ -156,7 +159,7 @@ func (u *AppUpdater) TriggerCheck() bool {
 }
 
 func (u *AppUpdater) checkLatestRelease() {
-	ctx, cancel := context.WithTimeout(context.Background(), updateHTTPTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), updateAPIRequestTimeout)
 	defer cancel()
 
 	release, err := u.fetchLatestRelease(ctx)
@@ -189,6 +192,14 @@ func (u *AppUpdater) checkLatestRelease() {
 }
 
 func (u *AppUpdater) PrepareUpgrade(currentArgs []string) error {
+	return u.prepareUpgrade(currentArgs, false)
+}
+
+func (u *AppUpdater) ForceUpgrade(currentArgs []string) error {
+	return u.prepareUpgrade(currentArgs, true)
+}
+
+func (u *AppUpdater) prepareUpgrade(currentArgs []string, force bool) error {
 	u.mu.Lock()
 	if !u.supported {
 		u.mu.Unlock()
@@ -203,7 +214,7 @@ func (u *AppUpdater) PrepareUpgrade(currentArgs []string) error {
 	u.mu.Unlock()
 	u.notifyChange()
 
-	err := u.prepareUpgradeLocked(currentArgs)
+	err := u.prepareUpgradeLocked(currentArgs, force)
 
 	u.mu.Lock()
 	u.installing = false
@@ -215,17 +226,17 @@ func (u *AppUpdater) PrepareUpgrade(currentArgs []string) error {
 	return err
 }
 
-func (u *AppUpdater) prepareUpgradeLocked(currentArgs []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), updateHTTPTimeout)
-	defer cancel()
+func (u *AppUpdater) prepareUpgradeLocked(currentArgs []string, force bool) error {
+	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), updateAPIRequestTimeout)
+	defer releaseCancel()
 
-	release, err := u.fetchLatestRelease(ctx)
+	release, err := u.fetchLatestRelease(releaseCtx)
 	if err != nil {
 		return err
 	}
 
 	latestVersion := normalizeVersionString(release.TagName)
-	if !isNewerVersion(u.currentVersion, latestVersion) {
+	if !force && !isNewerVersion(u.currentVersion, latestVersion) {
 		return fmt.Errorf("already on latest version %s", latestVersion)
 	}
 
@@ -240,7 +251,9 @@ func (u *AppUpdater) prepareUpgradeLocked(currentArgs []string) error {
 	}
 
 	archivePath := filepath.Join(tempRoot, asset.Name)
-	if err := u.downloadAsset(ctx, asset, archivePath); err != nil {
+	downloadCtx, downloadCancel := context.WithTimeout(context.Background(), updateAssetTimeout)
+	defer downloadCancel()
+	if err := u.downloadAsset(downloadCtx, asset, archivePath); err != nil {
 		return err
 	}
 
@@ -257,13 +270,17 @@ func (u *AppUpdater) prepareUpgradeLocked(currentArgs []string) error {
 		return err
 	}
 
-	executablePath, err := os.Executable()
+	resolveExecutablePath := u.executablePath
+	if resolveExecutablePath == nil {
+		resolveExecutablePath = os.Executable
+	}
+	executablePath, err := resolveExecutablePath()
 	if err != nil {
 		return fmt.Errorf("resolve current executable failed: %w", err)
 	}
 	executablePath, _ = filepath.EvalSymlinks(executablePath)
 	if executablePath == "" {
-		executablePath, err = os.Executable()
+		executablePath, err = resolveExecutablePath()
 		if err != nil {
 			return fmt.Errorf("resolve current executable failed: %w", err)
 		}
@@ -285,7 +302,11 @@ func (u *AppUpdater) prepareUpgradeLocked(currentArgs []string) error {
 }
 
 func (u *AppUpdater) fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", url.PathEscape(u.repoOwner), url.PathEscape(u.repoName))
+	baseURL := strings.TrimRight(strings.TrimSpace(u.apiBaseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", baseURL, url.PathEscape(u.repoOwner), url.PathEscape(u.repoName))
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build update request failed: %w", err)

@@ -108,7 +108,11 @@ func (t *windowsTray) handleMenuEvents() {
 		case <-t.update.ClickedCh:
 			state := t.updater.State()
 			if state.UpdateAvailable {
-				go t.performUpgrade()
+				go t.performUpgrade(false)
+				continue
+			}
+			if state.LatestVersion != "" {
+				go t.performUpgrade(true)
 				continue
 			}
 			if !t.updater.TriggerCheck() {
@@ -175,6 +179,9 @@ func (t *windowsTray) syncMenuState() {
 	case updateState.UpdateAvailable:
 		t.update.SetTitle(fmt.Sprintf("Upgrade to v%s", updateState.LatestVersion))
 		t.update.Enable()
+	case updateState.LatestVersion != "":
+		t.update.SetTitle(fmt.Sprintf("Reinstall v%s", updateState.LatestVersion))
+		t.update.Enable()
 	default:
 		t.update.SetTitle("Check for Updates")
 		t.update.Enable()
@@ -194,8 +201,14 @@ func (t *windowsTray) syncMenuState() {
 	t.autoRun.SetTitle("Enable Auto Start")
 }
 
-func (t *windowsTray) performUpgrade() {
-	if err := t.updater.PrepareUpgrade(os.Args[1:]); err != nil {
+func (t *windowsTray) performUpgrade(force bool) {
+	var err error
+	if force {
+		err = t.updater.ForceUpgrade(os.Args[1:])
+	} else {
+		err = t.updater.PrepareUpgrade(os.Args[1:])
+	}
+	if err != nil {
 		logWarnModule("update", "prepare upgrade failed: %v", err)
 		t.syncMenuState()
 		return
