@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseGitHubRepository(t *testing.T) {
 	owner, repo, ok := parseGitHubRepository("https://github.com/yukunyi/metrics_render_sender")
@@ -55,5 +58,27 @@ func TestSelectReleaseAsset(t *testing.T) {
 	}
 	if windowsAsset.Name != "metrics_render_sender-windows-amd64-v1.2.3.zip" {
 		t.Fatalf("unexpected windows asset: %s", windowsAsset.Name)
+	}
+}
+
+func TestUpdaterRunWithClosedStartupChannelDoesNotCrash(t *testing.T) {
+	updater := NewAppUpdater(RepositoryURL, "1.0.0")
+	stopCh := make(chan struct{})
+	startupCh := make(chan time.Time)
+	intervalCh := make(chan time.Time)
+	doneCh := make(chan struct{})
+
+	close(startupCh)
+	go func() {
+		defer close(doneCh)
+		updater.runWithChannels(stopCh, startupCh, intervalCh)
+	}()
+
+	close(stopCh)
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("updater loop did not exit")
 	}
 }

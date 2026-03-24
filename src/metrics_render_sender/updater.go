@@ -100,15 +100,22 @@ func (u *AppUpdater) run(stopCh <-chan struct{}) {
 	defer startupTimer.Stop()
 	ticker := time.NewTicker(updateCheckInterval)
 	defer ticker.Stop()
+	u.runWithChannels(stopCh, startupTimer.C, ticker.C)
+}
 
+func (u *AppUpdater) runWithChannels(stopCh <-chan struct{}, startupCh, intervalCh <-chan time.Time) {
 	for {
 		select {
 		case <-stopCh:
 			return
-		case <-startupTimer.C:
+		case _, ok := <-startupCh:
+			if !ok {
+				startupCh = nil
+				continue
+			}
 			u.TriggerCheck()
-			startupTimer = nil
-		case <-ticker.C:
+			startupCh = nil
+		case <-intervalCh:
 			u.TriggerCheck()
 		}
 	}
