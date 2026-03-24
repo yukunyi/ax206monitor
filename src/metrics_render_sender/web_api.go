@@ -2,15 +2,12 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"metrics_render_sender/rtsssource"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/fogleman/gg"
 )
 
 const (
@@ -54,12 +51,10 @@ type WebAPI struct {
 	layoutCache   webSnapshotLayoutCache
 	snapshotCache webSnapshotCache
 	valueCache    map[*CollectItem]webSnapshotValueCache
-	idleProvider  func() (*MonitorConfig, error)
 	previewOutput *MemImgOutputHandler
 	lastProbeCC   string
 	lastProbeLHM  string
 	lastProbeRTSS bool
-	lockMonitor   LockScreenMonitor
 
 	activityMu   sync.RWMutex
 	lastActivity time.Time
@@ -67,12 +62,7 @@ type WebAPI struct {
 	updatedAt    time.Time
 	realtimeConn int32
 	lastEpoch    int64
-
-	lockMu           sync.RWMutex
-	lockScreenActive bool
-	lockPauseEnabled bool
-	lockFrameReady   bool
-	frameStats       webFrameRuntimeStats
+	frameStats   webFrameRuntimeStats
 
 	outputChan chan webOutputFrame
 	outputWg   sync.WaitGroup
@@ -190,12 +180,6 @@ func (r *WebAPI) SetRealtimeConnectionCount(count int) {
 	atomic.StoreInt32(&r.realtimeConn, int32(count))
 }
 
-func (r *WebAPI) SetIdleConfigProvider(provider func() (*MonitorConfig, error)) {
-	r.mu.Lock()
-	r.idleProvider = provider
-	r.mu.Unlock()
-}
-
 func (r *WebAPI) outputLoop() {
 	defer r.outputWg.Done()
 	for frame := range r.outputChan {
@@ -241,25 +225,6 @@ func (r *WebAPI) renderOnce(forceFull bool) (bool, error) {
 	if cfg == nil || registry == nil || renderManager == nil {
 		return false, nil
 	}
-	if r.shouldRenderLockScreen() {
-		result := r.renderLockScreenResult(cfg)
-		replaced, ok := enqueueLatestWebFrame(r.outputChan, webOutputFrame{
-			result:     result,
-			enqueuedAt: time.Now(),
-			modeFull:   modeFull,
-		})
-		if !ok {
-			logDebugModule("web", "output queue busy, skip locked frame")
-			return false, nil
-		}
-		if replaced {
-			logDebugModule("web", "output queue replaced stale frame")
-		}
-		r.setLockFrameReady(true)
-		r.setUpdatedAt(time.Now())
-		return true, nil
-	}
-	r.setLockFrameReady(false)
 
 	waitMax := cfg.GetRenderWaitMaxDuration()
 	currentEpoch := registry.CurrentEpoch()
@@ -342,9 +307,6 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	r.valueCache = make(map[*CollectItem]webSnapshotValueCache)
 	r.lastEpoch = 0
 	r.mu.Unlock()
-	r.setLockPauseEnabled(configCopy.IsPauseCollectOnLockEnabled())
-	r.updateLockMonitorState()
-	r.applyLockPolicy()
 
 	if oldOutputManager != nil && oldOutputManager != outputManager {
 		oldOutputManager.Close()
@@ -468,15 +430,11 @@ func (r *WebAPI) loop() {
 				logInfoModule("web", "Monitor update mode switched to full scan")
 			} else {
 				logInfoModule("web", "Monitor update mode switched to required-only")
-				r.restoreIdleConfig()
 			}
 			lastModeFull = modeFull
 		}
 		cfg, _, _, _, _, _ := r.getRuntimeRefs()
 		if cfg == nil {
-			continue
-		}
-		if r.shouldRenderLockScreen() && r.isLockFrameReady() {
 			continue
 		}
 
@@ -692,156 +650,6 @@ func (r *WebAPI) Close() {
 	if oldOutputManager != nil {
 		oldOutputManager.Close()
 	}
-	r.lockMu.Lock()
-	monitor := r.lockMonitor
-	r.lockMonitor = nil
-	r.lockMu.Unlock()
-	if monitor != nil {
-		monitor.Close()
-	}
-}
-
-func (r *WebAPI) SetSystemLocked(locked bool) {
-	r.lockMu.Lock()
-	changed := r.lockScreenActive != locked
-	r.lockScreenActive = locked
-	if locked {
-		r.lockFrameReady = false
-	}
-	enabled := r.lockPauseEnabled
-	r.lockMu.Unlock()
-
-	r.applyLockPolicy()
-	if !changed {
-		return
-	}
-	if enabled && locked {
-		logInfoModule("main", "lock detected, pause collection and render lock screen")
-	} else if enabled {
-		logInfoModule("main", "unlock detected, resume collection")
-	}
-	go func() {
-		_, _ = r.renderOnce(true)
-	}()
-}
-
-func (r *WebAPI) setLockPauseEnabled(enabled bool) {
-	r.lockMu.Lock()
-	r.lockPauseEnabled = enabled
-	if !enabled {
-		r.lockFrameReady = false
-		r.lockScreenActive = false
-	}
-	r.lockMu.Unlock()
-}
-
-func (r *WebAPI) isLockPauseEnabled() bool {
-	r.lockMu.RLock()
-	defer r.lockMu.RUnlock()
-	return r.lockPauseEnabled
-}
-
-func (r *WebAPI) updateLockMonitorState() {
-	enabled := r.isLockPauseEnabled()
-	r.lockMu.RLock()
-	current := r.lockMonitor
-	r.lockMu.RUnlock()
-
-	if !enabled {
-		if current != nil {
-			current.Close()
-			r.lockMu.Lock()
-			if r.lockMonitor == current {
-				r.lockMonitor = nil
-			}
-			r.lockMu.Unlock()
-		}
-		return
-	}
-	if current != nil {
-		return
-	}
-	monitor, err := StartLockScreenMonitor(func(locked bool) {
-		r.SetSystemLocked(locked)
-	})
-	if err != nil {
-		logWarnModule("main", "lock screen monitor unavailable: %v", err)
-		return
-	}
-	if monitor == nil {
-		return
-	}
-	r.lockMu.Lock()
-	if r.lockPauseEnabled && r.lockMonitor == nil {
-		r.lockMonitor = monitor
-		monitor = nil
-	}
-	r.lockMu.Unlock()
-	if monitor != nil {
-		monitor.Close()
-	}
-}
-
-func (r *WebAPI) shouldRenderLockScreen() bool {
-	r.lockMu.RLock()
-	defer r.lockMu.RUnlock()
-	return r.lockPauseEnabled && r.lockScreenActive
-}
-
-func (r *WebAPI) setLockFrameReady(ready bool) {
-	r.lockMu.Lock()
-	r.lockFrameReady = ready
-	r.lockMu.Unlock()
-}
-
-func (r *WebAPI) isLockFrameReady() bool {
-	r.lockMu.RLock()
-	defer r.lockMu.RUnlock()
-	return r.lockFrameReady
-}
-
-func (r *WebAPI) applyLockPolicy() {
-	r.mu.RLock()
-	registry := r.registry
-	r.mu.RUnlock()
-	if registry == nil {
-		return
-	}
-	registry.SetPaused(r.shouldRenderLockScreen())
-}
-
-func (r *WebAPI) renderLockScreenResult(cfg *MonitorConfig) *RenderResult {
-	width := 480
-	height := 320
-	if cfg != nil {
-		if cfg.Width > 0 {
-			width = cfg.Width
-		}
-		if cfg.Height > 0 {
-			height = cfg.Height
-		}
-	}
-	dc := gg.NewContext(width, height)
-	bg := "#0b1220"
-	color := "#f8fafc"
-	if cfg != nil {
-		bg = cfg.GetDefaultBackgroundColor()
-		color = cfg.GetDefaultTextColor()
-	}
-	dc.SetColor(parseColor(bg))
-	dc.Clear()
-
-	fontSize := int(math.Round(math.Min(float64(width), float64(height)) * 0.16))
-	if fontSize < 24 {
-		fontSize = 24
-	}
-	if fontSize > 64 {
-		fontSize = 64
-	}
-	face := resolveFontFace(r.fontCache, fontSize)
-	dc.SetColor(parseColor(color))
-	drawMetricAnchoredText(dc, face, "已锁屏", float64(width)/2, float64(height)/2, 0.5)
-	return NewRenderResult(dc.Image())
 }
 
 func (r *WebAPI) getRuntimeRefs() (*MonitorConfig, []string, *CollectorManager, *RenderManager, *OutputManager, bool) {
@@ -849,29 +657,6 @@ func (r *WebAPI) getRuntimeRefs() (*MonitorConfig, []string, *CollectorManager, 
 	defer r.mu.RUnlock()
 	requiredCopy := append([]string(nil), r.required...)
 	return r.config, requiredCopy, r.registry, r.renderManager, r.outputManager, r.outputHasMem
-}
-
-func (r *WebAPI) restoreIdleConfig() {
-	r.mu.RLock()
-	provider := r.idleProvider
-	r.mu.RUnlock()
-	if provider == nil {
-		return
-	}
-
-	cfg, err := provider()
-	if err != nil {
-		logWarnModule("web", "load active profile for idle mode failed: %v", err)
-		return
-	}
-	if cfg == nil {
-		return
-	}
-	if err := r.applyConfigInternal(cfg, false); err != nil {
-		logWarnModule("web", "apply active profile for idle mode failed: %v", err)
-		return
-	}
-	_, _ = r.renderOnce(false)
 }
 
 func (r *WebAPI) isFullMode() bool {

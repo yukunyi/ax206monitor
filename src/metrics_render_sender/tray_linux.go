@@ -17,12 +17,14 @@ var trayIconPNG []byte
 
 type linuxTray struct {
 	web     *WebServerProcess
+	updater *AppUpdater
 	readyCh chan struct{}
 	stopCh  chan struct{}
 	mu      sync.Mutex
 	closed  bool
 	openWeb *systray.MenuItem
 	openUI  *systray.MenuItem
+	update  *systray.MenuItem
 	autoRun *systray.MenuItem
 	exit    *systray.MenuItem
 }
@@ -34,6 +36,7 @@ func StartTray(webController *WebServerProcess) (TrayHandle, error) {
 
 	tray := &linuxTray{
 		web:     webController,
+		updater: NewAppUpdater(RepositoryURL, Version),
 		readyCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
 	}
@@ -55,10 +58,13 @@ func (t *linuxTray) onReady() {
 	t.openWeb = systray.AddMenuItem("Open Web Server", "Start web configuration server")
 	t.openUI = systray.AddMenuItem("Open Web Editor", "Open web editor in browser")
 	systray.AddSeparator()
+	t.update = systray.AddMenuItem("Check for Updates", "Check latest release on GitHub")
+	systray.AddSeparator()
 	t.autoRun = systray.AddMenuItem("Enable Auto Start", "Enable auto start for current user")
 	systray.AddSeparator()
 	t.exit = systray.AddMenuItem("Exit", "Exit application")
 	t.openUI.Disable()
+	t.updater.Start(t.stopCh, t.syncMenuState)
 	t.syncMenuState()
 
 	close(t.readyCh)
@@ -98,6 +104,15 @@ func (t *linuxTray) handleMenuEvents() {
 			}
 			if err := openBrowserURL(t.web.URL()); err != nil {
 				logWarnModule("tray", "open browser failed: %v", err)
+			}
+		case <-t.update.ClickedCh:
+			state := t.updater.State()
+			if state.UpdateAvailable {
+				go t.performUpgrade()
+				continue
+			}
+			if !t.updater.TriggerCheck() {
+				t.syncMenuState()
 			}
 		case <-t.autoRun.ClickedCh:
 			enabled, err := IsAutoStartEnabled()
@@ -146,6 +161,25 @@ func (t *linuxTray) syncMenuState() {
 		t.openUI.Disable()
 	}
 
+	updateState := t.updater.State()
+	switch {
+	case !updateState.Supported:
+		t.update.SetTitle("Updates Unavailable")
+		t.update.Disable()
+	case updateState.Installing:
+		t.update.SetTitle("Updating...")
+		t.update.Disable()
+	case updateState.Checking:
+		t.update.SetTitle("Checking Updates...")
+		t.update.Disable()
+	case updateState.UpdateAvailable:
+		t.update.SetTitle(fmt.Sprintf("Upgrade to v%s", updateState.LatestVersion))
+		t.update.Enable()
+	default:
+		t.update.SetTitle("Check for Updates")
+		t.update.Enable()
+	}
+
 	autoEnabled, err := IsAutoStartEnabled()
 	if err != nil {
 		t.autoRun.SetTitle("Auto Start Unavailable")
@@ -158,6 +192,17 @@ func (t *linuxTray) syncMenuState() {
 		return
 	}
 	t.autoRun.SetTitle("Enable Auto Start")
+}
+
+func (t *linuxTray) performUpgrade() {
+	if err := t.updater.PrepareUpgrade(os.Args[1:]); err != nil {
+		logWarnModule("update", "prepare upgrade failed: %v", err)
+		t.syncMenuState()
+		return
+	}
+	logInfoModule("update", "upgrade prepared, restarting application")
+	t.Close()
+	os.Exit(0)
 }
 
 func (t *linuxTray) Close() {

@@ -76,7 +76,7 @@ func main() {
 	if err != nil {
 		logFatal("Config load failed '%s': %v", userConfigPath, err)
 	}
-	profileManager, config, err := InitializeGlobalProfileManager(userConfigPath, config)
+	_, config, err = InitializeGlobalProfileManager(userConfigPath, config)
 	if err != nil {
 		logFatal("Profile initialization failed: %v", err)
 	}
@@ -150,17 +150,6 @@ func main() {
 		logFatal("Runtime initialization failed: %v", err)
 	}
 	defer ReleaseSharedWebAPI(runtimeAPI)
-	runtimeAPI.SetIdleConfigProvider(func() (*MonitorConfig, error) {
-		activeName := strings.TrimSpace(profileManager.ActiveName())
-		if activeName == "" {
-			return loadUserConfigOrDefault(userConfigPath)
-		}
-		cfg, err := profileManager.LoadProfile(activeName)
-		if err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	})
 
 	outputTypes := resolveOutputConfigSummaryFromList(config.Outputs, false).Types
 	webProcessController := NewWebServerProcess(*portFlag, webDevEnabled, devViteURL)

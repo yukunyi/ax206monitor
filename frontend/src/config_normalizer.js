@@ -210,7 +210,7 @@ export function normalizeConfigModel(
   config.font_families = Array.isArray(config.font_families) ? config.font_families : [];
   config.outputs = normalizeOutputs(config.outputs, config.output_types);
   config.output_types = [...new Set(config.outputs.filter((item) => item?.enabled !== false).map((item) => item.type))];
-  config.pause_collect_on_lock = config.pause_collect_on_lock === true;
+  delete config.pause_collect_on_lock;
   config.type_defaults = normalizeTypeDefaults(config.type_defaults, styleKeySet, itemTypesRaw);
   delete config.default_thresholds;
   config.threshold_groups = normalizeThresholdGroups(config.threshold_groups);

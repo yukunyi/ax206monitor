@@ -76,7 +76,6 @@ type MonitorConfig struct {
 	FontFamilies            []string                    `json:"font_families"`
 	Outputs                 []OutputConfig              `json:"outputs"`
 	OutputTypes             []string                    `json:"output_types"`
-	PauseCollectOnLock      bool                        `json:"pause_collect_on_lock,omitempty"`
 	RefreshInterval         int                         `json:"refresh_interval"`
 	CollectWarnMS           int                         `json:"collect_warn_ms,omitempty"`
 	RenderWaitMaxMS         int                         `json:"render_wait_max_ms,omitempty"`
@@ -368,13 +367,6 @@ func (config *MonitorConfig) GetRenderWaitMaxDuration() time.Duration {
 		waitMS = maxByTick
 	}
 	return time.Duration(waitMS) * time.Millisecond
-}
-
-func (config *MonitorConfig) IsPauseCollectOnLockEnabled() bool {
-	if config == nil {
-		return false
-	}
-	return config.PauseCollectOnLock
 }
 
 func (config *MonitorConfig) GetMonitorUpdateWorkers() int {

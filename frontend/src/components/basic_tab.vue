@@ -339,14 +339,6 @@ function formatSuccessCodes(codes) {
                     @update:value="(v) => onField('allow_custom_style', !!v)"
                   />
                 </n-form-item-gi>
-                <n-form-item-gi label="锁屏暂停采集">
-                  <n-switch
-                    :value="config.pause_collect_on_lock === true"
-                    :disabled="readonlyProfile"
-                    size="small"
-                    @update:value="(v) => onField('pause_collect_on_lock', !!v)"
-                  />
-                </n-form-item-gi>
                 <n-form-item-gi label="输出配置" :span="2">
                   <n-table class="collector_table output_table" size="small" striped>
                     <thead>

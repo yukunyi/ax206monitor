@@ -252,17 +252,6 @@ func RunWebServer(options WebServerOptions) error {
 		return err
 	}
 	defer ReleaseSharedWebAPI(runtime)
-	runtime.SetIdleConfigProvider(func() (*MonitorConfig, error) {
-		activeName := profileManager.ActiveName()
-		if strings.TrimSpace(activeName) == "" {
-			return store.getConfig(), nil
-		}
-		cfg, err := profileManager.LoadProfile(activeName)
-		if err != nil {
-			return nil, err
-		}
-		return cfg, nil
-	})
 	store.runtime = runtime
 
 	e := echo.New()
@@ -855,7 +844,6 @@ func loadUserConfigOrDefault(path string) (*MonitorConfig, error) {
 		FontFamilies:            getDefaultFontFamilies(),
 		Outputs:                 getDefaultOutputConfigs(),
 		OutputTypes:             getDefaultOutputTypes(),
-		PauseCollectOnLock:      false,
 		RefreshInterval:         1000,
 		CollectWarnMS:           100,
 		RenderWaitMaxMS:         300,
