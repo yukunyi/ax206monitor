@@ -24,6 +24,7 @@ type linuxTray struct {
 	closed  bool
 	openWeb *systray.MenuItem
 	openUI  *systray.MenuItem
+	viewLog *systray.MenuItem
 	update  *systray.MenuItem
 	autoRun *systray.MenuItem
 	exit    *systray.MenuItem
@@ -57,6 +58,7 @@ func (t *linuxTray) onReady() {
 
 	t.openWeb = systray.AddMenuItem("Open Web Server", "Start web configuration server")
 	t.openUI = systray.AddMenuItem("Open Web Editor", "Open web editor in browser")
+	t.viewLog = systray.AddMenuItem("Open Log Directory", "Open application log directory")
 	systray.AddSeparator()
 	t.update = systray.AddMenuItem("Check for Updates", "Check latest release on GitHub")
 	systray.AddSeparator()
@@ -104,6 +106,10 @@ func (t *linuxTray) handleMenuEvents() {
 			}
 			if err := openBrowserURL(t.web.URL()); err != nil {
 				logWarnModule("tray", "open browser failed: %v", err)
+			}
+		case <-t.viewLog.ClickedCh:
+			if err := openFileSystemPath(resolveLogDirectoryPath()); err != nil {
+				logWarnModule("tray", "open log directory failed: %v", err)
 			}
 		case <-t.update.ClickedCh:
 			state := t.updater.State()

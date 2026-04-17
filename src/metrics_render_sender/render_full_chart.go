@@ -58,12 +58,14 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, frame *Re
 
 	chartAreaBg := item.runtime.fullChart.chartAreaBg
 	chartAreaBorder := item.runtime.fullChart.chartAreaBorder
+	chartFillColor := item.runtime.fullChart.fillColor
 	showSegmentLines := item.runtime.fullChart.showSegmentLines
 	gridLines := item.runtime.fullChart.gridLines
 	lineWidth := item.runtime.fullChart.lineWidth
 	enableThresholdColors := item.runtime.fullChart.enableThresholdColors
 	showAvgLine := item.runtime.fullChart.showAvgLine
 	if !item.runtime.prepared {
+		chartFillColor = getItemAttrColorCfg(item, config, "chart_fill_color", "rgba(0,0,0,0)")
 		chartAreaBg = getItemAttrColorCfg(item, config, "chart_area_bg", "")
 		chartAreaBorder = getItemAttrColorCfg(item, config, "chart_area_border_color", "")
 		showSegmentLines = getItemAttrBoolCfg(
@@ -117,6 +119,21 @@ func (r *FullChartRenderer) drawBody(dc *gg.Context, item *ItemConfig, frame *Re
 	}
 	if len(pointsOnChart) < 2 {
 		return
+	}
+
+	if strings.TrimSpace(chartFillColor) != "" {
+		bottomY := body.y + body.h
+		dc.MoveTo(pointsOnChart[0].x, bottomY)
+		dc.LineTo(pointsOnChart[0].x, pointsOnChart[0].y)
+		for idx := 1; idx < len(pointsOnChart); idx++ {
+			p := pointsOnChart[idx]
+			dc.LineTo(p.x, p.y)
+		}
+		lastPoint := pointsOnChart[len(pointsOnChart)-1]
+		dc.LineTo(lastPoint.x, bottomY)
+		dc.ClosePath()
+		dc.SetColor(parseColor(chartFillColor))
+		dc.Fill()
 	}
 
 	if enableThresholdColors {

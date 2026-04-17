@@ -244,6 +244,7 @@ func prepareRenderTypeRuntime(config *MonitorConfig, item *ItemConfig) {
 	case itemTypeFullChart:
 		item.runtime.fullCard = prepareRenderFullCardRuntime(config, item, 4)
 		item.runtime.fullChart.lineColor = resolveFullChartLineColor(item, config)
+		item.runtime.fullChart.fillColor = getItemAttrColorCfg(item, config, "chart_fill_color", "rgba(0,0,0,0)")
 		item.runtime.fullChart.chartAreaBg = getItemAttrColorCfg(item, config, "chart_area_bg", "")
 		item.runtime.fullChart.chartAreaBorder = getItemAttrColorCfg(item, config, "chart_area_border_color", "")
 		item.runtime.fullChart.showSegmentLines = getItemAttrBoolCfg(

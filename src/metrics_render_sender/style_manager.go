@@ -63,6 +63,7 @@ var styleMetaList = []StyleKeyMeta{
 	{Key: "line_orientation", Label: "线方向", Kind: "select", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeSimpleLine}, Options: []StyleOption{{Label: "横向", Value: "horizontal"}, {Label: "竖向", Value: "vertical"}}},
 	{Key: "show_avg_line", Label: "均线", Kind: "bool", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "chart_color", Label: "折线颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
+	{Key: "chart_fill_color", Label: "折线区域颜色", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "chart_area_bg", Label: "图表区背景", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "chart_area_border_color", Label: "图表区边框", Kind: "color", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullChart}},
 	{Key: "progress_style", Label: "进度样式", Kind: "select", Scopes: []string{styleScopeType, styleScopeItem}, Types: []string{itemTypeFullProgressH, itemTypeFullProgressV}, Options: []StyleOption{{Label: "gradient", Value: "gradient"}, {Label: "solid", Value: "solid"}, {Label: "segmented", Value: "segmented"}, {Label: "stripes", Value: "stripes"}}},
@@ -391,6 +392,8 @@ func styleCodeDefault(itemType, key string) (interface{}, bool) {
 		return false, true
 	case "chart_color":
 		return "#38bdf8", true
+	case "chart_fill_color":
+		return "rgba(0,0,0,0)", true
 	case "chart_area_bg":
 		if itemType == itemTypeFullChart {
 			return "#000000", true

@@ -915,10 +915,7 @@ func normalizeMonitorConfig(cfg *MonitorConfig) {
 	ensureCollectorConfigDefault(cfg, collectorCustomAll, true)
 	ensureCollectorConfigDefault(cfg, collectorCoolerControl, false)
 	ensureCollectorConfigDefault(cfg, collectorLibreHardwareMonitor, false)
-	defaultRTSS := false
-	if goruntime.GOOS == "windows" {
-		defaultRTSS = true
-	}
+	defaultRTSS := defaultRTSSCollectorEnabledForPlatform(goruntime.GOOS)
 	ensureCollectorConfigDefault(cfg, collectorRTSS, defaultRTSS)
 	if goruntime.GOOS == "windows" && configNeedsRTSS(cfg) {
 		setCollectorEnabled(cfg, collectorRTSS, true)

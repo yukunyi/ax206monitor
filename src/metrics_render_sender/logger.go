@@ -105,6 +105,10 @@ func resolveLogFilePath() string {
 	return "app.log"
 }
 
+func resolveLogDirectoryPath() string {
+	return filepath.Dir(resolveLogFilePath())
+}
+
 // Convenience functions with module support
 func logInfo(msg string, args ...interface{}) {
 	entry := logger.WithField("module", "main")

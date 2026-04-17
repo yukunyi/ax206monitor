@@ -114,6 +114,11 @@ func ReadMetrics() (Metrics, bool) {
 	}
 	defer procUnmapViewOfFile.Call(view)
 
+	regionSize, ok := mappedRegionSize(view)
+	if !ok {
+		return Metrics{}, false
+	}
+
 	header := (*sharedMemoryHeader)(unsafe.Pointer(view))
 	if header == nil {
 		return Metrics{}, false
@@ -121,10 +126,17 @@ func ReadMetrics() (Metrics, bool) {
 	if header.Signature != signatureA && header.Signature != signatureB {
 		return Metrics{}, false
 	}
-	if header.Version < versionMin || header.AppEntrySize < minAppEntrySize || header.AppArrSize == 0 || header.AppArrOffset == 0 {
+	if header.Version < versionMin {
 		return Metrics{}, false
 	}
-	if header.AppArrSize > 4096 {
+	if !sharedMemoryLayoutValid(
+		regionSize,
+		unsafe.Sizeof(sharedMemoryHeader{}),
+		header.AppArrOffset,
+		header.AppEntrySize,
+		header.AppArrSize,
+		minAppEntrySize,
+	) {
 		return Metrics{}, false
 	}
 
@@ -179,6 +191,17 @@ func ReadMetrics() (Metrics, bool) {
 	}
 	metrics.Connected = true
 	return metrics, true
+}
+
+func mappedRegionSize(address uintptr) (uintptr, bool) {
+	var info windows.MemoryBasicInformation
+	if err := windows.VirtualQuery(address, &info, unsafe.Sizeof(info)); err != nil {
+		return 0, false
+	}
+	if info.RegionSize == 0 {
+		return 0, false
+	}
+	return info.RegionSize, true
 }
 
 func readFrameTimeMS(entry *appEntry) float64 {

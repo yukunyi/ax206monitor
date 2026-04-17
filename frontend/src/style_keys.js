@@ -40,6 +40,7 @@ export const DEFAULT_STYLE_KEYS = [
   },
   { key: "show_avg_line", label: "均线", kind: "bool", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart"] },
   { key: "chart_color", label: "折线颜色", kind: "color", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart"] },
+  { key: "chart_fill_color", label: "折线区域颜色", kind: "color", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart"] },
   { key: "chart_area_bg", label: "图表区背景", kind: "color", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart"] },
   { key: "chart_area_border_color", label: "图表区边框", kind: "color", scopes: [STYLE_SCOPE_TYPE, STYLE_SCOPE_ITEM], types: ["full_chart"] },
   {

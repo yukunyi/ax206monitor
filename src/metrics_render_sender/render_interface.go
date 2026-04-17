@@ -43,6 +43,7 @@ type renderSimpleChartRuntime struct {
 
 type renderFullChartRuntime struct {
 	lineColor             string
+	fillColor             string
 	chartAreaBg           string
 	chartAreaBorder       string
 	showSegmentLines      bool
