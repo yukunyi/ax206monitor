@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
-	gopsutilDisk "github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
 	gopsutilNet "github.com/shirou/gopsutil/v3/net"
 )
@@ -27,15 +26,39 @@ type networkSpeedSnapshot struct {
 }
 
 type diskRateSnapshot struct {
-	readBytes  uint64
-	writeBytes uint64
-	at         time.Time
+	readBytes   uint64
+	writeBytes  uint64
+	readCount   uint64
+	writeCount  uint64
+	readTimeMS  float64
+	writeTimeMS float64
+	busyTimeMS  float64
+	queueDepth  float64
+	at          time.Time
 }
 
-type diskSpeedSnapshot struct {
-	Read  float64
-	Write float64
-	OK    bool
+type diskCounterSample struct {
+	Name        string
+	ReadBytes   uint64
+	WriteBytes  uint64
+	ReadCount   uint64
+	WriteCount  uint64
+	ReadTimeMS  float64
+	WriteTimeMS float64
+	BusyTimeMS  float64
+	QueueDepth  float64
+}
+
+type diskMetricsSnapshot struct {
+	Read           float64
+	Write          float64
+	ReadIOPS       float64
+	WriteIOPS      float64
+	ReadLatencyMS  float64
+	WriteLatencyMS float64
+	BusyPercent    float64
+	QueueDepth     float64
+	OK             bool
 }
 
 var (
@@ -240,22 +263,22 @@ func normalizeDiskCounterCandidates(deviceName string) []string {
 	return result
 }
 
-func getDiskSpeedByDevice(deviceName string) (float64, float64, bool) {
-	snapshots := getDiskSpeedSnapshots([]string{deviceName})
+func getDiskMetricsByDevice(deviceName string) (diskMetricsSnapshot, bool) {
+	snapshots := getDiskMetricsSnapshots([]string{deviceName})
 	snapshot, exists := snapshots[deviceName]
 	if !exists || !snapshot.OK {
-		return 0, 0, false
+		return diskMetricsSnapshot{}, false
 	}
-	return snapshot.Read, snapshot.Write, true
+	return snapshot, true
 }
 
-func getDiskSpeedSnapshots(deviceNames []string) map[string]diskSpeedSnapshot {
-	result := make(map[string]diskSpeedSnapshot, len(deviceNames))
+func getDiskMetricsSnapshots(deviceNames []string) map[string]diskMetricsSnapshot {
+	result := make(map[string]diskMetricsSnapshot, len(deviceNames))
 	if len(deviceNames) == 0 {
 		return result
 	}
 
-	stats, err := gopsutilDisk.IOCounters()
+	stats, err := readPlatformDiskCounters()
 	if err != nil {
 		return result
 	}
@@ -267,11 +290,11 @@ func getDiskSpeedSnapshots(deviceNames []string) map[string]diskSpeedSnapshot {
 	for _, deviceName := range deviceNames {
 		candidates := normalizeDiskCounterCandidates(deviceName)
 		if len(candidates) == 0 {
-			result[deviceName] = diskSpeedSnapshot{}
+			result[deviceName] = diskMetricsSnapshot{}
 			continue
 		}
 
-		var current *gopsutilDisk.IOCountersStat
+		var current *diskCounterSample
 		var cacheKey string
 		for _, candidate := range candidates {
 			if stat, exists := stats[candidate]; exists {
@@ -282,34 +305,77 @@ func getDiskSpeedSnapshots(deviceNames []string) map[string]diskSpeedSnapshot {
 			}
 		}
 		if current == nil {
-			result[deviceName] = diskSpeedSnapshot{}
+			result[deviceName] = diskMetricsSnapshot{}
 			continue
 		}
 
 		previous, hasPrevious := diskRateCache[cacheKey]
 		diskRateCache[cacheKey] = diskRateSnapshot{
-			readBytes:  current.ReadBytes,
-			writeBytes: current.WriteBytes,
-			at:         now,
+			readBytes:   current.ReadBytes,
+			writeBytes:  current.WriteBytes,
+			readCount:   current.ReadCount,
+			writeCount:  current.WriteCount,
+			readTimeMS:  current.ReadTimeMS,
+			writeTimeMS: current.WriteTimeMS,
+			busyTimeMS:  current.BusyTimeMS,
+			queueDepth:  current.QueueDepth,
+			at:          now,
 		}
 		if !hasPrevious || previous.at.IsZero() {
-			result[deviceName] = diskSpeedSnapshot{}
+			result[deviceName] = diskMetricsSnapshot{}
 			continue
 		}
 
 		seconds := now.Sub(previous.at).Seconds()
-		if seconds <= 0 || current.ReadBytes < previous.readBytes || current.WriteBytes < previous.writeBytes {
-			result[deviceName] = diskSpeedSnapshot{}
+		elapsedMS := now.Sub(previous.at).Seconds() * 1000
+		if seconds <= 0 || elapsedMS <= 0 ||
+			current.ReadBytes < previous.readBytes ||
+			current.WriteBytes < previous.writeBytes ||
+			current.ReadCount < previous.readCount ||
+			current.WriteCount < previous.writeCount ||
+			current.ReadTimeMS < previous.readTimeMS ||
+			current.WriteTimeMS < previous.writeTimeMS ||
+			current.BusyTimeMS < previous.busyTimeMS {
+			result[deviceName] = diskMetricsSnapshot{}
 			continue
 		}
 
-		result[deviceName] = diskSpeedSnapshot{
-			Read:  float64(current.ReadBytes-previous.readBytes) / seconds / 1024 / 1024,
-			Write: float64(current.WriteBytes-previous.writeBytes) / seconds / 1024 / 1024,
-			OK:    true,
-		}
+		result[deviceName] = computeDiskMetricsSnapshot(*current, previous, seconds, elapsedMS)
 	}
 	return result
+}
+
+func computeDiskMetricsSnapshot(current diskCounterSample, previous diskRateSnapshot, seconds float64, elapsedMS float64) diskMetricsSnapshot {
+	if seconds <= 0 || elapsedMS <= 0 {
+		return diskMetricsSnapshot{}
+	}
+
+	readBytesDelta := current.ReadBytes - previous.readBytes
+	writeBytesDelta := current.WriteBytes - previous.writeBytes
+	readCountDelta := current.ReadCount - previous.readCount
+	writeCountDelta := current.WriteCount - previous.writeCount
+	readTimeDelta := current.ReadTimeMS - previous.readTimeMS
+	writeTimeDelta := current.WriteTimeMS - previous.writeTimeMS
+	busyTimeDelta := current.BusyTimeMS - previous.busyTimeMS
+
+	snapshot := diskMetricsSnapshot{
+		Read:       float64(readBytesDelta) / seconds / 1024 / 1024,
+		Write:      float64(writeBytesDelta) / seconds / 1024 / 1024,
+		ReadIOPS:   float64(readCountDelta) / seconds,
+		WriteIOPS:  float64(writeCountDelta) / seconds,
+		QueueDepth: current.QueueDepth,
+		OK:         true,
+	}
+	if readCountDelta > 0 {
+		snapshot.ReadLatencyMS = readTimeDelta / float64(readCountDelta)
+	}
+	if writeCountDelta > 0 {
+		snapshot.WriteLatencyMS = writeTimeDelta / float64(writeCountDelta)
+	}
+	if busyTimeDelta > 0 {
+		snapshot.BusyPercent = clampPercentage(busyTimeDelta / elapsedMS * 100.0)
+	}
+	return snapshot
 }
 
 func getTemperatureByKeywords(keywords []string) float64 {

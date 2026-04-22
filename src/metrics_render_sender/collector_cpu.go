@@ -13,7 +13,12 @@ type GoNativeCPUCollector struct {
 
 	usageLastTotal float64
 	usageLastIdle  float64
-	usageLastValue float64
+	usageLastUser  float64
+	usageLastSys   float64
+	usageLastIO    float64
+	usageLastIRQ   float64
+	usageLastSIRQ  float64
+	usageLastValue cpuUsageBreakdown
 	usageReady     bool
 
 	tempMu       sync.RWMutex
@@ -42,6 +47,12 @@ func NewGoNativeCPUCollector() *GoNativeCPUCollector {
 func (c *GoNativeCPUCollector) GetAllItems() map[string]*CollectItem {
 	if c.getItem("go_native.cpu.usage") == nil {
 		c.setItem("go_native.cpu.usage", NewCollectItem("go_native.cpu.usage", "CPU usage", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.user", NewCollectItem("go_native.cpu.user", "CPU user", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.system", NewCollectItem("go_native.cpu.system", "CPU system", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.idle", NewCollectItem("go_native.cpu.idle", "CPU idle", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.iowait", NewCollectItem("go_native.cpu.iowait", "CPU iowait", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.irq", NewCollectItem("go_native.cpu.irq", "CPU irq", "%", 0, 100, 0))
+		c.setItem("go_native.cpu.softirq", NewCollectItem("go_native.cpu.softirq", "CPU softirq", "%", 0, 100, 0))
 		if nativeCPUTemperatureSupported() {
 			c.setItem("go_native.cpu.temp", NewCollectItem("go_native.cpu.temp", "CPU temperature", "°C", 0, 120, 0))
 		}
@@ -84,12 +95,18 @@ func (c *GoNativeCPUCollector) UpdateItems() error {
 	usageValue, usageOK, usageErr := c.sampleCPUUsage()
 	if usage := c.getItem("go_native.cpu.usage"); usage != nil {
 		if usageOK {
-			usage.SetValue(usageValue)
+			usage.SetValue(usageValue.Usage)
 			usage.SetAvailable(true)
 		} else {
 			usage.SetAvailable(false)
 		}
 	}
+	c.updateCPUUsageBreakdownItem("go_native.cpu.user", usageValue.User, usageOK)
+	c.updateCPUUsageBreakdownItem("go_native.cpu.system", usageValue.System, usageOK)
+	c.updateCPUUsageBreakdownItem("go_native.cpu.idle", usageValue.Idle, usageOK)
+	c.updateCPUUsageBreakdownItem("go_native.cpu.iowait", usageValue.Iowait, usageOK)
+	c.updateCPUUsageBreakdownItem("go_native.cpu.irq", usageValue.Irq, usageOK)
+	c.updateCPUUsageBreakdownItem("go_native.cpu.softirq", usageValue.Softirq, usageOK)
 
 	if temp := c.getItem("go_native.cpu.temp"); temp != nil {
 		if value, ok := c.getCachedTemp(); ok {
@@ -120,10 +137,33 @@ func (c *GoNativeCPUCollector) UpdateItems() error {
 	return usageErr
 }
 
-func (c *GoNativeCPUCollector) sampleCPUUsage() (float64, bool, error) {
+type cpuUsageBreakdown struct {
+	Usage   float64
+	User    float64
+	System  float64
+	Idle    float64
+	Iowait  float64
+	Irq     float64
+	Softirq float64
+}
+
+func (c *GoNativeCPUCollector) updateCPUUsageBreakdownItem(name string, value float64, ok bool) {
+	item := c.getItem(name)
+	if item == nil {
+		return
+	}
+	if ok {
+		item.SetValue(value)
+		item.SetAvailable(true)
+		return
+	}
+	item.SetAvailable(false)
+}
+
+func (c *GoNativeCPUCollector) sampleCPUUsage() (cpuUsageBreakdown, bool, error) {
 	stats, err := cpu.Times(false)
 	if err != nil || len(stats) == 0 {
-		return 0, false, err
+		return cpuUsageBreakdown{}, false, err
 	}
 	sample := stats[0]
 	total := sample.User + sample.System + sample.Idle + sample.Nice + sample.Iowait + sample.Irq + sample.Softirq + sample.Steal + sample.Guest + sample.GuestNice
@@ -132,32 +172,47 @@ func (c *GoNativeCPUCollector) sampleCPUUsage() (float64, bool, error) {
 	if !c.usageReady {
 		c.usageLastTotal = total
 		c.usageLastIdle = idle
+		c.usageLastUser = sample.User
+		c.usageLastSys = sample.System
+		c.usageLastIO = sample.Iowait
+		c.usageLastIRQ = sample.Irq
+		c.usageLastSIRQ = sample.Softirq
 		c.usageReady = true
 
 		percent, percentErr := cpu.Percent(0, false)
 		if percentErr == nil && len(percent) > 0 {
-			value := clampPercentage(percent[0])
-			c.usageLastValue = value
-			return value, true, nil
+			c.usageLastValue = cpuUsageBreakdown{Usage: clampPercentage(percent[0])}
+			return c.usageLastValue, true, nil
 		}
-		return 0, false, percentErr
+		return cpuUsageBreakdown{}, false, percentErr
 	}
 
 	totalDelta := total - c.usageLastTotal
-	idleDelta := idle - c.usageLastIdle
 	c.usageLastTotal = total
+	breakdown := computeCPUUsageBreakdown(
+		sample,
+		totalDelta,
+		c.usageLastIdle,
+		c.usageLastUser,
+		c.usageLastSys,
+		c.usageLastIO,
+		c.usageLastIRQ,
+		c.usageLastSIRQ,
+	)
 	c.usageLastIdle = idle
+	c.usageLastUser = sample.User
+	c.usageLastSys = sample.System
+	c.usageLastIO = sample.Iowait
+	c.usageLastIRQ = sample.Irq
+	c.usageLastSIRQ = sample.Softirq
 	if totalDelta <= 0 {
-		if c.usageLastValue >= 0 {
+		if c.usageLastValue.Usage >= 0 {
 			return c.usageLastValue, true, nil
 		}
-		return 0, false, nil
+		return cpuUsageBreakdown{}, false, nil
 	}
-
-	usage := ((totalDelta - idleDelta) / totalDelta) * 100.0
-	usage = clampPercentage(usage)
-	c.usageLastValue = usage
-	return usage, true, nil
+	c.usageLastValue = breakdown
+	return breakdown, true, nil
 }
 
 func clampPercentage(value float64) float64 {
@@ -168,6 +223,33 @@ func clampPercentage(value float64) float64 {
 		return 100
 	}
 	return value
+}
+
+func computeCPUUsageBreakdown(
+	sample cpu.TimesStat,
+	totalDelta float64,
+	lastIdle float64,
+	lastUser float64,
+	lastSystem float64,
+	lastIowait float64,
+	lastIRQ float64,
+	lastSoftirq float64,
+) cpuUsageBreakdown {
+	if totalDelta <= 0 {
+		return cpuUsageBreakdown{}
+	}
+	idleNow := sample.Idle + sample.Iowait
+	idleDelta := idleNow - lastIdle
+	usage := ((totalDelta - idleDelta) / totalDelta) * 100.0
+	return cpuUsageBreakdown{
+		Usage:   clampPercentage(usage),
+		User:    clampPercentage((sample.User - lastUser) / totalDelta * 100.0),
+		System:  clampPercentage((sample.System - lastSystem) / totalDelta * 100.0),
+		Idle:    clampPercentage((sample.Idle - (lastIdle - lastIowait)) / totalDelta * 100.0),
+		Iowait:  clampPercentage((sample.Iowait - lastIowait) / totalDelta * 100.0),
+		Irq:     clampPercentage((sample.Irq - lastIRQ) / totalDelta * 100.0),
+		Softirq: clampPercentage((sample.Softirq - lastSoftirq) / totalDelta * 100.0),
+	}
 }
 
 func nativeCPUTemperatureSupported() bool {

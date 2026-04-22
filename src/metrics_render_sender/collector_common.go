@@ -28,12 +28,21 @@ type CPUInfo struct {
 
 // DiskInfo represents detailed disk information
 type DiskInfo struct {
-	Name       string
-	Model      string
-	Size       int64   // Size in GB
-	ReadSpeed  float64 // MB/s
-	WriteSpeed float64 // MB/s
-	Usage      float64 // Usage percentage
+	Name             string
+	Model            string
+	Size             int64   // Total size in GB
+	Used             int64   // Used size in GB
+	Available        int64   // Available size in GB
+	Usage            float64 // Usage percentage
+	ReadSpeed        float64 // MiB/s
+	WriteSpeed       float64 // MiB/s
+	ReadIOPS         float64
+	WriteIOPS        float64
+	ReadLatencyMS    float64
+	WriteLatencyMS   float64
+	BusyPercent      float64
+	QueueDepth       float64
+	DynamicAvailable bool
 }
 
 var (
@@ -42,7 +51,9 @@ var (
 	cacheInitMutex   sync.Once
 	diskInfoMutex    sync.RWMutex
 	lastDiskUpdate   time.Time
+	lastDiskScanAt   time.Time
 	diskUpdatePeriod = 1 * time.Second
+	diskScanPeriod   = 30 * time.Second
 
 	// 无锁读取用原子存储
 	diskInfoStore atomic.Value // []*DiskInfo
@@ -86,10 +97,15 @@ func updateDiskInfo() {
 		diskInfoMutex.Unlock()
 		return
 	}
+	existing := cloneDiskInfoList(cachedDiskInfo)
+	needScan := len(existing) == 0 || now.Sub(lastDiskScanAt) >= diskScanPeriod
 	diskInfoMutex.Unlock()
 
-	// 计算新数据不持锁
-	newDisks := detectDiskInfo()
+	newDisks := existing
+	if needScan {
+		newDisks = detectDiskInfoStatic()
+	}
+	populateDiskDynamicMetrics(newDisks)
 	if len(newDisks) > 1 {
 		sort.Slice(newDisks, func(i, j int) bool { return newDisks[i].Name < newDisks[j].Name })
 	}
@@ -98,6 +114,9 @@ func updateDiskInfo() {
 	diskInfoMutex.Lock()
 	cachedDiskInfo = newDisks
 	lastDiskUpdate = now
+	if needScan {
+		lastDiskScanAt = now
+	}
 	diskInfoMutex.Unlock()
 	diskInfoStore.Store(newDisks)
 }
@@ -144,10 +163,25 @@ func printSystemInfo() {
 		logInfo("Disks: %d detected", len(disks))
 		for i, disk := range disks {
 			if i < 3 {
-				logInfo("Disk %d: %s (%s) - %.0f GB", i+1, disk.Name, disk.Model, float64(disk.Size))
+				logInfo("Disk %d: %s (%s) - %.0f GB used=%d%% read=%.1f MiB/s write=%.1f MiB/s busy=%.0f%%", i+1, disk.Name, disk.Model, float64(disk.Size), int64(disk.Usage+0.5), disk.ReadSpeed, disk.WriteSpeed, disk.BusyPercent)
 			}
 		}
 	}
 	logInfo("OS: %s %s", runtime.GOOS, runtime.GOARCH)
 	logInfo("========================")
+}
+
+func cloneDiskInfoList(input []*DiskInfo) []*DiskInfo {
+	if len(input) == 0 {
+		return []*DiskInfo{}
+	}
+	out := make([]*DiskInfo, 0, len(input))
+	for _, disk := range input {
+		if disk == nil {
+			continue
+		}
+		copied := *disk
+		out = append(out, &copied)
+	}
+	return out
 }

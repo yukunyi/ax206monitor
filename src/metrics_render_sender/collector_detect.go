@@ -67,6 +67,12 @@ func detectCPUInfo() *CPUInfo {
 }
 
 func detectDiskInfo() []*DiskInfo {
+	disks := detectDiskInfoStatic()
+	populateDiskDynamicMetrics(disks)
+	return disks
+}
+
+func detectDiskInfoStatic() []*DiskInfo {
 	if runtime.GOOS == "linux" {
 		disks, err := detectDiskInfoBySysfs()
 		if err == nil {
@@ -135,15 +141,9 @@ func detectDiskInfoByGopsutil() []*DiskInfo {
 		if !exists {
 			acc = &diskUsageAccumulator{
 				info: &DiskInfo{
-					Name:       baseName,
-					Model:      inferDiskModel(baseName),
-					ReadSpeed:  0,
-					WriteSpeed: 0,
+					Name:  baseName,
+					Model: inferDiskModel(baseName),
 				},
-			}
-			if readSpeed, writeSpeed, ok := getDiskSpeedByDevice(baseName); ok {
-				acc.info.ReadSpeed = readSpeed
-				acc.info.WriteSpeed = writeSpeed
 			}
 			items[key] = acc
 		}
@@ -168,6 +168,8 @@ func detectDiskInfoByGopsutil() []*DiskInfo {
 		}
 		if acc.totalBytes > 0 {
 			acc.info.Size = int64(acc.totalBytes / (1024 * 1024 * 1024))
+			acc.info.Used = int64(acc.usedBytes / (1024 * 1024 * 1024))
+			acc.info.Available = int64((acc.totalBytes - acc.usedBytes) / (1024 * 1024 * 1024))
 			acc.info.Usage = float64(acc.usedBytes) * 100 / float64(acc.totalBytes)
 		}
 		disks = append(disks, acc.info)
@@ -257,21 +259,50 @@ func buildDiskInfoFromSysfs(baseName string, usage *diskUsageAccumulator) *DiskI
 
 	sizeBytes := readSysfsUint64(filepath.Join("/sys/block", baseName, "size")) * 512
 	info := &DiskInfo{
-		Name:       baseName,
-		Model:      readDiskModelFromSysfs(baseName),
-		Size:       int64(sizeBytes / (1024 * 1024 * 1024)),
-		ReadSpeed:  0,
-		WriteSpeed: 0,
+		Name:  baseName,
+		Model: readDiskModelFromSysfs(baseName),
+		Size:  int64(sizeBytes / (1024 * 1024 * 1024)),
 	}
 	if usage != nil && usage.totalBytes > 0 {
 		info.Size = int64(usage.totalBytes / (1024 * 1024 * 1024))
+		info.Used = int64(usage.usedBytes / (1024 * 1024 * 1024))
+		info.Available = int64((usage.totalBytes - usage.usedBytes) / (1024 * 1024 * 1024))
 		info.Usage = float64(usage.usedBytes) * 100 / float64(usage.totalBytes)
 	}
-	if readSpeed, writeSpeed, ok := getDiskSpeedByDevice(baseName); ok {
-		info.ReadSpeed = readSpeed
-		info.WriteSpeed = writeSpeed
-	}
 	return info
+}
+
+func populateDiskDynamicMetrics(disks []*DiskInfo) {
+	if len(disks) == 0 {
+		return
+	}
+	names := make([]string, 0, len(disks))
+	for _, disk := range disks {
+		if disk == nil || strings.TrimSpace(disk.Name) == "" {
+			continue
+		}
+		names = append(names, disk.Name)
+	}
+	snapshots := getDiskMetricsSnapshots(names)
+	for _, disk := range disks {
+		if disk == nil {
+			continue
+		}
+		snapshot, ok := snapshots[disk.Name]
+		if !ok || !snapshot.OK {
+			disk.DynamicAvailable = false
+			continue
+		}
+		disk.ReadSpeed = snapshot.Read
+		disk.WriteSpeed = snapshot.Write
+		disk.ReadIOPS = snapshot.ReadIOPS
+		disk.WriteIOPS = snapshot.WriteIOPS
+		disk.ReadLatencyMS = snapshot.ReadLatencyMS
+		disk.WriteLatencyMS = snapshot.WriteLatencyMS
+		disk.BusyPercent = snapshot.BusyPercent
+		disk.QueueDepth = snapshot.QueueDepth
+		disk.DynamicAvailable = true
+	}
 }
 
 func collectDiskUsageByBaseName() map[string]*diskUsageAccumulator {

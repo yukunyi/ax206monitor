@@ -893,10 +893,26 @@ func applyDynamicWebSnapshotLabels(values map[string]WebMonitorSnapshotItem, ent
 				item.Label = "Disk " + diskName + " name"
 			case "size":
 				item.Label = "Disk " + diskName + " size"
+			case "used":
+				item.Label = "Disk " + diskName + " used"
+			case "available":
+				item.Label = "Disk " + diskName + " available"
+			case "usage":
+				item.Label = "Disk " + diskName + " usage"
+			case "busy":
+				item.Label = "Disk " + diskName + " busy"
 			case "read":
 				item.Label = "Disk " + diskName + " read speed"
 			case "write":
 				item.Label = "Disk " + diskName + " write speed"
+			case "read_iops":
+				item.Label = "Disk " + diskName + " read IOPS"
+			case "write_iops":
+				item.Label = "Disk " + diskName + " write IOPS"
+			case "read_latency":
+				item.Label = "Disk " + diskName + " read latency"
+			case "write_latency":
+				item.Label = "Disk " + diskName + " write latency"
 			}
 			values[entry.name] = item
 		}
@@ -905,6 +921,12 @@ func applyDynamicWebSnapshotLabels(values map[string]WebMonitorSnapshotItem, ent
 
 var explicitWebSnapshotLabels = map[string]string{
 	"go_native.cpu.usage":                      "CPU usage",
+	"go_native.cpu.user":                       "CPU user",
+	"go_native.cpu.system":                     "CPU system",
+	"go_native.cpu.idle":                       "CPU idle",
+	"go_native.cpu.iowait":                     "CPU iowait",
+	"go_native.cpu.irq":                        "CPU irq",
+	"go_native.cpu.softirq":                    "CPU softirq",
 	"go_native.cpu.temp":                       "CPU temperature",
 	"go_native.cpu.freq":                       "CPU frequency",
 	"go_native.cpu.max_freq":                   "CPU max frequency",
