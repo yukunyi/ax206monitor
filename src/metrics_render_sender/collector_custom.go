@@ -143,6 +143,12 @@ func (c *CustomCollector) UpdateItems() error {
 						result = value
 					}
 				}
+			case "sum":
+				sum := 0.0
+				for _, value := range values {
+					sum += value
+				}
+				result = sum
 			case "avg":
 				sum := 0.0
 				for _, value := range values {
@@ -253,6 +259,8 @@ func normalizeAggregateMethod(method string) string {
 	switch strings.ToLower(strings.TrimSpace(method)) {
 	case "min":
 		return "min"
+	case "sum":
+		return "sum"
 	case "avg", "mean":
 		return "avg"
 	default:

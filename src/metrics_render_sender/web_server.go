@@ -726,7 +726,7 @@ func buildWebMetaResponse(store *ConfigStore) WebMetaResponse {
 		FontFamilies:         fontFamilies,
 		NetworkInterfaces:    listNetworkInterfaces(),
 		CustomMonitorTypes:   []string{"file", "mixed", "coolercontrol", "librehardwaremonitor"},
-		CustomAggregateTypes: []string{"max", "min", "avg"},
+		CustomAggregateTypes: []string{"max", "min", "avg", "sum"},
 		ActiveProfile:        store.profiles.ActiveName(),
 	}
 }

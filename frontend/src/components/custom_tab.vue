@@ -24,6 +24,7 @@ const aggregateOptions = [
   { label: "max", value: "max" },
   { label: "min", value: "min" },
   { label: "avg", value: "avg" },
+  { label: "sum", value: "sum" },
 ];
 </script>
 
