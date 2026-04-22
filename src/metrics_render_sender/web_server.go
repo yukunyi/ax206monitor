@@ -59,6 +59,8 @@ type WebConfigResponse struct {
 var (
 	runningWebServerMu sync.Mutex
 	runningWebServer   *echo.Echo
+	runningConfigMu    sync.RWMutex
+	runningConfigStore *ConfigStore
 )
 
 func claimRunningWebServer(server *echo.Echo) error {
@@ -80,6 +82,33 @@ func releaseRunningWebServer(server *echo.Echo) {
 	if runningWebServer == server {
 		runningWebServer = nil
 	}
+}
+
+func claimRunningConfigStore(store *ConfigStore) {
+	runningConfigMu.Lock()
+	defer runningConfigMu.Unlock()
+	runningConfigStore = store
+}
+
+func releaseRunningConfigStore(store *ConfigStore) {
+	runningConfigMu.Lock()
+	defer runningConfigMu.Unlock()
+	if runningConfigStore == store {
+		runningConfigStore = nil
+	}
+}
+
+func UpdateRunningConfigStore(cfg *MonitorConfig) {
+	if cfg == nil {
+		return
+	}
+	runningConfigMu.RLock()
+	store := runningConfigStore
+	runningConfigMu.RUnlock()
+	if store == nil {
+		return
+	}
+	store.setConfig(cfg)
 }
 
 func stopRunningWebServer(timeout time.Duration) error {
@@ -104,6 +133,7 @@ func stopRunningWebServer(timeout time.Duration) error {
 type WebServerProcess struct {
 	mu       sync.Mutex
 	port     int
+	host     string
 	devMode  bool
 	viteURL  string
 	done     chan error
@@ -111,21 +141,39 @@ type WebServerProcess struct {
 }
 
 func NewWebServerProcess(port int, devMode bool, viteURL string) *WebServerProcess {
+	host, err := loadWebBindHost()
+	if err != nil {
+		logWarnModule("web", "load web bind host failed, fallback to %s: %v", defaultWebBindHost, err)
+		host = defaultWebBindHost
+	}
 	return &WebServerProcess{
 		port:    port,
+		host:    host,
 		devMode: devMode,
 		viteURL: viteURL,
 	}
 }
 
 func (p *WebServerProcess) URL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d", p.port)
+	return buildWebAccessURL(p.port)
 }
 
 func (p *WebServerProcess) IsRunning() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.done != nil
+}
+
+func (p *WebServerProcess) ListenHost() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return normalizeWebBindHost(p.host)
+}
+
+func (p *WebServerProcess) SetListenHost(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.host = normalizeWebBindHost(host)
 }
 
 func (p *WebServerProcess) Start() error {
@@ -137,10 +185,11 @@ func (p *WebServerProcess) Start() error {
 	done := make(chan error, 1)
 	p.done = done
 	p.stopping = false
+	host := normalizeWebBindHost(p.host)
 	p.mu.Unlock()
 
 	options := WebServerOptions{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", p.port),
+		Addr:    buildWebListenAddr(host, p.port),
 		DevMode: p.devMode,
 		ViteURL: p.viteURL,
 	}
@@ -164,7 +213,7 @@ func (p *WebServerProcess) Start() error {
 		return err
 	case <-time.After(150 * time.Millisecond):
 		go p.watchProcess(done)
-		logInfoModule("tray", "web server started in-process pid=%d addr=%s", os.Getpid(), p.URL())
+		logInfoModule("tray", "web server started in-process pid=%d listen=%s open=%s", os.Getpid(), options.Addr, p.URL())
 		return nil
 	}
 }
@@ -253,6 +302,8 @@ func RunWebServer(options WebServerOptions) error {
 	}
 	defer ReleaseSharedWebAPI(runtime)
 	store.runtime = runtime
+	claimRunningConfigStore(store)
+	defer releaseRunningConfigStore(store)
 
 	e := echo.New()
 	e.HideBanner = true

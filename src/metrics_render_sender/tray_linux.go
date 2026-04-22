@@ -16,18 +16,20 @@ import (
 var trayIconPNG []byte
 
 type linuxTray struct {
-	web     *WebServerProcess
-	updater *AppUpdater
-	readyCh chan struct{}
-	stopCh  chan struct{}
-	mu      sync.Mutex
-	closed  bool
-	openWeb *systray.MenuItem
-	openUI  *systray.MenuItem
-	viewLog *systray.MenuItem
-	update  *systray.MenuItem
-	autoRun *systray.MenuItem
-	exit    *systray.MenuItem
+	web      *WebServerProcess
+	updater  *AppUpdater
+	readyCh  chan struct{}
+	stopCh   chan struct{}
+	mu       sync.Mutex
+	closed   bool
+	openWeb  *systray.MenuItem
+	openUI   *systray.MenuItem
+	bindHost *trayWebBindMenuState
+	profiles *trayProfileMenuState
+	viewLog  *systray.MenuItem
+	update   *systray.MenuItem
+	autoRun  *systray.MenuItem
+	exit     *systray.MenuItem
 }
 
 func StartTray(webController *WebServerProcess) (TrayHandle, error) {
@@ -58,6 +60,8 @@ func (t *linuxTray) onReady() {
 
 	t.openWeb = systray.AddMenuItem("Open Web Server", "Start web configuration server")
 	t.openUI = systray.AddMenuItem("Open Web Editor", "Open web editor in browser")
+	t.bindHost = newTrayWebBindMenuState(t.web)
+	t.profiles = newTrayProfileMenuState()
 	t.viewLog = systray.AddMenuItem("Open Log Directory", "Open application log directory")
 	systray.AddSeparator()
 	t.update = systray.AddMenuItem("Check for Updates", "Check latest release on GitHub")
@@ -162,6 +166,12 @@ func (t *linuxTray) watchWebState() {
 }
 
 func (t *linuxTray) syncMenuState() {
+	if t.bindHost != nil {
+		t.bindHost.refresh()
+	}
+	if t.profiles != nil {
+		t.profiles.refresh(false)
+	}
 	running := t.web.IsRunning()
 	if running {
 		t.openWeb.SetTitle("Close Web Server")

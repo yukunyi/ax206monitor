@@ -57,9 +57,14 @@ func main() {
 	}
 
 	if webModeEnabled {
-		logInfoModule("web", "Web mode enabled on port %d", *portFlag)
+		bindHost, err := loadWebBindHost()
+		if err != nil {
+			logWarnModule("web", "load web bind host failed, fallback to %s: %v", defaultWebBindHost, err)
+			bindHost = defaultWebBindHost
+		}
+		logInfoModule("web", "Web mode enabled on host %s port %d", bindHost, *portFlag)
 		if err := RunWebServer(WebServerOptions{
-			Addr:    fmt.Sprintf("127.0.0.1:%d", *portFlag),
+			Addr:    buildWebListenAddr(bindHost, *portFlag),
 			DevMode: webDevEnabled,
 			ViteURL: devViteURL,
 		}); err != nil {

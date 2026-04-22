@@ -275,7 +275,13 @@ func (r *WebAPI) applyConfigInternal(cfg *MonitorConfig, forceMemImg bool) error
 	required := getRequiredMonitors(configCopy)
 	registry := GetCollectorManagerWithConfig(required, configCopy.GetNetworkInterface())
 	registry.SetPreviewMode(forceMemImg)
-	renderManager := NewRenderManager(r.fontCache, registry)
+	var historyStore *renderHistoryStore
+	r.mu.RLock()
+	if r.renderManager != nil {
+		historyStore = r.renderManager.history
+	}
+	r.mu.RUnlock()
+	renderManager := NewRenderManagerWithHistory(r.fontCache, registry, historyStore)
 
 	outputSummary := resolveOutputConfigSummaryFromList(configCopy.Outputs, false)
 	outputConfigs := outputSummary.Configs

@@ -251,11 +251,18 @@ func (r *RenderResult) OutputFrame() *OutputFrame {
 }
 
 func NewRenderManager(fontCache *FontCache, registry *CollectorManager) *RenderManager {
+	return NewRenderManagerWithHistory(fontCache, registry, nil)
+}
+
+func NewRenderManagerWithHistory(fontCache *FontCache, registry *CollectorManager, history *renderHistoryStore) *RenderManager {
+	if history == nil {
+		history = newRenderHistoryStore()
+	}
 	rm := &RenderManager{
 		renderers: make(map[string]RenderItem),
 		fontCache: fontCache,
 		registry:  registry,
-		history:   newRenderHistoryStore(),
+		history:   history,
 	}
 
 	rm.RegisterRenderer(NewValueRenderer())

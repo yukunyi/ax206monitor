@@ -53,3 +53,17 @@ func ReleaseSharedWebAPI(runtime *WebAPI) {
 		toClose.Close()
 	}
 }
+
+func ApplyConfigToSharedWebAPI(cfg *MonitorConfig) error {
+	if cfg == nil {
+		return nil
+	}
+
+	sharedWebAPIMu.Lock()
+	runtime := sharedWebAPI
+	sharedWebAPIMu.Unlock()
+	if runtime == nil {
+		return nil
+	}
+	return runtime.ApplyConfig(cfg)
+}
