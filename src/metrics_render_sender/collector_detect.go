@@ -73,6 +73,9 @@ func detectDiskInfo() []*DiskInfo {
 }
 
 func detectDiskInfoStatic() []*DiskInfo {
+	if runtime.GOOS == "windows" {
+		return detectDiskInfoByWindows()
+	}
 	if runtime.GOOS == "linux" {
 		disks, err := detectDiskInfoBySysfs()
 		if err == nil {
