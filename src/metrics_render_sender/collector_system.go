@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/shirou/gopsutil/v3/load"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,10 @@ func (c *GoNativeSystemCollector) ensureStaticItems() {
 	c.setItem("go_native.system.render.avg_ms", NewCollectItem("go_native.system.render.avg_ms", "Render avg duration", "ms", 0, 0, 0))
 	c.setItem("go_native.system.output.max_ms", NewCollectItem("go_native.system.output.max_ms", "Output max duration", "ms", 0, 0, 0))
 	c.setItem("go_native.system.output.avg_ms", NewCollectItem("go_native.system.output.avg_ms", "Output avg duration", "ms", 0, 0, 0))
+	c.setItem("go_native.cpu.min_freq", NewCollectItem("go_native.cpu.min_freq", "CPU min frequency", "MHz", 0, 0, 0))
+	c.setItem("go_native.disk.total_read", NewCollectItem("go_native.disk.total_read", "Disk total read speed", "MiB/s", 0, 0, 2))
+	c.setItem("go_native.disk.total_write", NewCollectItem("go_native.disk.total_write", "Disk total write speed", "MiB/s", 0, 0, 2))
+	c.setItem("go_native.disk.max_busy", NewCollectItem("go_native.disk.max_busy", "Disk max busy", "%", 0, 100, 0))
 	ensureOutputMetricItems(c, outputTypeMemImg, "Output memimg")
 	ensureOutputMetricItems(c, outputTypeAX206USB, "AX206 refresh")
 	ensureOutputMetricItems(c, outputTypeHTTPPush, "HTTP push")
@@ -92,6 +97,7 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 	updateSystemDisplayItems(c)
 
 	if manager := CurrentCollectorManager(); manager != nil {
+		updateAggregateMonitorItems(c, manager.GetAll())
 		stats := manager.Stats()
 		setSystemMetricItem(c.getItem("go_native.system.collect.max_ms"), stats.CollectMaxMS)
 		setSystemMetricItem(c.getItem("go_native.system.collect.avg_ms"), stats.CollectAvgMS)
@@ -112,6 +118,136 @@ func (c *GoNativeSystemCollector) UpdateItems() error {
 		}
 	}
 	return err
+}
+
+func updateAggregateMonitorItems(c *GoNativeSystemCollector, items map[string]*CollectItem) {
+	if c == nil {
+		return
+	}
+	setFloatMonitorItem(c.getItem("go_native.cpu.min_freq"), aggregateCPUMinFreq(items))
+	totalRead, totalWrite, maxBusy := aggregateDiskRuntimeMetrics(items)
+	setFloatMonitorItem(c.getItem("go_native.disk.total_read"), totalRead)
+	setFloatMonitorItem(c.getItem("go_native.disk.total_write"), totalWrite)
+	setFloatMonitorItem(c.getItem("go_native.disk.max_busy"), maxBusy)
+}
+
+type floatAggregateResult struct {
+	value float64
+	ok    bool
+}
+
+func setFloatMonitorItem(item *CollectItem, result floatAggregateResult) {
+	if item == nil {
+		return
+	}
+	if result.ok {
+		item.SetValue(result.value)
+		item.SetAvailable(true)
+		return
+	}
+	item.SetAvailable(false)
+}
+
+func aggregateCPUMinFreq(items map[string]*CollectItem) floatAggregateResult {
+	names := make([]string, 0, len(items))
+	for name := range items {
+		names = append(names, name)
+	}
+	minValue := 0.0
+	ok := false
+	for _, name := range names {
+		index, isCoreClock := parseLibreCPUCoreClockIndex(name)
+		if !isCoreClock || index <= 0 {
+			continue
+		}
+		value, valueOK := collectItemFloatValue(items[name])
+		if !valueOK {
+			continue
+		}
+		if !ok || value < minValue {
+			minValue = value
+			ok = true
+		}
+	}
+	if ok {
+		return floatAggregateResult{value: minValue, ok: true}
+	}
+	value, valueOK := collectItemFloatValue(items["go_native.cpu.freq"])
+	return floatAggregateResult{value: value, ok: valueOK}
+}
+
+func aggregateDiskRuntimeMetrics(items map[string]*CollectItem) (floatAggregateResult, floatAggregateResult, floatAggregateResult) {
+	totalRead := 0.0
+	totalWrite := 0.0
+	maxBusy := 0.0
+	readOK := false
+	writeOK := false
+	busyOK := false
+	for name, item := range items {
+		if !strings.HasPrefix(strings.TrimSpace(name), "go_native.disk.") {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(name, ".read"):
+			value, ok := collectItemFloatValue(item)
+			if !ok {
+				continue
+			}
+			totalRead += value
+			readOK = true
+		case strings.HasSuffix(name, ".write"):
+			value, ok := collectItemFloatValue(item)
+			if !ok {
+				continue
+			}
+			totalWrite += value
+			writeOK = true
+		case strings.HasSuffix(name, ".busy"):
+			value, ok := collectItemFloatValue(item)
+			if !ok {
+				continue
+			}
+			if !busyOK || value > maxBusy {
+				maxBusy = value
+				busyOK = true
+			}
+		}
+	}
+	return floatAggregateResult{value: totalRead, ok: readOK},
+		floatAggregateResult{value: totalWrite, ok: writeOK},
+		floatAggregateResult{value: maxBusy, ok: busyOK}
+}
+
+func collectItemFloatValue(item *CollectItem) (float64, bool) {
+	if item == nil || !item.IsAvailable() {
+		return 0, false
+	}
+	value := item.GetValue()
+	if value == nil {
+		return 0, false
+	}
+	switch typed := value.Value.(type) {
+	case float64, float32, int, int64, uint64:
+		return getFloat64Value(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func parseLibreCPUCoreClockIndex(name string) (int, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasPrefix(normalized, "libre_") || !strings.Contains(normalized, "cpu") || !strings.Contains(normalized, "_clock_") {
+		return 0, false
+	}
+	parts := strings.Split(normalized, "_")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return 0, false
+	}
+	return index, true
 }
 
 func setSystemMetricItem(item *CollectItem, value int64) {

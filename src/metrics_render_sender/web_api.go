@@ -921,6 +921,7 @@ func applyDynamicWebSnapshotLabels(values map[string]WebMonitorSnapshotItem, ent
 
 var explicitWebSnapshotLabels = map[string]string{
 	"go_native.cpu.usage":                      "CPU usage",
+	"go_native.cpu.min_freq":                   "CPU min frequency",
 	"go_native.cpu.user":                       "CPU user",
 	"go_native.cpu.system":                     "CPU system",
 	"go_native.cpu.idle":                       "CPU idle",
@@ -932,6 +933,9 @@ var explicitWebSnapshotLabels = map[string]string{
 	"go_native.cpu.max_freq":                   "CPU max frequency",
 	"go_native.cpu.model":                      "CPU model",
 	"go_native.cpu.cores":                      "CPU cores",
+	"go_native.disk.total_read":                "Disk total read speed",
+	"go_native.disk.total_write":               "Disk total write speed",
+	"go_native.disk.max_busy":                  "Disk max busy",
 	"go_native.memory.usage":                   "Memory usage",
 	"go_native.memory.used":                    "Memory used",
 	"go_native.memory.total":                   "Memory total",

@@ -16,20 +16,21 @@ import (
 var trayIconICO []byte
 
 type windowsTray struct {
-	web      *WebServerProcess
-	updater  *AppUpdater
-	readyCh  chan struct{}
-	stopCh   chan struct{}
-	mu       sync.Mutex
-	closed   bool
-	openWeb  *systray.MenuItem
-	openUI   *systray.MenuItem
-	bindHost *trayWebBindMenuState
-	profiles *trayProfileMenuState
-	viewLog  *systray.MenuItem
-	update   *systray.MenuItem
-	autoRun  *systray.MenuItem
-	exit     *systray.MenuItem
+	web         *WebServerProcess
+	updater     *AppUpdater
+	readyCh     chan struct{}
+	stopCh      chan struct{}
+	mu          sync.Mutex
+	closed      bool
+	openWeb     *systray.MenuItem
+	openUI      *systray.MenuItem
+	bindHost    *trayWebBindMenuState
+	profiles    *trayProfileMenuState
+	viewLog     *systray.MenuItem
+	checkUpdate *systray.MenuItem
+	upgrade     *systray.MenuItem
+	autoRun     *systray.MenuItem
+	exit        *systray.MenuItem
 }
 
 func StartTray(webController *WebServerProcess) (TrayHandle, error) {
@@ -64,7 +65,9 @@ func (t *windowsTray) onReady() {
 	t.profiles = newTrayProfileMenuState()
 	t.viewLog = systray.AddMenuItem("Open Log Directory", "Open application log directory")
 	systray.AddSeparator()
-	t.update = systray.AddMenuItem("Check for Updates", "Check latest release on GitHub")
+	t.checkUpdate = systray.AddMenuItem("Check for Updates", "Check latest release on GitHub")
+	t.upgrade = systray.AddMenuItem("Upgrade Unavailable", "Install latest release")
+	t.upgrade.Disable()
 	systray.AddSeparator()
 	t.autoRun = systray.AddMenuItem("Enable Auto Start", "Enable auto start for current user")
 	systray.AddSeparator()
@@ -115,7 +118,11 @@ func (t *windowsTray) handleMenuEvents() {
 			if err := openFileSystemPath(resolveLogDirectoryPath()); err != nil {
 				logWarnModule("tray", "open log directory failed: %v", err)
 			}
-		case <-t.update.ClickedCh:
+		case <-t.checkUpdate.ClickedCh:
+			if !t.updater.TriggerCheck() {
+				t.syncMenuState()
+			}
+		case <-t.upgrade.ClickedCh:
 			state := t.updater.State()
 			if state.UpdateAvailable {
 				go t.performUpgrade(false)
@@ -125,9 +132,7 @@ func (t *windowsTray) handleMenuEvents() {
 				go t.performUpgrade(true)
 				continue
 			}
-			if !t.updater.TriggerCheck() {
-				t.syncMenuState()
-			}
+			t.syncMenuState()
 		case <-t.autoRun.ClickedCh:
 			enabled, err := IsAutoStartEnabled()
 			if err != nil {
@@ -181,26 +186,18 @@ func (t *windowsTray) syncMenuState() {
 		t.openUI.Disable()
 	}
 
-	updateState := t.updater.State()
-	switch {
-	case !updateState.Supported:
-		t.update.SetTitle("Updates Unavailable")
-		t.update.Disable()
-	case updateState.Installing:
-		t.update.SetTitle("Updating...")
-		t.update.Disable()
-	case updateState.Checking:
-		t.update.SetTitle("Checking Updates...")
-		t.update.Disable()
-	case updateState.UpdateAvailable:
-		t.update.SetTitle(fmt.Sprintf("Upgrade to v%s", updateState.LatestVersion))
-		t.update.Enable()
-	case updateState.LatestVersion != "":
-		t.update.SetTitle(fmt.Sprintf("Reinstall v%s", updateState.LatestVersion))
-		t.update.Enable()
-	default:
-		t.update.SetTitle("Check for Updates")
-		t.update.Enable()
+	updateMenu := resolveTrayUpdateMenuConfig(t.updater.State())
+	t.checkUpdate.SetTitle(updateMenu.checkTitle)
+	if updateMenu.checkEnabled {
+		t.checkUpdate.Enable()
+	} else {
+		t.checkUpdate.Disable()
+	}
+	t.upgrade.SetTitle(updateMenu.upgradeTitle)
+	if updateMenu.upgradeEnabled {
+		t.upgrade.Enable()
+	} else {
+		t.upgrade.Disable()
 	}
 
 	autoEnabled, err := IsAutoStartEnabled()

@@ -1537,6 +1537,7 @@ type CollectorManagerConfig struct {
 func getCollectorManagerConfig() *CollectorManagerConfig {
 	names := []string{
 		"go_native.cpu.usage",
+		"go_native.cpu.min_freq",
 		"go_native.cpu.user",
 		"go_native.cpu.system",
 		"go_native.cpu.idle",
@@ -1547,6 +1548,9 @@ func getCollectorManagerConfig() *CollectorManagerConfig {
 		"go_native.cpu.max_freq",
 		"go_native.cpu.model",
 		"go_native.cpu.cores",
+		"go_native.disk.total_read",
+		"go_native.disk.total_write",
+		"go_native.disk.max_busy",
 		"go_native.memory.usage",
 		"go_native.memory.used",
 		"go_native.memory.total",
