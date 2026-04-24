@@ -63,6 +63,7 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .loading_wrap {
@@ -71,6 +72,20 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.profile_loading_overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background:
+    linear-gradient(135deg, rgba(11, 15, 23, 0.86), rgba(17, 24, 39, 0.92)),
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 42%);
+  backdrop-filter: blur(6px);
 }
 
 .tab_bar {

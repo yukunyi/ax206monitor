@@ -30,13 +30,19 @@ const state = reactive({
   snapshot: null,
   activeTab: "elements",
   editingProfile: "",
+  loadedProfile: "",
   selectedIndex: -1,
   dirty: false,
   saving: false,
+  profileLoading: false,
   previewUrl: "",
   previewSync: true,
   zoomAuto: true,
   zoom: 100,
+});
+
+const profileSwitch = reactive({
+  pendingProfile: "",
 });
 
 const runtime = reactive({
@@ -589,16 +595,14 @@ async function syncPreview(silent = false) {
 async function loadInitial() {
   state.loading = true;
   try {
-    const [metaRes, configRes, profilesRes, collectorsRes, snapshotRes] = await Promise.all([
+    const [metaRes, profilesRes, collectorsRes, snapshotRes] = await Promise.all([
       api("/api/meta"),
-      api("/api/config"),
       api("/api/profiles").catch(() => ({ active: "", items: [] })),
       api("/api/collectors").catch(() => ({ items: [] })),
       api("/api/snapshot").catch(() => null),
     ]);
 
     state.meta = metaRes;
-    state.config = normalizeConfig(configRes.config, metaRes?.style_keys || [], metaRes?.item_types || []);
     state.profiles = profilesRes.items || [];
     state.collectors = collectorsRes.items || [];
     if (snapshotRes && typeof snapshotRes === "object") {
@@ -606,14 +610,9 @@ async function loadInitial() {
     }
     mergeMonitorNames(metaRes?.monitors || []);
     mergeSnapshotMonitors(snapshotRes);
-    mergeConfigMonitors(state.config);
-    state.editingProfile =
-      profilesRes.active || metaRes.active_profile || state.profiles[0]?.name || "default";
-    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    markCommittedFromCurrent();
-    if (monitorCatalog.value.length === 0) {
-      await refreshMonitorCatalog();
-    }
+    const initialProfile = profilesRes.active || metaRes.active_profile || state.profiles[0]?.name || "default";
+    await loadProfileIntoEditor(initialProfile, { force: true, syncPreviewAfter: false });
+    if (monitorCatalog.value.length === 0) await refreshMonitorCatalog();
     setError("");
   } catch (err) {
     setError(err.message);
@@ -819,26 +818,24 @@ async function switchProfile() {
     setError("当前配置有未保存改动，请先保存");
     return;
   }
-  try {
-    const res = await api("/api/profiles/switch", {
-      method: "POST",
-      body: JSON.stringify({ name: state.editingProfile }),
-    });
-    state.meta = { ...(state.meta || {}), active_profile: res.active || state.editingProfile };
-    state.config = normalizeConfig(res.config, state.meta?.style_keys || [], state.meta?.item_types || []);
-    mergeConfigMonitors(state.config);
-    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    markCommittedFromCurrent();
-    await refreshMonitorCatalog();
-    await syncPreview();
-    setError("");
-  } catch (err) {
-    setError(err.message);
-  }
+  await activateProfile(state.editingProfile);
 }
 
 async function saveConfig() {
   if (!state.config || readonlyProfile.value) return;
+  if (state.profileLoading) {
+    setError("配置切换中，请等待加载完成后再保存");
+    return;
+  }
+  const targetProfile = String(state.loadedProfile || "").trim();
+  if (!targetProfile) {
+    setError("当前未加载有效配置，请重新选择配置后再保存");
+    return;
+  }
+  if (targetProfile !== String(state.editingProfile || "").trim()) {
+    setError("当前选择的配置尚未加载完成，请重新切换并确认内容后再保存");
+    return;
+  }
   const missingMonitorIndex = state.config.items.findIndex(
     (item) =>
       isMonitorRequiredType(String(item.type || "")) &&
@@ -851,13 +848,12 @@ async function saveConfig() {
   state.saving = true;
   try {
     const payload = { config: deepClone(state.config) };
-    const res = await api("/api/config", {
+    const res = await api(`/api/profiles/${encodeURIComponent(targetProfile)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     });
-    if (res?.meta?.active_profile) {
-      state.meta = { ...(state.meta || {}), active_profile: res.meta.active_profile };
-    }
+    if (Array.isArray(res?.items)) state.profiles = res.items;
+    if (res?.active) state.meta = { ...(state.meta || {}), active_profile: res.active };
     markCommittedFromCurrent();
     await syncPreview();
     setError("");
@@ -906,7 +902,12 @@ async function createProfile() {
       }),
     });
     state.profiles = res.items || state.profiles;
+    state.config = normalizeConfig(nextConfig, state.meta?.style_keys || [], state.meta?.item_types || []);
     state.editingProfile = name;
+    state.loadedProfile = name;
+    mergeConfigMonitors(state.config);
+    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
+    markCommittedFromCurrent();
     profileDialog.show = false;
     setError("");
   } catch (err) {
@@ -940,6 +941,9 @@ async function renameProfile() {
     state.profiles = res.items || state.profiles;
     if (res.active) state.meta = { ...(state.meta || {}), active_profile: res.active };
     state.editingProfile = newName;
+    if (state.loadedProfile === oldName) {
+      state.loadedProfile = newName;
+    }
     if (res.config) {
       state.config = normalizeConfig(res.config, state.meta?.style_keys || [], state.meta?.item_types || []);
       mergeConfigMonitors(state.config);
@@ -964,13 +968,7 @@ async function deleteProfile() {
     state.profiles = res.items || [];
     state.meta = { ...(state.meta || {}), active_profile: res.active || "" };
     state.editingProfile = state.meta.active_profile || state.profiles[0]?.name || "default";
-    const loaded = await api(`/api/profiles/${encodeURIComponent(state.editingProfile)}`).catch(() =>
-      api("/api/config"),
-    );
-    state.config = normalizeConfig(loaded.config, state.meta?.style_keys || [], state.meta?.item_types || []);
-    mergeConfigMonitors(state.config);
-    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
-    markCommittedFromCurrent();
+    await loadProfileIntoEditor(state.editingProfile, { force: true, syncPreviewAfter: false });
     await refreshMonitorCatalog();
     await syncPreview();
     setError("");
@@ -1018,22 +1016,83 @@ async function setEditingProfile(name) {
     setError("当前配置有未保存改动，请先保存");
     return;
   }
+  await loadProfileIntoEditor(nextProfile, { syncPreviewAfter: true });
+}
+
+function beginProfileSwitch(nextProfile) {
+  state.profileLoading = true;
+  profileSwitch.pendingProfile = nextProfile;
+}
+
+function finishProfileSwitch() {
+  state.profileLoading = false;
+  profileSwitch.pendingProfile = "";
+}
+
+async function loadProfileIntoEditor(profileName, options = {}) {
+  const nextProfile = String(profileName || "").trim();
+  if (!nextProfile) return false;
+  const previousEditing = state.editingProfile;
+  const previousLoaded = state.loadedProfile;
+  beginProfileSwitch(nextProfile);
   try {
     const loaded = await api(`/api/profiles/${encodeURIComponent(nextProfile)}`);
     state.editingProfile = nextProfile;
+    state.loadedProfile = nextProfile;
     state.config = normalizeConfig(loaded.config, state.meta?.style_keys || [], state.meta?.item_types || []);
     mergeConfigMonitors(state.config);
     if (state.config.items.length <= 0) {
       state.selectedIndex = -1;
-    } else if (state.selectedIndex < 0 || state.selectedIndex >= state.config.items.length) {
+    } else if (state.selectedIndex < 0 || state.selectedIndex >= state.config.items.length || options.force) {
       state.selectedIndex = 0;
     }
+    markCommittedFromCurrent()
+    await refreshMonitorCatalog();
+    if (options.syncPreviewAfter) {
+      await syncPreview(true);
+    }
+    setError("");
+    return true;
+  } catch (err) {
+    state.editingProfile = previousEditing;
+    state.loadedProfile = previousLoaded;
+    setError(err.message);
+    return false;
+  } finally {
+    finishProfileSwitch();
+  }
+}
+
+async function activateProfile(profileName) {
+  const nextProfile = String(profileName || "").trim();
+  if (!nextProfile) return false;
+  const previousEditing = state.editingProfile;
+  const previousLoaded = state.loadedProfile;
+  beginProfileSwitch(nextProfile);
+  try {
+    const res = await api("/api/profiles/switch", {
+      method: "POST",
+      body: JSON.stringify({ name: nextProfile }),
+    });
+    state.meta = { ...(state.meta || {}), active_profile: res.active || nextProfile };
+    state.profiles = Array.isArray(res.items) ? res.items : state.profiles;
+    state.editingProfile = nextProfile;
+    state.loadedProfile = nextProfile;
+    state.config = normalizeConfig(res.config, state.meta?.style_keys || [], state.meta?.item_types || []);
+    mergeConfigMonitors(state.config);
+    state.selectedIndex = state.config.items.length > 0 ? 0 : -1;
     markCommittedFromCurrent();
     await refreshMonitorCatalog();
-    await syncPreview(true);
+    await syncPreview();
     setError("");
+    return true;
   } catch (err) {
+    state.editingProfile = previousEditing;
+    state.loadedProfile = previousLoaded;
     setError(err.message);
+    return false;
+  } finally {
+    finishProfileSwitch();
   }
 }
 
@@ -1088,9 +1147,11 @@ onBeforeUnmount(() => {
         :profiles="state.profiles"
         :active-profile="activeProfile"
         :editing-profile="state.editingProfile"
+        :loaded-profile="state.loadedProfile"
         :readonly-profile="readonlyProfile"
         :dirty="state.dirty"
         :saving="state.saving"
+        :profile-loading="state.profileLoading"
         :can-undo="canUndo"
         @update:editing-profile="setEditingProfile"
         @switch-profile="switchProfile"
@@ -1119,6 +1180,13 @@ onBeforeUnmount(() => {
         <div v-if="state.loading" class="loading_wrap">
           <n-spin size="small" />
           <n-text depth="3">加载中...</n-text>
+        </div>
+
+        <div v-if="state.profileLoading" class="profile_loading_overlay">
+          <n-spin size="small" />
+          <n-text depth="3">
+            正在切换配置{{ profileSwitch.pendingProfile ? `：${profileSwitch.pendingProfile}` : "" }}
+          </n-text>
         </div>
 
         <template v-else-if="state.config && state.meta">

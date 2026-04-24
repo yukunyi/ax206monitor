@@ -5,9 +5,11 @@ const props = defineProps({
   profiles: { type: Array, default: () => [] },
   activeProfile: { type: String, default: "" },
   editingProfile: { type: String, default: "" },
+  loadedProfile: { type: String, default: "" },
   readonlyProfile: { type: Boolean, default: false },
   dirty: { type: Boolean, default: false },
   saving: { type: Boolean, default: false },
+  profileLoading: { type: Boolean, default: false },
   canUndo: { type: Boolean, default: false },
 });
 
@@ -32,10 +34,16 @@ const profileOptions = computed(() =>
 );
 
 const canSetDefault = computed(
-  () => !!props.editingProfile && props.editingProfile !== props.activeProfile,
+  () => !!props.editingProfile && !props.profileLoading && props.editingProfile === props.loadedProfile && props.editingProfile !== props.activeProfile,
+);
+
+const profileReady = computed(
+  () => !props.profileLoading && (!!props.editingProfile ? props.editingProfile === props.loadedProfile : true),
 );
 
 const saveState = computed(() => {
+  if (props.profileLoading) return { type: "info", text: "切换中" };
+  if (!profileReady.value) return { type: "warning", text: "未加载" };
   if (props.saving) return { type: "info", text: "保存中" };
   if (props.dirty) return { type: "warning", text: "未保存" };
   return { type: "success", text: "已保存" };
@@ -56,13 +64,14 @@ function onProfileUpdate(value) {
           :options="profileOptions"
           size="small"
           style="width: 240px"
+          :disabled="profileLoading || saving"
           @update:value="onProfileUpdate"
         />
-        <n-button size="small" @click="emit('create-profile')">新建</n-button>
-        <n-button size="small" :disabled="readonlyProfile" @click="emit('rename-profile')">重命名</n-button>
+        <n-button size="small" :disabled="profileLoading || saving" @click="emit('create-profile')">新建</n-button>
+        <n-button size="small" :disabled="readonlyProfile || profileLoading || saving" @click="emit('rename-profile')">重命名</n-button>
         <n-popconfirm @positive-click="emit('delete-profile')">
           <template #trigger>
-            <n-button size="small" :disabled="readonlyProfile" type="error" tertiary>删除</n-button>
+            <n-button size="small" :disabled="readonlyProfile || profileLoading || saving" type="error" tertiary>删除</n-button>
           </template>
           删除当前配置？
         </n-popconfirm>
@@ -78,11 +87,11 @@ function onProfileUpdate(value) {
       </n-space>
 
       <n-space align="center" :wrap="true" size="small">
-        <n-button size="small" @click="emit('import-config')">导入</n-button>
-        <n-button size="small" @click="emit('export-config')">导出</n-button>
+        <n-button size="small" :disabled="profileLoading || saving" @click="emit('import-config')">导入</n-button>
+        <n-button size="small" :disabled="profileLoading || saving" @click="emit('export-config')">导出</n-button>
         <n-button
           size="small"
-          :disabled="readonlyProfile || !canUndo || saving"
+          :disabled="readonlyProfile || !canUndo || saving || profileLoading || !profileReady"
           @click="emit('undo')"
         >
           撤销
@@ -90,7 +99,7 @@ function onProfileUpdate(value) {
         <n-button
           v-if="dirty"
           size="small"
-          :disabled="readonlyProfile || saving"
+          :disabled="readonlyProfile || saving || profileLoading || !profileReady"
           @click="emit('restore')"
         >
           恢复
@@ -98,7 +107,7 @@ function onProfileUpdate(value) {
         <n-button
           type="primary"
           size="small"
-          :disabled="readonlyProfile || !dirty || saving"
+          :disabled="readonlyProfile || !dirty || saving || profileLoading || !profileReady"
           @click="emit('save')"
         >
           保存
