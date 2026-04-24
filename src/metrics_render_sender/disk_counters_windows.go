@@ -58,6 +58,18 @@ func readPlatformDiskCounters() (map[string]diskCounterSample, error) {
 		if err != nil {
 			_ = windows.CloseHandle(handle)
 			delete(windowsDiskHandles.handles, name)
+			reopened, reopenErr := openWindowsDiskHandle(name)
+			if reopenErr != nil {
+				continue
+			}
+			windowsDiskHandles.handles[name] = reopened
+			sample, err = readWindowsDiskPerformance(name, reopened)
+			if err != nil {
+				_ = windows.CloseHandle(reopened)
+				delete(windowsDiskHandles.handles, name)
+				continue
+			}
+			result[name] = sample
 			continue
 		}
 		result[name] = sample

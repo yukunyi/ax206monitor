@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestComputeDiskMetricsSnapshot(t *testing.T) {
 	current := diskCounterSample{
@@ -14,39 +17,44 @@ func TestComputeDiskMetricsSnapshot(t *testing.T) {
 		QueueDepth:  2,
 	}
 	previous := diskRateSnapshot{
-		readBytes:   100 * 1024 * 1024,
-		writeBytes:  80 * 1024 * 1024,
-		readCount:   150,
-		writeCount:  110,
-		readTimeMS:  500,
-		writeTimeMS: 220,
-		busyTimeMS:  600,
-		queueDepth:  1,
+		ReadBytes:   100 * 1024 * 1024,
+		WriteBytes:  80 * 1024 * 1024,
+		ReadCount:   150,
+		WriteCount:  110,
+		ReadTimeMS:  500,
+		WriteTimeMS: 220,
+		BusyTimeMS:  600,
+		QueueDepth:  1,
 	}
+	previous.at = time.Unix(10, 0)
+	current.at = previous.at.Add(2 * time.Second)
 
-	got := computeDiskMetricsSnapshot(current, previous, 2, 2000)
-	if !almostEqualFloat64(got.Read, 100) {
-		t.Fatalf("expected read speed 100 MiB/s, got %v", got.Read)
+	got, ok := computeDiskMetrics(current, previous)
+	if !ok || got == nil {
+		t.Fatalf("expected computed metrics, got %#v ok=%v", got, ok)
 	}
-	if !almostEqualFloat64(got.Write, 50) {
-		t.Fatalf("expected write speed 50 MiB/s, got %v", got.Write)
+	if !almostEqualFloat64(got.read, 100) {
+		t.Fatalf("expected read speed 100 MiB/s, got %v", got.read)
 	}
-	if !almostEqualFloat64(got.ReadIOPS, 100) {
-		t.Fatalf("expected read IOPS 100, got %v", got.ReadIOPS)
+	if !almostEqualFloat64(got.write, 50) {
+		t.Fatalf("expected write speed 50 MiB/s, got %v", got.write)
 	}
-	if !almostEqualFloat64(got.WriteIOPS, 50) {
-		t.Fatalf("expected write IOPS 50, got %v", got.WriteIOPS)
+	if !almostEqualFloat64(got.readIOPS, 100) {
+		t.Fatalf("expected read IOPS 100, got %v", got.readIOPS)
 	}
-	if !almostEqualFloat64(got.ReadLatencyMS, 2) {
-		t.Fatalf("expected read latency 2ms, got %v", got.ReadLatencyMS)
+	if !almostEqualFloat64(got.writeIOPS, 50) {
+		t.Fatalf("expected write IOPS 50, got %v", got.writeIOPS)
 	}
-	if !almostEqualFloat64(got.WriteLatencyMS, 2) {
-		t.Fatalf("expected write latency 2ms, got %v", got.WriteLatencyMS)
+	if !almostEqualFloat64(got.readLatencyMS, 2) {
+		t.Fatalf("expected read latency 2ms, got %v", got.readLatencyMS)
 	}
-	if !almostEqualFloat64(got.BusyPercent, 30) {
-		t.Fatalf("expected busy percent 30, got %v", got.BusyPercent)
+	if !almostEqualFloat64(got.writeLatencyMS, 2) {
+		t.Fatalf("expected write latency 2ms, got %v", got.writeLatencyMS)
 	}
-	if !almostEqualFloat64(got.QueueDepth, 2) {
-		t.Fatalf("expected queue depth 2, got %v", got.QueueDepth)
+	if !almostEqualFloat64(got.busyPercent, 30) {
+		t.Fatalf("expected busy percent 30, got %v", got.busyPercent)
+	}
+	if !almostEqualFloat64(got.queueDepth, 2) {
+		t.Fatalf("expected queue depth 2, got %v", got.queueDepth)
 	}
 }

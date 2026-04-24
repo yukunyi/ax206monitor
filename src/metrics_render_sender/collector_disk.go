@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func detectNamedDiskCount() int {
@@ -39,6 +40,58 @@ type GoNativeDiskCollector struct {
 	*BaseCollector
 	requiredProvider func() []string
 	slots            map[int]*goNativeDiskSlot
+	runtimeMu        runtimeDiskMetricsStore
+}
+
+type runtimeDiskMetricsStore struct {
+	states map[string]*runtimeDiskMetricsState
+}
+
+type runtimeDiskMetricsState struct {
+	last       diskRateSnapshot
+	hasLast    bool
+	lastGood   *diskComputedMetrics
+	validUntil time.Time
+}
+
+type diskComputedMetrics struct {
+	read           float64
+	write          float64
+	readIOPS       float64
+	writeIOPS      float64
+	readLatencyMS  float64
+	writeLatencyMS float64
+	busyPercent    float64
+	queueDepth     float64
+}
+
+func smoothDiskMetric(previous float64, current float64, alpha float64) float64 {
+	if alpha <= 0 {
+		return current
+	}
+	if alpha >= 1 {
+		return previous
+	}
+	return previous*alpha + current*(1-alpha)
+}
+
+func smoothDiskMetrics(previous *diskComputedMetrics, current *diskComputedMetrics) *diskComputedMetrics {
+	if current == nil {
+		return nil
+	}
+	if previous == nil {
+		return current
+	}
+	return &diskComputedMetrics{
+		read:           smoothDiskMetric(previous.read, current.read, 0.55),
+		write:          smoothDiskMetric(previous.write, current.write, 0.55),
+		readIOPS:       smoothDiskMetric(previous.readIOPS, current.readIOPS, 0.55),
+		writeIOPS:      smoothDiskMetric(previous.writeIOPS, current.writeIOPS, 0.55),
+		readLatencyMS:  smoothDiskMetric(previous.readLatencyMS, current.readLatencyMS, 0.4),
+		writeLatencyMS: smoothDiskMetric(previous.writeLatencyMS, current.writeLatencyMS, 0.4),
+		busyPercent:    smoothDiskMetric(previous.busyPercent, current.busyPercent, 0.3),
+		queueDepth:     current.queueDepth,
+	}
 }
 
 func NewGoNativeDiskCollector(requiredProvider func() []string) *GoNativeDiskCollector {
@@ -46,6 +99,9 @@ func NewGoNativeDiskCollector(requiredProvider func() []string) *GoNativeDiskCol
 		BaseCollector:    NewBaseCollector("go_native.disk"),
 		requiredProvider: requiredProvider,
 		slots:            make(map[int]*goNativeDiskSlot),
+		runtimeMu: runtimeDiskMetricsStore{
+			states: make(map[string]*runtimeDiskMetricsState),
+		},
 	}
 }
 
@@ -188,6 +244,71 @@ func updateDiskRateItems(slot *goNativeDiskSlot, disk *DiskInfo) {
 	slot.busyItem.SetAvailable(false)
 }
 
+func setDiskDynamicMetrics(slot *goNativeDiskSlot, metrics *diskComputedMetrics) {
+	if slot == nil || metrics == nil {
+		updateDiskRateItems(slot, nil)
+		return
+	}
+	slot.readItem.SetValue(metrics.read)
+	slot.readItem.SetAvailable(true)
+	slot.writeItem.SetValue(metrics.write)
+	slot.writeItem.SetAvailable(true)
+	slot.readIOPSItem.SetValue(metrics.readIOPS)
+	slot.readIOPSItem.SetAvailable(true)
+	slot.writeIOPSItem.SetValue(metrics.writeIOPS)
+	slot.writeIOPSItem.SetAvailable(true)
+	slot.readLatencyItem.SetValue(metrics.readLatencyMS)
+	slot.readLatencyItem.SetAvailable(true)
+	slot.writeLatencyItem.SetValue(metrics.writeLatencyMS)
+	slot.writeLatencyItem.SetAvailable(true)
+	slot.busyItem.SetValue(metrics.busyPercent)
+	slot.busyItem.SetAvailable(true)
+}
+
+func computeDiskMetrics(current diskRateSnapshot, previous diskRateSnapshot) (*diskComputedMetrics, bool) {
+	if current.at.IsZero() || previous.at.IsZero() {
+		return nil, false
+	}
+	seconds := current.at.Sub(previous.at).Seconds()
+	elapsedMS := current.at.Sub(previous.at).Seconds() * 1000
+	if seconds <= 0 || elapsedMS <= 0 ||
+		current.ReadBytes < previous.ReadBytes ||
+		current.WriteBytes < previous.WriteBytes ||
+		current.ReadCount < previous.ReadCount ||
+		current.WriteCount < previous.WriteCount ||
+		current.ReadTimeMS < previous.ReadTimeMS ||
+		current.WriteTimeMS < previous.WriteTimeMS ||
+		current.BusyTimeMS < previous.BusyTimeMS {
+		return nil, false
+	}
+
+	readBytesDelta := current.ReadBytes - previous.ReadBytes
+	writeBytesDelta := current.WriteBytes - previous.WriteBytes
+	readCountDelta := current.ReadCount - previous.ReadCount
+	writeCountDelta := current.WriteCount - previous.WriteCount
+	readTimeDelta := current.ReadTimeMS - previous.ReadTimeMS
+	writeTimeDelta := current.WriteTimeMS - previous.WriteTimeMS
+	busyTimeDelta := current.BusyTimeMS - previous.BusyTimeMS
+
+	metrics := &diskComputedMetrics{
+		read:       float64(readBytesDelta) / seconds / 1024 / 1024,
+		write:      float64(writeBytesDelta) / seconds / 1024 / 1024,
+		readIOPS:   float64(readCountDelta) / seconds,
+		writeIOPS:  float64(writeCountDelta) / seconds,
+		queueDepth: current.QueueDepth,
+	}
+	if readCountDelta > 0 {
+		metrics.readLatencyMS = readTimeDelta / float64(readCountDelta)
+	}
+	if writeCountDelta > 0 {
+		metrics.writeLatencyMS = writeTimeDelta / float64(writeCountDelta)
+	}
+	if busyTimeDelta > 0 {
+		metrics.busyPercent = clampPercentage(busyTimeDelta / elapsedMS * 100.0)
+	}
+	return metrics, true
+}
+
 func (c *GoNativeDiskCollector) GetAllItems() map[string]*CollectItem {
 	disks := c.snapshotDisks()
 	c.ensureSlotsForCount(len(disks))
@@ -202,11 +323,32 @@ func (c *GoNativeDiskCollector) GetAllItems() map[string]*CollectItem {
 	return c.ItemsSnapshot()
 }
 
+func (c *GoNativeDiskCollector) diskState(name string) *runtimeDiskMetricsState {
+	key := strings.TrimSpace(name)
+	if key == "" {
+		return nil
+	}
+	state := c.runtimeMu.states[key]
+	if state == nil {
+		state = &runtimeDiskMetricsState{}
+		c.runtimeMu.states[key] = state
+	}
+	return state
+}
+
 func (c *GoNativeDiskCollector) UpdateItems() error {
 	if !c.IsEnabled() {
 		return nil
 	}
 	disks := c.snapshotDisks()
+	names := make([]string, 0, len(disks))
+	for _, disk := range disks {
+		if disk == nil || strings.TrimSpace(disk.Name) == "" {
+			continue
+		}
+		names = append(names, disk.Name)
+	}
+	samples := getDiskCounterSamples(names)
 	for index, slot := range c.slots {
 		if slot == nil {
 			continue
@@ -223,7 +365,43 @@ func (c *GoNativeDiskCollector) UpdateItems() error {
 			slot.readIOPSItem.IsEnabled() || slot.writeIOPSItem.IsEnabled() ||
 			slot.readLatencyItem.IsEnabled() || slot.writeLatencyItem.IsEnabled() ||
 			slot.busyItem.IsEnabled() {
-			updateDiskRateItems(slot, disk)
+			if disk == nil {
+				updateDiskRateItems(slot, nil)
+				continue
+			}
+			stateName := strings.TrimSpace(disk.Name)
+			state := c.diskState(stateName)
+			if state == nil {
+				updateDiskRateItems(slot, nil)
+				continue
+			}
+			sample, ok := samples[stateName]
+			if ok {
+				if state.hasLast {
+					if metrics, metricsOK := computeDiskMetrics(sample, state.last); metricsOK {
+						state.lastGood = smoothDiskMetrics(state.lastGood, metrics)
+						state.validUntil = time.Now().Add(15 * time.Second)
+						setDiskDynamicMetrics(slot, state.lastGood)
+					} else if state.lastGood != nil && time.Now().Before(state.validUntil) {
+						setDiskDynamicMetrics(slot, state.lastGood)
+					} else {
+						updateDiskRateItems(slot, nil)
+					}
+				} else {
+					zero := &diskComputedMetrics{}
+					state.lastGood = zero
+					state.validUntil = time.Now().Add(15 * time.Second)
+					setDiskDynamicMetrics(slot, zero)
+				}
+				state.last = sample
+				state.hasLast = true
+				continue
+			}
+			if state.lastGood != nil && time.Now().Before(state.validUntil) {
+				setDiskDynamicMetrics(slot, state.lastGood)
+			} else {
+				updateDiskRateItems(slot, nil)
+			}
 		}
 	}
 	return nil
